@@ -1,8 +1,8 @@
-from fastapi import FastAPI
+"""Entrypoint shim so `uvicorn main:app` keeps working.
 
-app = FastAPI()
+All assembly lives in app/main.py.
+"""
 
+from app.main import app
 
-@app.get("/")
-def read_root():
-    return {"message": "Hello from FastAPI"}
+__all__ = ["app"]
