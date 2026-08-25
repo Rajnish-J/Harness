@@ -8,3 +8,7 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# Agent sandbox: contents are scratch, but keep the directory itself
+workspace/*
+!workspace/.gitkeep
