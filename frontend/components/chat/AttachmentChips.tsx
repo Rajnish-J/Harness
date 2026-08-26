@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, Plug, Sparkles, Wrench, X } from "lucide-react";
+import { Bot, Plug, Sparkles, X } from "lucide-react";
 
 import { useChatPreset } from "@/components/chat/ChatPresetProvider";
 import { Badge } from "@/components/ui/badge";
@@ -11,10 +11,14 @@ import { isPresetEmpty } from "@/lib/chat-preset";
  *
  * Chips rather than text in the box: an attachment is structured state the user
  * can remove one piece at a time, and it has to survive editing the message.
+ *
+ * Individual tools are deliberately absent. The allowlist is now expressed as
+ * "everything except…" as often as "only these", so rendering one chip per
+ * allowed tool would fill this row with a list the Tools pill already shows as
+ * a count.
  */
 export default function AttachmentChips() {
-  const { preset, setAgent, detachSkill, toggleTool, toggleMcp, catalog } =
-    useChatPreset();
+  const { preset, setAgent, detachSkill, toggleMcp, catalog } = useChatPreset();
 
   if (isPresetEmpty(preset)) return null;
 
@@ -50,15 +54,6 @@ export default function AttachmentChips() {
         />
       ))}
 
-      {preset.toolNames?.map((name) => (
-        <Chip
-          key={name}
-          icon={<Wrench className="size-3" />}
-          label={name}
-          mono
-          onRemove={() => toggleTool(name)}
-        />
-      ))}
     </div>
   );
 }
@@ -68,18 +63,16 @@ function Chip({
   label,
   onRemove,
   primary,
-  mono,
 }: {
   icon: React.ReactNode;
   label: string;
   onRemove: () => void;
   primary?: boolean;
-  mono?: boolean;
 }) {
   return (
     <Badge
       variant={primary ? "default" : "secondary"}
-      className={`gap-1 pr-1 font-normal ${mono ? "font-mono text-[10px]" : ""}`}
+      className="gap-1 pr-1 font-normal"
     >
       {icon}
       <span className="max-w-40 truncate">{label}</span>
