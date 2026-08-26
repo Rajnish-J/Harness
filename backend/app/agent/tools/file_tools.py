@@ -64,6 +64,10 @@ def list_directory(
     return "\n".join([header, *lines])
 
 
+#: One group name for all three, so the composer's tool panel has a real
+#: section to render rather than an ungrouped pile.
+FILE_GROUP = "File Operations"
+
 FILE_TOOLS: list[Tool] = [
     Tool(
         name="read_file",
@@ -83,6 +87,7 @@ FILE_TOOLS: list[Tool] = [
             "additionalProperties": False,
         },
         run=read_file,
+        group=FILE_GROUP,
     ),
     Tool(
         name="write_file",
@@ -107,6 +112,7 @@ FILE_TOOLS: list[Tool] = [
             "additionalProperties": False,
         },
         run=write_file,
+        group=FILE_GROUP,
     ),
     Tool(
         name="list_directory",
@@ -129,5 +135,6 @@ FILE_TOOLS: list[Tool] = [
             "additionalProperties": False,
         },
         run=list_directory,
+        group=FILE_GROUP,
     ),
 ]

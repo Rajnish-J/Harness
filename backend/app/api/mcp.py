@@ -44,6 +44,7 @@ async def list_mcp_tools(
                 name=tool.name,
                 description=tool.description,
                 input_schema=tool.input_schema,
+                group=tool.group,
             ).model_dump()
             for tool in tools
         ],

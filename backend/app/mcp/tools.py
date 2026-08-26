@@ -6,6 +6,7 @@ _dispatch_tool already awaits an awaitable result.
 
 import logging
 import re
+from dataclasses import replace
 from typing import Any, Protocol
 
 from app.agent.tools.base import Tool, ToolExecutionError
@@ -26,6 +27,11 @@ class Caller(Protocol):
 
 def slugify_server(name: str) -> str:
     return NAME_RE.sub("_", name.strip().lower()).strip("_") or "server"
+
+
+def mcp_group(server_name: str) -> str:
+    """The tool panel section for one server's tools."""
+    return f"MCP · {server_name}"
 
 
 def namespaced(server_name: str, tool_name: str) -> str:
@@ -106,6 +112,7 @@ def make_tool(server_name: str, caller: Caller, mcp_tool: Any) -> Tool:
         description=f"[{server_name}] {getattr(mcp_tool, 'description', '') or ''}".strip(),
         input_schema=schema,
         run=run,
+        group=mcp_group(server_name),
     )
 
 
@@ -124,14 +131,9 @@ def dedupe(tools: list[Tool]) -> list[Tool]:
         suffix = f"_{seen[tool.name]}"
         renamed = tool.name[: MAX_NAME_LEN - len(suffix)] + suffix
         logger.warning("MCP tool name collision: %s renamed to %s", tool.name, renamed)
-        # Tool is frozen, so a collision produces a new instance.
-        out.append(
-            Tool(
-                name=renamed,
-                description=tool.description,
-                input_schema=tool.input_schema,
-                run=tool.run,
-            )
-        )
+        # Tool is frozen, so a collision produces a new instance. `replace`
+        # rather than a field-by-field rebuild: the latter silently drops any
+        # field added to Tool later, which is how `group` would have been lost.
+        out.append(replace(tool, name=renamed))
 
     return out

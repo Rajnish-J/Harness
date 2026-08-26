@@ -17,6 +17,10 @@ class Tool:
     description: str
     input_schema: dict[str, Any]
     run: Callable[..., str]
+    #: Presentation only. The composer's tool panel renders one section per
+    #: group; the model never sees it, and ALL_TOOLS keeps its own order so the
+    #: request prefix stays cacheable.
+    group: str = "General"
 
 
 class ToolExecutionError(Exception):
