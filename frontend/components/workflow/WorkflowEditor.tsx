@@ -240,14 +240,14 @@ export default function WorkflowEditor({ workflow }: { workflow: Workflow }) {
     <div className="flex h-full min-h-0 flex-col font-sans">
       {/* Editor toolbar, not app navigation — the sidebar owns the links now.
           What stays here is state that belongs to this workflow. */}
-      <div className="flex shrink-0 items-center gap-3 border-b border-black/[.08] px-4 py-2.5 dark:border-white/[.12]">
+      <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-2.5">
         <h2 className="truncate text-sm font-semibold">{workflow.name}</h2>
         {dirty && <span className="text-[11px] text-amber-600">unsaved</span>}
         <button
           type="button"
           onClick={save}
           disabled={saving || !dirty}
-          className="ml-auto rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-50 disabled:opacity-30 dark:bg-zinc-100 dark:text-zinc-900"
+          className="ml-auto rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-30"
         >
           {saving ? "Saving…" : "Save"}
         </button>
@@ -256,7 +256,7 @@ export default function WorkflowEditor({ workflow }: { workflow: Workflow }) {
       <ValidationBanner issues={issues} onFocus={setSelectedId} />
 
       <div className="flex min-h-0 flex-1">
-        <aside className="flex w-64 shrink-0 flex-col border-r border-black/[.08] dark:border-white/[.12]">
+        <aside className="flex w-64 shrink-0 flex-col border-r border-border">
           <NodePalette />
           <div className="min-h-0 flex-1">
             <NodeConfigPanel
@@ -284,7 +284,7 @@ export default function WorkflowEditor({ workflow }: { workflow: Workflow }) {
           </ReactFlowProvider>
         </div>
 
-        <aside className="flex w-80 shrink-0 flex-col border-l border-black/[.08] dark:border-white/[.12]">
+        <aside className="flex w-80 shrink-0 flex-col border-l border-border">
           <RunPanel
             runState={runState}
             input={input}

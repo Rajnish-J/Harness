@@ -17,9 +17,9 @@ const BINARY_OPS: ComparisonOp[] = [
 ];
 const UNARY_OPS: UnaryOp[] = ["is_empty", "is_not_empty", "is_true", "is_false"];
 
-const label = "text-[11px] font-medium uppercase tracking-wide text-zinc-400";
+const label = "text-[11px] font-medium uppercase tracking-wide text-muted-foreground";
 const field =
-  "w-full rounded-lg border border-black/[.10] bg-transparent px-2.5 py-1.5 text-sm outline-none focus:border-zinc-400 dark:border-white/[.14]";
+  "w-full rounded-lg border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none focus:border-ring";
 
 export default function NodeConfigPanel({
   node,
@@ -42,7 +42,7 @@ export default function NodeConfigPanel({
 
   if (!node) {
     return (
-      <div className="flex h-full items-center justify-center p-6 text-center text-sm text-zinc-400">
+      <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">
         Select a node to configure it.
       </div>
     );
@@ -59,7 +59,7 @@ export default function NodeConfigPanel({
           value={node.data.label}
           onChange={(e) => onChange(node.id, { label: e.target.value })}
         />
-        <p className="mt-1 font-mono text-[10px] text-zinc-400">id: {node.id}</p>
+        <p className="mt-1 font-mono text-[10px] text-muted-foreground">id: {node.id}</p>
       </div>
 
       {isAgent ? (
@@ -115,7 +115,7 @@ function AgentConfig({
         />
         {otherNodeIds.length > 0 && (
           <div className="mt-1.5 flex flex-wrap items-center gap-1">
-            <span className="text-[10px] text-zinc-400">insert:</span>
+            <span className="text-[10px] text-muted-foreground">insert:</span>
             <RefChip
               text="{{ input }}"
               onClick={() =>
@@ -136,7 +136,7 @@ function AgentConfig({
             ))}
           </div>
         )}
-        <p className="mt-1 text-[10px] leading-snug text-zinc-400">
+        <p className="mt-1 text-[10px] leading-snug text-muted-foreground">
           A reference only works if that node is guaranteed to finish first —
           parallel siblings are rejected on save.
         </p>
@@ -216,7 +216,7 @@ function RefChip({ text, onClick }: { text: string; onClick: () => void }) {
     <button
       type="button"
       onClick={onClick}
-      className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[10px] text-zinc-500 transition-colors hover:bg-black/[.10] dark:bg-white/10 dark:hover:bg-white/20"
+      className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground transition-colors hover:bg-muted-foreground/20"
     >
       {text}
     </button>
@@ -319,7 +319,7 @@ function ConditionConfig({
               update({ ...predicate, right: { value: e.target.value } })
             }
           />
-          <p className="mt-1 text-[10px] text-zinc-400">
+          <p className="mt-1 text-[10px] text-muted-foreground">
             Treated as a literal, never as a path or an expression.
           </p>
         </div>
