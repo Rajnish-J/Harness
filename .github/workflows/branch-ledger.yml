@@ -1,0 +1,104 @@
+name: Branch Ledger
+
+# Regenerates docs/BRANCHES.md and commits it to main after every PR merge.
+#
+# Why an Actions workflow and not a git hook: PRs are merged on GitHub's
+# servers, so no post-commit/post-merge hook on a developer machine ever fires
+# for them. This is the only place that reliably observes "a PR landed on main".
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+  # Manual re-run, for backfills or after editing docs/branch-notes.json.
+  workflow_dispatch:
+
+permissions:
+  contents: write        # push the regenerated ledger to main
+  pull-requests: read    # `gh pr list` reads every PR's title, body and stats
+
+# Serialize: two PRs merged seconds apart would otherwise race on the push to
+# main. cancel-in-progress is false because each run must actually complete —
+# a cancelled run is a ledger entry that never gets written.
+concurrency:
+  group: branch-ledger
+  cancel-in-progress: false
+
+jobs:
+  update:
+    name: Update docs/BRANCHES.md
+    runs-on: ubuntu-latest
+    # `closed` also fires for PRs closed without merging, so `merged` is the
+    # real gate. The head-repo check skips fork PRs: their GITHUB_TOKEN is
+    # read-only, so the push would fail — better to skip cleanly than go red.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged == true &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Required: on a pull_request event the default ref is the ephemeral
+          # refs/pull/N/merge, which cannot be pushed. We commit to main.
+          ref: main
+          # Required: the generator recovers each branch's start date by walking
+          # P1..P2 of its merge commit, and counts its commits the same way.
+          # A shallow clone has neither, and every branch would fall back to
+          # "date the PR was opened" with no commit count at all.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          # Quoted: unquoted this is a YAML float. Pinned to match ci.yml.
+          # No `cache:` — the generator is stdlib-only and installs nothing.
+          python-version: "3.12"
+
+      - name: Regenerate ledger
+        env:
+          # The `gh` CLI is preinstalled on ubuntu-latest but reads its token
+          # from the environment; it is not injected automatically.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/generate_branch_log.py
+
+      - name: Commit and push
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          # No diff means no work — a merge that changed nothing the ledger
+          # tracks must not leave an empty commit behind.
+          if git diff --quiet -- docs/BRANCHES.md; then
+            echo "Ledger already up to date; nothing to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # [skip ci] keeps this docs-only commit from spending a full ci.yml
+          # run. Pushes made with GITHUB_TOKEN do not trigger workflows anyway,
+          # and this workflow does not listen on `push`, so it cannot retrigger
+          # itself — the tag is belt-and-braces for a future push trigger.
+          if [ -n "${PR_NUMBER}" ]; then
+            subject="docs(branches): update branch ledger for #${PR_NUMBER} [skip ci]"
+          else
+            subject="docs(branches): update branch ledger [skip ci]"
+          fi
+          git add docs/BRANCHES.md
+          git commit -m "${subject}"
+
+          # Someone else may have pushed to main between checkout and now.
+          # Rebase and retry rather than failing the run; the ledger is
+          # regenerated from scratch each time, so a rebase can never conflict
+          # semantically, only textually.
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              echo "Pushed on attempt ${attempt}."
+              exit 0
+            fi
+            echo "Push rejected on attempt ${attempt}; rebasing onto origin/main."
+            git pull --rebase origin main
+          done
+
+          echo "Could not push the ledger after 3 attempts." >&2
+          exit 1
