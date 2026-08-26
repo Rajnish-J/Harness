@@ -1,5 +1,8 @@
+import { Bot } from "lucide-react";
+
 import NewAgentButton from "@/components/agents/NewAgentButton";
-import RegistryList from "@/components/registry/RegistryList";
+import RegistryGrid from "@/components/registry/RegistryGrid";
+import SectionHeader from "@/components/registry/SectionHeader";
 import PageBody from "@/components/shell/PageBody";
 import { describeDbError } from "@/lib/server/db-error";
 import { listAgents } from "@/lib/server/registry-service";
@@ -17,19 +20,33 @@ export default async function AgentsPage() {
   }
 
   return (
-    <PageBody toolbar={<NewAgentButton />}>
-      <RegistryList
-        error={error}
-        href={(id) => `/agents/${id}`}
-        emptyMessage="No agents yet. An agent is a saved preset: system prompt, model, and the tools it may use."
-        rows={agents.map((agent) => ({
-          id: agent.id,
-          title: agent.name,
-          subtitle: agent.description,
-          badge: agent.model ?? agent.slug,
-          enabled: agent.enabled,
-        }))}
-      />
+    <PageBody width="wide">
+      <div className="flex flex-col gap-4">
+        <SectionHeader
+          title="Agents"
+          hint="A saved preset: system prompt, model, and the tools, skills and MCP servers it may use."
+          action={<NewAgentButton />}
+        />
+        <RegistryGrid
+          error={error}
+          href={(id) => `/agents/${id}`}
+          icon={Bot}
+          tone="sky"
+          empty={{
+            title: "No agents yet",
+            description:
+              "An agent is a saved preset: system prompt, model, and the tools it may use.",
+            action: <NewAgentButton />,
+          }}
+          rows={agents.map((agent) => ({
+            id: agent.id,
+            title: agent.name,
+            kind: agent.model ?? agent.slug,
+            meta: agent.description,
+            enabled: agent.enabled,
+          }))}
+        />
+      </div>
     </PageBody>
   );
 }
