@@ -14,20 +14,31 @@ import {
   type AgentAttachment,
   type ChatPreset,
   type SkillAttachment,
+  type ToolMode,
 } from "@/lib/chat-preset";
+import {
+  EMPTY_CATALOG as EMPTY_MODELS,
+  fetchModels,
+  type ModelCatalog,
+} from "@/lib/models";
 import { agentsApi, mcpApi, skillsApi } from "@/lib/registry-api";
 import type {
   AgentSummary,
   McpServerSummary,
   SkillSummary,
 } from "@/lib/registry-types";
-import { fetchTools, type ToolInfo } from "@/lib/workflow-api";
+import { toggleGroupNames, toggleToolName, type SelectableGroup } from "@/lib/tool-selection";
+import { fetchMcpTools, fetchTools, type ToolInfo } from "@/lib/workflow-api";
 
 export type Catalog = {
   agents: AgentSummary[];
   skills: SkillSummary[];
   mcp: McpServerSummary[];
+  /** Built-in tools, plus the tools of every attached MCP server. */
   tools: ToolInfo[];
+  models: ModelCatalog;
+  /** Servers that failed to answer discovery, shown next to the ones that did. */
+  mcpNotices: string[];
   loading: boolean;
 };
 
@@ -36,6 +47,8 @@ const EMPTY_CATALOG: Catalog = {
   skills: [],
   mcp: [],
   tools: [],
+  models: EMPTY_MODELS,
+  mcpNotices: [],
   loading: true,
 };
 
@@ -46,8 +59,11 @@ type ChatPresetValue = {
   attachSkill: (skill: SkillSummary) => Promise<void>;
   detachSkill: (id: string) => void;
   toggleTool: (name: string) => void;
+  toggleToolGroup: (group: SelectableGroup) => void;
   resetTools: () => void;
   toggleMcp: (server: McpServerSummary) => void;
+  setMode: (mode: ToolMode) => void;
+  setModel: (id: string | null) => void;
   clearAttachments: () => void;
   /** Applies ?agent= / ?skill= / ?mcp= from a "Use in chat" link. */
   applyFromQuery: (params: URLSearchParams) => Promise<boolean>;
@@ -82,10 +98,20 @@ export default function ChatPresetProvider({
       skillsApi.list().catch(() => [] as SkillSummary[]),
       mcpApi.list().catch(() => [] as McpServerSummary[]),
       fetchTools(controller.signal),
+      fetchModels(controller.signal),
     ])
-      .then(([agents, skills, mcp, tools]) => {
+      .then(([agents, skills, mcp, tools, models]) => {
         if (controller.signal.aborted) return;
-        setCatalog({ agents, skills, mcp, tools, loading: false });
+        setCatalog((prev) => ({
+          ...prev,
+          agents,
+          skills,
+          mcp,
+          models,
+          // Keep any MCP tools the second effect has already discovered.
+          tools: [...tools, ...prev.tools.filter((t) => t.name.startsWith("mcp__"))],
+          loading: false,
+        }));
       })
       .catch(() => {
         if (!controller.signal.aborted) {
@@ -95,6 +121,35 @@ export default function ChatPresetProvider({
 
     return () => controller.abort();
   }, []);
+
+  // MCP tools are discovered separately, and only for servers the composer has
+  // actually attached: discovery costs a round trip to each server, so doing it
+  // in the initial load would make opening the app pay for servers nobody is
+  // using. Re-runs whenever the attached set changes.
+  const attachedIds = preset.mcpServers.map((server) => server.id).join(",");
+  useEffect(() => {
+    const controller = new AbortController();
+    const ids = attachedIds ? attachedIds.split(",") : [];
+
+    fetchMcpTools(ids, controller.signal)
+      .then(({ tools, notices }) => {
+        if (controller.signal.aborted) return;
+        setCatalog((prev) => ({
+          ...prev,
+          tools: [
+            ...prev.tools.filter((tool) => !tool.name.startsWith("mcp__")),
+            ...tools,
+          ],
+          mcpNotices: notices,
+        }));
+      })
+      .catch(() => {
+        // fetchMcpTools already swallows its own failures; this only catches an
+        // abort, which needs no handling.
+      });
+
+    return () => controller.abort();
+  }, [attachedIds]);
 
   const setAgent = useCallback(
     async (summary: AgentSummary | null) => {
@@ -128,6 +183,7 @@ export default function ChatPresetProvider({
       };
 
       setPreset((prev) => ({
+        ...prev,
         agent: attachment,
         skills: skills.map(toSkillAttachment),
         toolNames: full.toolNames.length > 0 ? full.toolNames : null,
@@ -162,16 +218,39 @@ export default function ChatPresetProvider({
     }));
   }, []);
 
-  const toggleTool = useCallback((name: string) => {
-    setPreset((prev) => {
-      const current = prev.toolNames ?? [];
-      const next = current.includes(name)
-        ? current.filter((tool) => tool !== name)
-        : [...current, name];
-      // Back to "inherit" rather than "none": an empty allowlist would read as
-      // a deliberate choice to grant nothing.
-      return { ...prev, toolNames: next.length > 0 ? next : null };
-    });
+  // Both toggles are universe-aware: unchecking one tool while inheriting has
+  // to mean "everything except this", not "only this". See lib/tool-selection.ts.
+  const universe = useMemo(
+    () => catalog.tools.map((tool) => tool.name),
+    [catalog.tools],
+  );
+
+  const toggleTool = useCallback(
+    (name: string) => {
+      setPreset((prev) => ({
+        ...prev,
+        toolNames: toggleToolName(prev.toolNames, name, universe),
+      }));
+    },
+    [universe],
+  );
+
+  const toggleToolGroup = useCallback(
+    (group: SelectableGroup) => {
+      setPreset((prev) => ({
+        ...prev,
+        toolNames: toggleGroupNames(prev.toolNames, group, universe),
+      }));
+    },
+    [universe],
+  );
+
+  const setMode = useCallback((mode: ToolMode) => {
+    setPreset((prev) => ({ ...prev, mode }));
+  }, []);
+
+  const setModel = useCallback((model: string | null) => {
+    setPreset((prev) => ({ ...prev, model }));
   }, []);
 
   const resetTools = useCallback(() => {
@@ -187,7 +266,13 @@ export default function ChatPresetProvider({
     }));
   }, []);
 
-  const clearAttachments = useCallback(() => setPreset(EMPTY_PRESET), []);
+  // Mode and model survive: they are settings with their own controls, not
+  // attachments, and silently resetting them here would be a surprise.
+  const clearAttachments = useCallback(
+    () =>
+      setPreset((prev) => ({ ...EMPTY_PRESET, mode: prev.mode, model: prev.model })),
+    [],
+  );
 
   const applyFromQuery = useCallback(
     async (params: URLSearchParams): Promise<boolean> => {
@@ -245,8 +330,11 @@ export default function ChatPresetProvider({
       attachSkill,
       detachSkill,
       toggleTool,
+      toggleToolGroup,
       resetTools,
       toggleMcp,
+      setMode,
+      setModel,
       clearAttachments,
       applyFromQuery,
     }),
@@ -257,8 +345,11 @@ export default function ChatPresetProvider({
       attachSkill,
       detachSkill,
       toggleTool,
+      toggleToolGroup,
       resetTools,
       toggleMcp,
+      setMode,
+      setModel,
       clearAttachments,
       applyFromQuery,
     ],

@@ -18,6 +18,14 @@ export type ToolResultEvent = {
   content: string;
 };
 
+/** Manual mode: a tool call the harness will not run until the user says so. */
+export type ApprovalRequestEvent = {
+  type: "approval_request";
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+};
+
 export type AssistantMessageEvent = {
   type: "assistant_message";
   text: string;
@@ -31,12 +39,19 @@ export type ErrorEvent = {
 
 export type DoneEvent = {
   type: "done";
-  reason: "end_turn" | "max_iterations" | "error" | "disconnected";
+  reason:
+    | "end_turn"
+    | "max_iterations"
+    | "error"
+    | "disconnected"
+    // Terminal for this stream only — the turn resumes via /api/chat/approve.
+    | "awaiting_approval";
 };
 
 export type AgentEvent =
   | ToolCallEvent
   | ToolResultEvent
+  | ApprovalRequestEvent
   | AssistantMessageEvent
   | ErrorEvent
   | DoneEvent;
@@ -57,6 +72,18 @@ export type TranscriptItem =
       arguments: Record<string, unknown>;
       status: "running" | "ok" | "error";
       result?: string;
+    }
+  /**
+   * A manual-mode tool call awaiting a verdict. It becomes a `step` the moment
+   * the resume streams its result back, so the transcript ends up identical to
+   * an automatic run — the approval is a stage, not a separate kind of history.
+   */
+  | {
+      kind: "approval";
+      id: string;
+      name: string;
+      arguments: Record<string, unknown>;
+      decision?: "approved" | "denied";
     };
 
 export type HarnessConfig = {
