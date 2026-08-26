@@ -11,6 +11,7 @@ import {
   type NodeChange,
   type OnSelectionChangeParams,
 } from "@xyflow/react";
+import { useTheme } from "next-themes";
 import { useCallback, useMemo } from "react";
 
 // Imported here rather than in globals.css: Tailwind v4 requires
@@ -39,6 +40,11 @@ export default function WorkflowCanvas({
   onSelectionChange: (params: OnSelectionChangeParams) => void;
   onDrop: (type: "agent" | "condition", position: { x: number; y: number }) => void;
 }) {
+  // React Flow paints its own controls, minimap, handles and edges — the
+  // wrapper class only recolors the container behind them. colorMode is what
+  // makes those follow the theme.
+  const { resolvedTheme } = useTheme();
+
   // Defined outside render would be better still, but these close over nothing
   // — useMemo keeps the identity stable so React Flow doesn't re-register them.
   const nodeTypes = useMemo(
@@ -78,13 +84,14 @@ export default function WorkflowCanvas({
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         onSelectionChange={onSelectionChange}
+        colorMode={resolvedTheme === "dark" ? "dark" : "light"}
         fitView
         proOptions={{ hideAttribution: false }}
-        className="bg-zinc-50 dark:bg-zinc-950"
+        className="bg-background"
       >
         <Background gap={16} size={1} />
         <Controls showInteractive={false} />
-        <MiniMap pannable zoomable className="!bg-white dark:!bg-zinc-900" />
+        <MiniMap pannable zoomable className="!bg-card" />
       </ReactFlow>
     </div>
   );

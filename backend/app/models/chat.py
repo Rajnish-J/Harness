@@ -18,6 +18,8 @@ being true, the migration is to accept `agent_id` only and resolve it through
 app/db/registry_repo.py.
 """
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 # Permissive enough for every provider's ids, strict enough that the value can
@@ -34,9 +36,26 @@ class SkillPayload(BaseModel):
     content: str = Field(default="", max_length=50_000)
 
 
-class ChatRequest(BaseModel):
+#: How the turn treats tools.
+#:
+#: "agent"  — the model calls tools and the loop runs them (the original
+#:            behaviour, which is why it is the default).
+#: "manual" — the loop stops at each tool call and waits for POST
+#:            /api/chat/approve before running anything.
+#: "chat"   — no tools are advertised at all. Plain Q&A.
+ToolMode = Literal["agent", "manual", "chat"]
+
+
+class TurnPreset(BaseModel):
+    """Everything that shapes one turn except the message itself.
+
+    Shared by ChatRequest and ApprovalRequest so a resumed turn is rebuilt from
+    exactly the same inputs as the turn that paused. The alternative — parking
+    the whole turn context on the session — would make this service stateful in
+    a way the rest of it deliberately is not.
+    """
+
     session_id: str = Field(min_length=1, max_length=200)
-    message: str = Field(min_length=1, max_length=100_000)
 
     # ---- preset -----------------------------------------------------------
     # Every field below is optional and defaults to today's behaviour, so a
@@ -50,6 +69,28 @@ class ChatRequest(BaseModel):
     mcp_server_ids: list[str] = Field(default_factory=list, max_length=20)
     model: str | None = Field(default=None, pattern=MODEL_ID_PATTERN)
     max_iterations: int | None = Field(default=None, ge=1, le=50)
+    mode: ToolMode = "agent"
+
+
+class ChatRequest(TurnPreset):
+    message: str = Field(min_length=1, max_length=100_000)
+
+
+class ApprovalDecision(BaseModel):
+    """One verdict on one pending tool call."""
+
+    id: str = Field(min_length=1, max_length=200)
+    approved: bool
+
+
+class ApprovalRequest(TurnPreset):
+    """Resume a manual-mode turn that is parked on `session.pending`.
+
+    Decisions are matched to pending calls by id. A pending call with no
+    decision is treated as denied — silence must not authorise a write.
+    """
+
+    decisions: list[ApprovalDecision] = Field(default_factory=list, max_length=50)
 
 
 class ResetRequest(BaseModel):

@@ -28,7 +28,7 @@ export default function NewWorkflowButton() {
       type="button"
       onClick={create}
       disabled={busy}
-      className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-50 disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900"
+      className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-40"
     >
       {busy ? "Creating…" : "New workflow"}
     </button>

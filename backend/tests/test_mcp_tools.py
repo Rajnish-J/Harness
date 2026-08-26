@@ -98,7 +98,9 @@ async def test_is_error_becomes_a_recoverable_tool_error():
 
 def test_dedupe_suffixes_collisions():
     def make(name: str) -> Tool:
-        return Tool(name=name, description="", input_schema={}, run=lambda: "")
+        return Tool(
+            name=name, description="", input_schema={}, run=lambda: "", group="MCP · a"
+        )
 
     out = dedupe([make("mcp__a__t"), make("mcp__a__t"), make("mcp__a__t")])
     assert [tool.name for tool in out] == [
@@ -106,6 +108,18 @@ def test_dedupe_suffixes_collisions():
         "mcp__a__t_2",
         "mcp__a__t_3",
     ]
+    # Renaming must carry every other field across. A field-by-field rebuild
+    # here would silently drop whatever was added to Tool most recently.
+    assert {tool.group for tool in out} == {"MCP · a"}
+
+
+def test_wrapped_tools_carry_their_server_group():
+    """The composer files each server's tools under their own section."""
+    tool = make_tool(
+        "github", FakeCaller(FakeResult(content=[])), FakeMcpTool(name="search")
+    )
+
+    assert tool.group == "MCP · github"
 
 
 def test_mock_discovery_is_namespaced_and_transport_shaped():

@@ -39,7 +39,7 @@ const RING: Record<string, string> = {
   running: "border-amber-500",
   ok: "border-emerald-500",
   error: "border-red-500",
-  idle: "border-black/10 dark:border-white/15",
+  idle: "border-border",
 };
 
 function ConditionNodeImpl({ data, selected }: NodeProps) {
@@ -49,14 +49,14 @@ function ConditionNodeImpl({ data, selected }: NodeProps) {
 
   return (
     <div
-      className={`w-52 rounded-lg border-2 border-dashed bg-white px-3 py-2 shadow-sm dark:bg-zinc-900 ${
+      className={`w-52 rounded-lg border-2 border-dashed bg-card px-3 py-2 shadow-sm ${
         RING[status] ?? RING.idle
       } ${selected ? "ring-2 ring-blue-500/40" : ""}`}
     >
       <Handle type="target" position={Position.Left} className="!h-2 !w-2" />
 
       <div className="truncate text-sm font-medium">{d.label}</div>
-      <p className="mt-0.5 line-clamp-2 font-mono text-[10px] text-zinc-500">
+      <p className="mt-0.5 line-clamp-2 font-mono text-[10px] text-muted-foreground">
         {describePredicate((d.config as ConditionNodeConfig)?.predicate as Predicate)}
       </p>
 
@@ -65,7 +65,7 @@ function ConditionNodeImpl({ data, selected }: NodeProps) {
           className={`mt-1 font-mono text-[10px] ${
             branch === "true"
               ? "text-emerald-600 dark:text-emerald-400"
-              : "text-zinc-500"
+              : "text-muted-foreground"
           }`}
         >
           → {branch}
@@ -73,7 +73,7 @@ function ConditionNodeImpl({ data, selected }: NodeProps) {
       )}
 
       {/* Handle ids are the branch labels the backend routes on. */}
-      <div className="mt-2 flex justify-between font-mono text-[10px] text-zinc-400">
+      <div className="mt-2 flex justify-between font-mono text-[10px] text-muted-foreground">
         <span>true</span>
         <span>false</span>
       </div>
@@ -88,7 +88,7 @@ function ConditionNodeImpl({ data, selected }: NodeProps) {
         id="false"
         type="source"
         position={Position.Bottom}
-        className="!h-2 !w-2 !bg-zinc-400"
+        className="!h-2 !w-2 !bg-muted-foreground"
       />
     </div>
   );

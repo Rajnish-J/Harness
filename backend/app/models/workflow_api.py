@@ -25,3 +25,6 @@ class ToolInfo(BaseModel):
     name: str
     description: str
     input_schema: dict[str, Any]
+    #: The section the composer's tool panel files this tool under. Defaulted
+    #: rather than required so an older client reading this shape still parses.
+    group: str = "General"

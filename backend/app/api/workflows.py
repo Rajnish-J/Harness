@@ -90,7 +90,10 @@ async def list_tools() -> list[ToolInfo]:
     """The tool palette for the node config panel."""
     return [
         ToolInfo(
-            name=tool.name, description=tool.description, input_schema=tool.input_schema
+            name=tool.name,
+            description=tool.description,
+            input_schema=tool.input_schema,
+            group=tool.group,
         )
         for tool in ALL_TOOLS
     ]

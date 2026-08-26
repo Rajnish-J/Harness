@@ -33,6 +33,20 @@ class ToolResultEvent(AgentEvent):
     content: str
 
 
+class ApprovalRequestEvent(AgentEvent):
+    """A tool call the loop will not run until the user says so.
+
+    Emitted only in manual mode, one per call, immediately before the turn
+    parks. Carries the same `id` the eventual `tool_result` will, so the client
+    can fold the approval and its outcome into a single step.
+    """
+
+    type: Literal["approval_request"] = "approval_request"
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+
 class AssistantMessageEvent(AgentEvent):
     type: Literal["assistant_message"] = "assistant_message"
     text: str
@@ -46,7 +60,15 @@ class ErrorEvent(AgentEvent):
 
 class DoneEvent(AgentEvent):
     type: Literal["done"] = "done"
-    reason: Literal["end_turn", "max_iterations", "error", "disconnected"]
+    reason: Literal[
+        "end_turn",
+        "max_iterations",
+        "error",
+        "disconnected",
+        # Manual mode: the turn is parked on session.pending and resumes via
+        # POST /api/chat/approve. Terminal for THIS stream, not for the turn.
+        "awaiting_approval",
+    ]
 
 
 def sse_comment(text: str) -> str:
@@ -65,6 +87,7 @@ __all__ = [
     "AgentEvent",
     "ToolCallEvent",
     "ToolResultEvent",
+    "ApprovalRequestEvent",
     "AssistantMessageEvent",
     "ErrorEvent",
     "DoneEvent",

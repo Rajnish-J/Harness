@@ -43,11 +43,13 @@ class AnthropicClient:
         # `thinking` is intentionally omitted: on Claude Opus 5 that means
         # adaptive thinking (on by default), while older models simply run
         # without it. Passing it explicitly would break model portability.
+        # `tools` is omitted rather than sent empty: chat mode passes no tools
+        # at all, and the API rejects an empty array.
         response = await self._client.messages.create(
             model=self._model,
             max_tokens=self._max_tokens,
             system=system,
-            tools=tools,
+            tools=tools or anthropic.NOT_GIVEN,
             messages=history,
         )
 

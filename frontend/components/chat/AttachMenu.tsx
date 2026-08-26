@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, Check, Plug, Plus, RotateCcw, Sparkles, Wrench, X } from "lucide-react";
+import { Bot, Check, Plug, Plus, Sparkles, X } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
@@ -23,7 +23,12 @@ import {
 import { isPresetEmpty } from "@/lib/chat-preset";
 
 /**
- * The "+" menu: everything attachable in one place.
+ * The "+" menu: what this turn is talking to and reading from.
+ *
+ * Individual tools deliberately are NOT here — they moved to the Tools pill,
+ * which can group them the way the harness does. A flat list of every tool
+ * next to a flat list of every skill was the thing that made this menu hard to
+ * scan.
  *
  * Command lives inside a Popover, where moving focus into the filter input is
  * the correct behaviour. That is exactly why the slash menu does NOT use it —
@@ -37,14 +42,9 @@ export default function AttachMenu() {
     setAgent,
     attachSkill,
     detachSkill,
-    toggleTool,
-    resetTools,
     toggleMcp,
     clearAttachments,
   } = useChatPreset();
-
-  const builtinTools = catalog.tools.filter((t) => !t.name.startsWith("mcp__"));
-  const mcpTools = catalog.tools.filter((t) => t.name.startsWith("mcp__"));
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -54,7 +54,7 @@ export default function AttachMenu() {
           variant="ghost"
           size="icon"
           className="size-8 shrink-0"
-          aria-label="Attach an agent, skill, tool or MCP server"
+          aria-label="Attach an agent, skill or MCP server"
         >
           <Plus />
         </Button>
@@ -62,7 +62,7 @@ export default function AttachMenu() {
 
       <PopoverContent align="start" className="w-80 p-0">
         <Command>
-          <CommandInput placeholder="Attach an agent, skill or tool…" />
+          <CommandInput placeholder="Attach an agent, skill or MCP server…" />
           <CommandList className="max-h-80">
             <CommandEmpty>Nothing matches.</CommandEmpty>
 
@@ -151,30 +151,6 @@ export default function AttachMenu() {
               {catalog.mcp.length === 0 && !catalog.loading && (
                 <EmptyHint href="/mcp" label="No MCP servers configured" />
               )}
-            </CommandGroup>
-
-            <CommandSeparator />
-
-            <CommandGroup heading="Tools">
-              <CommandItem value="reset tools inherit" onSelect={resetTools}>
-                <RotateCcw className="opacity-50" />
-                <span>Use every available tool</span>
-                {preset.toolNames === null && <Check className="ml-auto size-3.5" />}
-              </CommandItem>
-
-              {[...builtinTools, ...mcpTools].map((tool) => (
-                <CommandItem
-                  key={tool.name}
-                  value={`tool ${tool.name}`}
-                  onSelect={() => toggleTool(tool.name)}
-                >
-                  <Wrench />
-                  <span className="truncate font-mono text-xs">{tool.name}</span>
-                  {preset.toolNames?.includes(tool.name) && (
-                    <Check className="ml-auto size-3.5" />
-                  )}
-                </CommandItem>
-              ))}
             </CommandGroup>
 
             {!isPresetEmpty(preset) && (

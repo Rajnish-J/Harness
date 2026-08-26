@@ -3,7 +3,7 @@ import ToolsBrowser from "@/components/tools/ToolsBrowser";
 
 export default function ToolsPage() {
   return (
-    <PageBody>
+    <PageBody width="wide">
       <ToolsBrowser />
     </PageBody>
   );

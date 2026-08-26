@@ -18,9 +18,9 @@ const RING: Record<string, string> = {
   running: "border-amber-500 shadow-[0_0_0_3px_rgba(245,158,11,0.15)]",
   ok: "border-emerald-500",
   error: "border-red-500",
-  cancelled: "border-zinc-400",
-  skipped: "border-zinc-300 opacity-50",
-  idle: "border-black/10 dark:border-white/15",
+  cancelled: "border-muted-foreground",
+  skipped: "border-border opacity-50",
+  idle: "border-border",
 };
 
 function AgentNodeImpl({ data, selected }: NodeProps) {
@@ -30,7 +30,7 @@ function AgentNodeImpl({ data, selected }: NodeProps) {
 
   return (
     <div
-      className={`w-56 rounded-lg border-2 bg-white px-3 py-2 shadow-sm transition-colors dark:bg-zinc-900 ${
+      className={`w-56 rounded-lg border-2 bg-card px-3 py-2 shadow-sm transition-colors ${
         RING[status] ?? RING.idle
       } ${selected ? "ring-2 ring-blue-500/40" : ""}`}
     >
@@ -45,14 +45,14 @@ function AgentNodeImpl({ data, selected }: NodeProps) {
 
       <div className="mt-1 flex flex-wrap gap-1">
         {(tools === null || tools === undefined || tools.length === 0) && (
-          <span className="rounded bg-black/[.06] px-1 py-0.5 font-mono text-[10px] text-zinc-500 dark:bg-white/10">
+          <span className="rounded bg-muted px-1 py-0.5 font-mono text-[10px] text-muted-foreground">
             all tools
           </span>
         )}
         {tools?.map((tool) => (
           <span
             key={tool}
-            className="rounded bg-black/[.06] px-1 py-0.5 font-mono text-[10px] text-zinc-500 dark:bg-white/10"
+            className="rounded bg-muted px-1 py-0.5 font-mono text-[10px] text-muted-foreground"
           >
             {tool}
           </span>
@@ -70,7 +70,7 @@ function AgentNodeImpl({ data, selected }: NodeProps) {
         </p>
       )}
       {status === "ok" && d.run?.outputPreview && (
-        <p className="mt-1 line-clamp-2 text-[10px] text-zinc-500">
+        <p className="mt-1 line-clamp-2 text-[10px] text-muted-foreground">
           {d.run.outputPreview}
         </p>
       )}

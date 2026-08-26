@@ -1,6 +1,6 @@
 import { presetToBody, type ChatPreset } from "./chat-preset";
 import { flags } from "./flags";
-import { streamMockChat } from "./mock/chat";
+import { streamMockApproval, streamMockChat } from "./mock/chat";
 import { consumeSSE } from "./sse";
 import type { AgentEvent, HarnessConfig } from "./types";
 
@@ -25,6 +25,7 @@ export async function streamChat(
           agentName: params.preset.agent?.name,
           skillNames: params.preset.skills.map((skill) => skill.name),
           toolNames: params.preset.toolNames ?? [],
+          mode: params.preset.mode,
         },
       },
       onEvent,
@@ -40,6 +41,45 @@ export async function streamChat(
       presetToBody(params.preset, {
         session_id: params.sessionId,
         message: params.message,
+      }),
+    ),
+    signal: params.signal,
+  });
+
+  await consumeSSE<AgentEvent>(res, onEvent);
+}
+
+/**
+ * Resolve a manual-mode turn that is parked awaiting approval.
+ *
+ * Streams like /api/chat because it *is* the rest of the same turn: the same
+ * event types arrive, and the caller folds them into the same transcript. The
+ * preset rides along so the backend rebuilds an identical turn context — the
+ * toolset that was approved is the toolset that runs.
+ */
+export async function streamApproval(
+  params: {
+    sessionId: string;
+    decisions: { id: string; approved: boolean }[];
+    preset?: ChatPreset;
+    signal?: AbortSignal;
+  },
+  onEvent: (event: AgentEvent) => void,
+): Promise<void> {
+  if (flags.mockChat) {
+    return streamMockApproval(
+      { sessionId: params.sessionId, decisions: params.decisions, signal: params.signal },
+      onEvent,
+    );
+  }
+
+  const res = await fetch(`${API_BASE}/api/chat/approve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(
+      presetToBody(params.preset, {
+        session_id: params.sessionId,
+        decisions: params.decisions,
       }),
     ),
     signal: params.signal,

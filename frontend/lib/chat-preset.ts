@@ -20,12 +20,23 @@ export type SkillAttachment = Pick<
 
 export type McpAttachment = Pick<McpServerSummary, "id" | "name">;
 
+/**
+ * How the turn treats tools. Mirrors ToolMode in backend/app/models/chat.py.
+ *
+ * "orchestrator" is deliberately absent: that mode is the workflow canvas, so
+ * the composer links to /workflows rather than pretending to run a pipeline.
+ */
+export type ToolMode = "agent" | "manual" | "chat";
+
 export type ChatPreset = {
   agent: AgentAttachment | null;
   skills: SkillAttachment[];
   /** null means "inherit": the full registry, or whatever the agent allows. */
   toolNames: string[] | null;
   mcpServers: McpAttachment[];
+  mode: ToolMode;
+  /** An explicit pick in the composer. null means the agent's, then the server's. */
+  model: string | null;
 };
 
 export const EMPTY_PRESET: ChatPreset = {
@@ -33,8 +44,15 @@ export const EMPTY_PRESET: ChatPreset = {
   skills: [],
   toolNames: null,
   mcpServers: [],
+  mode: "agent",
+  model: null,
 };
 
+/**
+ * True when nothing is *attached*. Mode and model are settings with their own
+ * always-visible controls, not chips, so they are deliberately not counted —
+ * otherwise picking a model would light up the "clear attachments" row.
+ */
 export function isPresetEmpty(preset: ChatPreset): boolean {
   return (
     preset.agent === null &&
@@ -54,7 +72,7 @@ export function isPresetEmpty(preset: ChatPreset): boolean {
  */
 export function presetToBody(
   preset: ChatPreset | undefined,
-  base: { session_id: string; message: string },
+  base: Record<string, unknown> & { session_id: string },
 ): Record<string, unknown> {
   const body: Record<string, unknown> = { ...base };
   if (!preset) return body;
@@ -66,6 +84,11 @@ export function presetToBody(
     if (preset.agent.model) body.model = preset.agent.model;
     if (preset.agent.maxIterations) body.max_iterations = preset.agent.maxIterations;
   }
+
+  // After the agent block, so an explicit pick in the composer wins over the
+  // agent's saved model rather than the other way round.
+  if (preset.model) body.model = preset.model;
+  if (preset.mode !== "agent") body.mode = preset.mode;
 
   if (preset.skills.length > 0) {
     body.skills = preset.skills.map((skill) => ({
@@ -85,20 +108,4 @@ export function presetToBody(
   }
 
   return body;
-}
-
-/** A one-line summary for the switcher, e.g. "claude-opus-5 · 3 tools · 2 skills". */
-export function describePreset(preset: ChatPreset): string {
-  const parts: string[] = [];
-  if (preset.agent?.model) parts.push(preset.agent.model);
-  if (preset.toolNames?.length) {
-    parts.push(`${preset.toolNames.length} tool${preset.toolNames.length === 1 ? "" : "s"}`);
-  }
-  if (preset.skills.length) {
-    parts.push(`${preset.skills.length} skill${preset.skills.length === 1 ? "" : "s"}`);
-  }
-  if (preset.mcpServers.length) {
-    parts.push(`${preset.mcpServers.length} MCP`);
-  }
-  return parts.join(" · ");
 }

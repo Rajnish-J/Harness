@@ -8,7 +8,7 @@
 
 import { API_BASE } from "./api";
 import { flags } from "./flags";
-import { MOCK_TOOLS } from "./mock/tools";
+import { MOCK_BUILTIN_TOOLS, MOCK_MCP_TOOLS } from "./mock/tools";
 import { mockRunEvents } from "./mock/workflows";
 import { consumeSSE } from "./sse";
 import type { WorkflowEvent } from "./workflow-events";
@@ -94,10 +94,18 @@ export type ToolInfo = {
   name: string;
   description: string;
   input_schema: Record<string, unknown>;
+  /**
+   * The section this tool files under, set by the harness: "File Operations"
+   * for the built-ins, `MCP · {server}` for MCP-discovered ones. Optional
+   * because an older harness predates the field.
+   */
+  group?: string;
 };
 
 export async function fetchTools(signal?: AbortSignal): Promise<ToolInfo[]> {
-  if (flags.mockTools) return MOCK_TOOLS;
+  // Built-ins only. MCP tools come from fetchMcpTools below, per attached
+  // server, because discovering them costs a round trip to each one.
+  if (flags.mockTools) return MOCK_BUILTIN_TOOLS;
 
   try {
     const res = await fetch(`${API_BASE}/api/workflows/tools`, { signal });
@@ -105,6 +113,33 @@ export async function fetchTools(signal?: AbortSignal): Promise<ToolInfo[]> {
     return res.json();
   } catch {
     return [];
+  }
+}
+
+/**
+ * Tools discovered from the given MCP servers, plus notices for any that
+ * failed to answer.
+ *
+ * A server being down is data, not an error: the composer shows the notice
+ * next to the tools that did resolve, which is why this returns both rather
+ * than throwing.
+ */
+export async function fetchMcpTools(
+  serverIds: string[],
+  signal?: AbortSignal,
+): Promise<{ tools: ToolInfo[]; notices: string[] }> {
+  if (serverIds.length === 0) return { tools: [], notices: [] };
+  if (flags.mockTools || flags.mockMcp) return { tools: MOCK_MCP_TOOLS, notices: [] };
+
+  try {
+    const query = encodeURIComponent(serverIds.join(","));
+    const res = await fetch(`${API_BASE}/api/mcp/tools?server_ids=${query}`, {
+      signal,
+    });
+    if (!res.ok) return { tools: [], notices: [] };
+    return (await res.json()) as { tools: ToolInfo[]; notices: string[] };
+  } catch {
+    return { tools: [], notices: [] };
   }
 }
 

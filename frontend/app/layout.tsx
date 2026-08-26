@@ -6,6 +6,7 @@ import ChatPresetProvider from "@/components/chat/ChatPresetProvider";
 import ChatSessionProvider from "@/components/chat/ChatSessionProvider";
 import AppHeader from "@/components/shell/AppHeader";
 import AppSidebar from "@/components/shell/AppSidebar";
+import ThemeProvider from "@/components/shell/ThemeProvider";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import "./globals.css";
 
@@ -28,23 +29,26 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
+      suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-svh">
-        <ChatPresetProvider>
-          <ChatSessionProvider>
-            <SidebarProvider
-              defaultOpen={defaultOpen}
-              className="h-svh overflow-hidden"
-            >
-              <AppSidebar />
-              <SidebarInset className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                <AppHeader />
-                <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
-              </SidebarInset>
-            </SidebarProvider>
-          </ChatSessionProvider>
-        </ChatPresetProvider>
+        <ThemeProvider>
+          <ChatPresetProvider>
+            <ChatSessionProvider>
+              <SidebarProvider
+                defaultOpen={defaultOpen}
+                className="h-svh overflow-hidden"
+              >
+                <AppSidebar />
+                <SidebarInset className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                  <AppHeader />
+                  <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
+                </SidebarInset>
+              </SidebarProvider>
+            </ChatSessionProvider>
+          </ChatPresetProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

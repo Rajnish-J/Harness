@@ -39,13 +39,13 @@ export default function ValidationBanner({
             >
               •
             </span>
-            <span className="text-zinc-700 dark:text-zinc-300">
+            <span className="text-foreground">
               {issue.message}
               {issue.node_id && (
                 <button
                   type="button"
                   onClick={() => onFocus(issue.node_id!)}
-                  className="ml-1.5 font-mono text-[10px] text-zinc-500 underline hover:text-zinc-800 dark:hover:text-zinc-200"
+                  className="ml-1.5 font-mono text-[10px] text-muted-foreground underline hover:text-foreground"
                 >
                   {issue.node_id}
                 </button>

@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 
 import ActiveAgentBadge from "@/components/shell/ActiveAgentBadge";
 import MockBadge from "@/components/shell/MockBadge";
+import ThemeToggle from "@/components/shell/ThemeToggle";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { findNavItem } from "@/lib/nav";
@@ -34,6 +35,7 @@ export default function AppHeader() {
       <div className="ml-auto flex items-center gap-2 pl-3">
         <ActiveAgentBadge />
         <MockBadge />
+        <ThemeToggle />
       </div>
     </header>
   );
