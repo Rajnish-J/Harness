@@ -44,6 +44,26 @@ class Settings(BaseSettings):
     max_node_output_chars: int = 20_000
     max_interpolated_chars: int = 8_000
 
+    # Ceiling on the composed system prompt (base + agent + attached skills).
+    # A runaway skill body would otherwise silently eat the context window.
+    max_system_prompt_chars: int = 120_000
+
+    # ---- MCP --------------------------------------------------------------
+    # True returns plausible fake tools instead of connecting anything. No
+    # subprocess is spawned, so this is how to work on the UI without Node and
+    # how CI exercises the tool-wrapping path.
+    mock_mcp: bool = False
+    # Off by default: the tool list is part of the prompt, so auto-attaching
+    # every configured server would silently inflate the cost of every chat.
+    mcp_attach_all_enabled: bool = False
+    mcp_connect_timeout: float = 20.0
+    mcp_list_timeout: float = 15.0
+    mcp_tool_timeout: float = 60.0
+    mcp_idle_timeout: float = 300.0
+    # How long a server that failed to start is left alone, so a broken one is
+    # not respawned on every single message.
+    mcp_retry_cooldown: float = 30.0
+
     # NoDecode is required: without it pydantic-settings JSON-decodes complex
     # types straight from the env source, so `CORS_ORIGINS=http://localhost:3000`
     # fails as invalid JSON before any validator can split it.

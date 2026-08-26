@@ -7,6 +7,9 @@
  */
 
 import { API_BASE } from "./api";
+import { flags } from "./flags";
+import { MOCK_TOOLS } from "./mock/tools";
+import { mockRunEvents } from "./mock/workflows";
 import { consumeSSE } from "./sse";
 import type { WorkflowEvent } from "./workflow-events";
 import type {
@@ -22,6 +25,15 @@ export async function streamWorkflowRun(
   params: { workflowId: string; input: string; signal?: AbortSignal },
   onEvent: (event: WorkflowEvent) => void,
 ): Promise<void> {
+  if (flags.mockWorkflow) {
+    for (const event of mockRunEvents(params.workflowId)) {
+      if (params.signal?.aborted) return;
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      onEvent(event);
+    }
+    return;
+  }
+
   const res = await fetch(
     `${API_BASE}/api/workflows/${params.workflowId}/runs`,
     {
@@ -35,6 +47,8 @@ export async function streamWorkflowRun(
 }
 
 export async function cancelRun(runId: string): Promise<boolean> {
+  if (flags.mockWorkflow) return true;
+
   try {
     const res = await fetch(`${API_BASE}/api/runs/${runId}/cancel`, {
       method: "POST",
@@ -50,6 +64,23 @@ export async function cancelRun(runId: string): Promise<boolean> {
 export async function validateGraph(
   graph: WorkflowGraph,
 ): Promise<{ ok: boolean; issues: ValidationIssue[] }> {
+  // Python owns the real graph schema. Mock mode cannot reach it, so it applies
+  // the one rule the fixtures exercise: a node nothing points at is unreachable.
+  if (flags.mockWorkflow) {
+    const targets = new Set(graph.edges.map((edge) => edge.target));
+    const issues: ValidationIssue[] = graph.nodes
+      .slice(1)
+      .filter((node) => !targets.has(node.id))
+      .map((node) => ({
+        code: "unreachable_node",
+        severity: "error" as const,
+        message: `Node "${node.label}" is not reachable from the entry node.`,
+        node_id: node.id,
+        edge_id: null,
+      }));
+    return { ok: issues.length === 0, issues };
+  }
+
   const res = await fetch(`${API_BASE}/api/workflows/validate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -66,6 +97,8 @@ export type ToolInfo = {
 };
 
 export async function fetchTools(signal?: AbortSignal): Promise<ToolInfo[]> {
+  if (flags.mockTools) return MOCK_TOOLS;
+
   try {
     const res = await fetch(`${API_BASE}/api/workflows/tools`, { signal });
     if (!res.ok) return [];

@@ -20,11 +20,11 @@ export default function MessageList({
 
   if (items.length === 0) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
+        <p className="text-sm text-muted-foreground">
           The agent has file tools scoped to a sandboxed workspace.
         </p>
-        <p className="max-w-md font-mono text-xs text-zinc-400 dark:text-zinc-600">
+        <p className="max-w-md font-mono text-xs text-muted-foreground">
           Try: &ldquo;list the files, then create notes.md with three bullet
           points about agent loops, and read it back&rdquo;
         </p>
@@ -33,7 +33,7 @@ export default function MessageList({
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-4 py-6">
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-6">
       {items.map((item) =>
         item.kind === "step" ? (
           <AgentStepIndicator key={item.id} step={item} />
@@ -44,10 +44,10 @@ export default function MessageList({
 
       {streaming && (
         <div
-          className="flex items-center gap-1.5 px-2 text-xs text-zinc-400"
+          className="flex items-center gap-1.5 px-2 text-xs text-muted-foreground"
           aria-live="polite"
         >
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-zinc-400" />
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground" />
           working…
         </div>
       )}

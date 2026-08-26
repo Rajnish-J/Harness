@@ -36,7 +36,7 @@ export default function AgentStepIndicator({ step }: { step: Step }) {
       <button
         type="button"
         onClick={() => setOpen((prev) => !prev)}
-        className="flex w-full items-start gap-2 rounded px-2 py-1 text-left transition-colors hover:bg-black/[.04] dark:hover:bg-white/[.06]"
+        className="flex w-full items-start gap-2 rounded px-2 py-1 text-left transition-colors hover:bg-accent"
         aria-expanded={open}
       >
         <span
@@ -48,17 +48,17 @@ export default function AgentStepIndicator({ step }: { step: Step }) {
             className={
               step.status === "error"
                 ? "text-red-600 dark:text-red-400"
-                : "text-zinc-500 dark:text-zinc-400"
+                : "text-muted-foreground"
             }
           >
             {step.name}
           </span>
           {args && (
-            <span className="text-zinc-400 dark:text-zinc-500">({args})</span>
+            <span className="text-muted-foreground">({args})</span>
           )}
         </span>
         {step.result !== undefined && (
-          <span className="shrink-0 text-zinc-400 dark:text-zinc-600">
+          <span className="shrink-0 text-muted-foreground">
             {open ? "−" : "+"}
           </span>
         )}
@@ -69,7 +69,7 @@ export default function AgentStepIndicator({ step }: { step: Step }) {
           className={`mt-1 ml-6 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded border px-2 py-1.5 text-[11px] leading-relaxed ${
             step.status === "error"
               ? "border-red-500/30 bg-red-500/5 text-red-700 dark:text-red-300"
-              : "border-black/10 bg-black/[.03] text-zinc-600 dark:border-white/10 dark:bg-white/[.04] dark:text-zinc-400"
+              : "border bg-muted/50 text-muted-foreground"
           }`}
         >
           {step.result}

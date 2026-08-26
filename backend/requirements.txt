@@ -57,8 +57,32 @@ typing_extensions==4.16.0
 urllib3==2.7.0
 uuid_utils==0.17.0
 uvicorn==0.52.4
-uvloop==0.22.1
+# No Windows wheels exist and the sdist refuses to build there; nothing in app/
+# imports it, and uvicorn falls back to the asyncio loop when it is absent.
+uvloop==0.22.1; sys_platform != "win32"
 watchfiles==1.2.0
 websockets==16.1.1
 xxhash==4.0.1
 zstandard==0.25.0
+
+# --- MCP client -------------------------------------------------------------
+# Connects the servers configured in the mcp_servers table and exposes their
+# tools to the agent. Pins below are what `pip install mcp` resolved to, taken
+# from pip freeze rather than guessed; `pip check` is clean against the existing
+# starlette/pydantic/httpx pins.
+mcp==2.1.1
+mcp-types==2.1.1
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+referencing==0.37.0
+rpds-py==2026.6.3
+attrs==26.1.0
+sse-starlette==3.4.8
+python-multipart==0.0.32
+PyJWT==2.13.0
+cryptography==50.0.1
+cffi==2.1.1
+pycparser==3.0
+opentelemetry-api==1.44.0
+# stdio transport reads process handles on Windows; no-op elsewhere.
+pywin32==312; sys_platform == "win32"

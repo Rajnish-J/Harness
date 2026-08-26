@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { reportDbError } from "@/lib/server/db-error";
 import {
   archiveWorkflow,
   getWorkflow,
@@ -18,7 +19,10 @@ export async function GET(_request: Request, ctx: Ctx) {
     if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json(row);
   } catch (error) {
-    return NextResponse.json({ error: (error as Error).message }, { status: 500 });
+    return NextResponse.json(
+      { error: reportDbError("GET /api/workflows/[id]", error) },
+      { status: 500 },
+    );
   }
 }
 
@@ -56,7 +60,10 @@ export async function PATCH(request: Request, ctx: Ctx) {
     if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json(row);
   } catch (error) {
-    return NextResponse.json({ error: (error as Error).message }, { status: 500 });
+    return NextResponse.json(
+      { error: reportDbError("PATCH /api/workflows/[id]", error) },
+      { status: 500 },
+    );
   }
 }
 
@@ -68,6 +75,9 @@ export async function DELETE(_request: Request, ctx: Ctx) {
     if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json({ ok: true, archived: row.id });
   } catch (error) {
-    return NextResponse.json({ error: (error as Error).message }, { status: 500 });
+    return NextResponse.json(
+      { error: reportDbError("DELETE /api/workflows/[id]", error) },
+      { status: 500 },
+    );
   }
 }
