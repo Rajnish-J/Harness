@@ -13,6 +13,7 @@ import type { ToolInfo } from "@/lib/workflow-api";
 export const MOCK_BUILTIN_TOOLS: ToolInfo[] = [
   {
     name: "read_file",
+    group: "File Operations",
     description:
       "Read a UTF-8 text file from the workspace. Paths are relative to the workspace root.",
     input_schema: {
@@ -28,6 +29,7 @@ export const MOCK_BUILTIN_TOOLS: ToolInfo[] = [
   },
   {
     name: "write_file",
+    group: "File Operations",
     description:
       "Create or overwrite a UTF-8 text file in the workspace. Parent directories are created as needed.",
     input_schema: {
@@ -41,6 +43,7 @@ export const MOCK_BUILTIN_TOOLS: ToolInfo[] = [
   },
   {
     name: "list_directory",
+    group: "File Operations",
     description:
       "List the entries of a directory in the workspace. Defaults to the workspace root.",
     input_schema: {
@@ -59,6 +62,7 @@ export const MOCK_BUILTIN_TOOLS: ToolInfo[] = [
 export const MOCK_MCP_TOOLS: ToolInfo[] = [
   {
     name: "mcp__github__search_issues",
+    group: "MCP · github",
     description: "[github] Search issues and pull requests with GitHub query syntax.",
     input_schema: {
       type: "object",
@@ -71,6 +75,7 @@ export const MOCK_MCP_TOOLS: ToolInfo[] = [
   },
   {
     name: "mcp__github__create_issue",
+    group: "MCP · github",
     description: "[github] Open a new issue on the repository.",
     input_schema: {
       type: "object",
@@ -84,6 +89,7 @@ export const MOCK_MCP_TOOLS: ToolInfo[] = [
   },
   {
     name: "mcp__filesystem__list_directory",
+    group: "MCP · filesystem",
     description:
       "[filesystem] List a directory through the MCP filesystem server. Distinct from the built-in tool of the same base name.",
     input_schema: {
@@ -94,6 +100,7 @@ export const MOCK_MCP_TOOLS: ToolInfo[] = [
   },
   {
     name: "mcp__postgres__query",
+    group: "MCP · postgres",
     description: "[postgres] Run a read-only SQL query and return rows as JSON.",
     input_schema: {
       type: "object",
