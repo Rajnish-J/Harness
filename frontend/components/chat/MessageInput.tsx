@@ -6,7 +6,11 @@ import { useRef, useState } from "react";
 import AgentSwitcher from "./AgentSwitcher";
 import AttachMenu from "./AttachMenu";
 import AttachmentChips from "./AttachmentChips";
+import ComposerHelp from "./ComposerHelp";
 import { useChatPreset } from "./ChatPresetProvider";
+import ModelPicker from "./ModelPicker";
+import ModeSelector from "./ModeSelector";
+import ToolsPopover from "./ToolsPopover";
 import { Button } from "@/components/ui/button";
 import {
   filterSlashOptions,
@@ -15,12 +19,22 @@ import {
   type SlashOption,
 } from "@/lib/slash";
 
+/**
+ * How tall the box may grow before it scrolls internally. Named because the
+ * same number has to appear in the two auto-grow handlers and in the class —
+ * as three loose literals they drift apart the first time one is tuned.
+ */
+const MAX_COMPOSER_PX = 320;
+
 export default function MessageInput({
   disabled,
+  pending,
   onSubmit,
   onStop,
 }: {
   disabled: boolean;
+  /** A manual-mode tool call is parked; the turn resumes on a verdict. */
+  pending?: boolean;
   onSubmit: (text: string) => void;
   onStop: () => void;
 }) {
@@ -70,7 +84,7 @@ export default function MessageInput({
     setValue(el.value);
     setCaret(el.selectionStart ?? el.value.length);
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+    el.style.height = `${Math.min(el.scrollHeight, MAX_COMPOSER_PX)}px`;
   }
 
   function accept(option: SlashOption) {
@@ -96,13 +110,13 @@ export default function MessageInput({
       el.focus();
       el.setSelectionRange(next.caret, next.caret);
       el.style.height = "auto";
-      el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+      el.style.height = `${Math.min(el.scrollHeight, MAX_COMPOSER_PX)}px`;
     });
   }
 
   function submit() {
     const text = value.trim();
-    if (!text || disabled) return;
+    if (!text || disabled || pending) return;
     onSubmit(text);
     setValue("");
     setCaret(0);
@@ -149,8 +163,6 @@ export default function MessageInput({
 
   return (
     <div className="shrink-0 px-4 pb-4 pt-2">
-      <AgentSwitcher />
-
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -210,19 +222,29 @@ export default function MessageInput({
             setCaret(event.currentTarget.selectionStart ?? 0)
           }
           onKeyDown={onKeyDown}
-          placeholder="Ask the harness anything.  /  to attach a skill or agent"
+          disabled={pending}
+          placeholder={
+            pending
+              ? "Approve or deny the pending tool call to continue…"
+              : "Ask the harness anything.  /  to attach a skill or agent"
+          }
           aria-activedescendant={
             slashOpen && active ? `slash-${active.kind}-${active.id}` : undefined
           }
-          className="max-h-[200px] w-full resize-none bg-transparent px-3 pt-3 text-sm outline-none placeholder:text-muted-foreground"
+          // min-h floors the inline height the handlers set, so auto-grow
+          // still works and submit()'s reset lands on three lines, not one.
+          className="max-h-[320px] min-h-[84px] w-full resize-none bg-transparent px-3 pt-3 text-sm outline-none placeholder:text-muted-foreground"
         />
 
-        <div className="flex items-center gap-1 px-2 pb-2">
+        <div className="flex flex-wrap items-center gap-1.5 px-2 pb-2">
           <AttachMenu />
+          <AgentSwitcher />
+          <ModeSelector />
+          <ToolsPopover />
+          <ModelPicker />
 
-          <span className="ml-auto hidden pr-1 text-[11px] text-muted-foreground sm:inline">
-            ⏎ send · ⇧⏎ newline
-          </span>
+          <span className="ml-auto" />
+          <ComposerHelp />
 
           {disabled ? (
             <Button
@@ -240,7 +262,7 @@ export default function MessageInput({
               type="submit"
               size="icon"
               className="size-8 shrink-0"
-              disabled={!value.trim()}
+              disabled={!value.trim() || pending}
               aria-label="Send message"
             >
               <ArrowUp />
