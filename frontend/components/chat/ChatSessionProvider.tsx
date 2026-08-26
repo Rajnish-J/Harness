@@ -11,7 +11,7 @@ import {
   useSyncExternalStore,
 } from "react";
 
-import { resetSession, streamChat } from "@/lib/api";
+import { resetSession, streamApproval, streamChat } from "@/lib/api";
 import type { ChatPreset } from "@/lib/chat-preset";
 import {
   getServerSessionIdSnapshot,
@@ -24,11 +24,19 @@ import type { AgentEvent, TranscriptItem } from "@/lib/types";
 let counter = 0;
 const nextId = () => `item-${++counter}`;
 
+export type ApprovalDecision = { id: string; approved: boolean };
+
 type ChatSessionValue = {
   sessionId: string | null;
   items: TranscriptItem[];
   streaming: boolean;
+  /** Manual mode: a tool call is parked and the composer is waiting on a verdict. */
+  pending: boolean;
   send: (text: string, preset?: ChatPreset) => Promise<void>;
+  resolveApprovals: (
+    decisions: ApprovalDecision[],
+    preset?: ChatPreset,
+  ) => Promise<void>;
   stop: () => void;
   newChat: () => void;
 };
@@ -57,6 +65,7 @@ export default function ChatSessionProvider({
 
   const [items, setItems] = useState<TranscriptItem[]>([]);
   const [streaming, setStreaming] = useState(false);
+  const [pending, setPending] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   // Abort any in-flight stream if the app goes away. Paired with the backend's
@@ -69,6 +78,17 @@ export default function ChatSessionProvider({
       switch (event.type) {
         case "assistant_message":
           return [...prev, { kind: "assistant", id: nextId(), text: event.text }];
+
+        case "approval_request":
+          return [
+            ...prev,
+            {
+              kind: "approval",
+              id: event.id,
+              name: event.name,
+              arguments: event.arguments,
+            },
+          ];
 
         case "tool_call":
           return [
@@ -84,16 +104,25 @@ export default function ChatSessionProvider({
 
         case "tool_result":
           // Fold the result into the step the call already created, so one
-          // tool round reads as a single line rather than two.
-          return prev.map((item) =>
-            item.kind === "step" && item.id === event.id
-              ? {
-                  ...item,
-                  status: event.is_error ? "error" : "ok",
-                  result: event.content,
-                }
-              : item,
-          );
+          // tool round reads as a single line rather than two. An approved
+          // call has no step yet — it has an approval card — so that becomes
+          // the step here, and the transcript ends up identical to an
+          // automatic run.
+          return prev.map((item) => {
+            if (item.id !== event.id) return item;
+
+            if (item.kind === "step" || item.kind === "approval") {
+              return {
+                kind: "step",
+                id: item.id,
+                name: item.name,
+                arguments: item.arguments,
+                status: event.is_error ? "error" : "ok",
+                result: event.content,
+              };
+            }
+            return item;
+          });
 
         case "error":
           return [
@@ -120,14 +149,27 @@ export default function ChatSessionProvider({
 
       setItems((prev) => [...prev, { kind: "user", id: nextId(), text }]);
       setStreaming(true);
+      setPending(false);
 
       const controller = new AbortController();
       abortRef.current = controller;
 
       try {
         await streamChat(
-          { sessionId, message: text, preset, signal: controller.signal },
-          applyEvent,
+          {
+            sessionId,
+            message: text,
+            preset,
+            signal: controller.signal,
+          },
+          (event) => {
+            // The turn is parked server-side, not finished — the composer has
+            // to stay locked until the user rules on it.
+            if (event.type === "done" && event.reason === "awaiting_approval") {
+              setPending(true);
+            }
+            applyEvent(event);
+          },
         );
       } catch (error) {
         if ((error as Error).name !== "AbortError") {
@@ -152,12 +194,81 @@ export default function ChatSessionProvider({
     [sessionId, applyEvent],
   );
 
-  const stop = useCallback(() => abortRef.current?.abort(), []);
+  /**
+   * Finish a parked manual-mode turn.
+   *
+   * Sends the same preset the message was sent with, so the backend rebuilds
+   * the same turn context: the toolset that was approved is the toolset that
+   * runs.
+   */
+  const resolveApprovals = useCallback(
+    async (decisions: ApprovalDecision[], preset?: ChatPreset) => {
+      if (!sessionId) return;
+
+      const verdicts = new Map(decisions.map((d) => [d.id, d.approved]));
+      setItems((prev) =>
+        prev.map((item) =>
+          item.kind === "approval" && verdicts.has(item.id)
+            ? {
+                ...item,
+                decision: verdicts.get(item.id) ? "approved" : "denied",
+              }
+            : item,
+        ),
+      );
+
+      setPending(false);
+      setStreaming(true);
+
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      try {
+        await streamApproval(
+          { sessionId, decisions, preset, signal: controller.signal },
+          (event) => {
+            if (event.type === "done" && event.reason === "awaiting_approval") {
+              setPending(true);
+            }
+            applyEvent(event);
+          },
+        );
+      } catch (error) {
+        if ((error as Error).name !== "AbortError") {
+          setItems((prev) => [
+            ...prev,
+            {
+              kind: "error",
+              id: nextId(),
+              code: "network",
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "Could not reach the harness backend.",
+            },
+          ]);
+        }
+      } finally {
+        setStreaming(false);
+        abortRef.current = null;
+      }
+    },
+    [sessionId, applyEvent],
+  );
+
+  const stop = useCallback(() => {
+    abortRef.current?.abort();
+    // A parked call the user walked away from is abandoned with the stream:
+    // the next message starts a fresh turn, and the backend drops the pending
+    // call the first time a resume is refused.
+    setPending(false);
+  }, []);
 
   const newChat = useCallback(() => {
     abortRef.current?.abort();
     rotateSessionId();
     setItems([]);
+    setPending(false);
     // Fire-and-forget: the UI clears immediately, and a stale server session is
     // harmless once we have rotated away from its id. resetSession swallows
     // its own errors.
@@ -165,8 +276,26 @@ export default function ChatSessionProvider({
   }, [sessionId]);
 
   const value = useMemo(
-    () => ({ sessionId, items, streaming, send, stop, newChat }),
-    [sessionId, items, streaming, send, stop, newChat],
+    () => ({
+      sessionId,
+      items,
+      streaming,
+      pending,
+      send,
+      resolveApprovals,
+      stop,
+      newChat,
+    }),
+    [
+      sessionId,
+      items,
+      streaming,
+      pending,
+      send,
+      resolveApprovals,
+      stop,
+      newChat,
+    ],
   );
 
   return (

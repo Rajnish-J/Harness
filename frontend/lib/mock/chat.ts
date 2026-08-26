@@ -16,6 +16,7 @@
  *    fetch, and the Stop button behaves identically.
  */
 
+import type { ToolMode } from "@/lib/chat-preset";
 import type { AgentEvent } from "@/lib/types";
 
 /** Rejects on abort rather than resolving, so the caller unwinds like fetch. */
@@ -149,7 +150,70 @@ export type MockChatPreset = {
   agentName?: string | null;
   skillNames?: string[];
   toolNames?: string[];
+  mode?: ToolMode;
 };
+
+/**
+ * Manual mode is a two-request protocol, so the fixture has to remember what it
+ * parked. Keyed by session id, exactly like the real SessionStore, and cleared
+ * on resume — which is also what makes a second approve of the same call fail
+ * here the way it fails against Python.
+ */
+const parked = new Map<string, { rounds: Round[]; closing: string }>();
+
+export async function streamMockApproval(
+  params: {
+    sessionId: string;
+    decisions: { id: string; approved: boolean }[];
+    signal?: AbortSignal;
+  },
+  onEvent: (event: AgentEvent) => void,
+): Promise<void> {
+  const pending = parked.get(params.sessionId);
+  parked.delete(params.sessionId);
+
+  if (!pending) {
+    onEvent({
+      type: "error",
+      code: "no_pending_approval",
+      message: "There is no tool call waiting for approval in this session.",
+    });
+    onEvent({ type: "done", reason: "error" });
+    return;
+  }
+
+  const approved = new Map(params.decisions.map((d) => [d.id, d.approved]));
+  let denied = 0;
+
+  let counter = 0;
+  for (const round of pending.rounds) {
+    counter += 1;
+    const id = `call_mock_${counter}`;
+    // A call with no verdict counts as denied, matching resume_agent_loop.
+    const ok = approved.get(id) ?? false;
+    if (!ok) denied += 1;
+
+    await sleep(400, params.signal);
+    onEvent({
+      type: "tool_result",
+      id,
+      name: round.tool,
+      is_error: ok ? (round.isError ?? false) : true,
+      content: ok
+        ? round.result
+        : "The user denied this tool call. Do not retry it. Continue without it, or explain what you would need instead.",
+    });
+  }
+
+  await sleep(600, params.signal);
+  onEvent({
+    type: "assistant_message",
+    text: denied
+      ? "Understood — I will leave that alone and work without it."
+      : pending.closing,
+  });
+  onEvent({ type: "done", reason: "end_turn" });
+}
 
 export async function streamMockChat(
   params: {
@@ -163,6 +227,8 @@ export async function streamMockChat(
   const preset = params.preset ?? {};
   const toolNames = preset.toolNames ?? [];
   const script = scriptFor(params.message, toolNames);
+  // Chat mode advertises no tools, so the fixture must not narrate any.
+  if (preset.mode === "chat") script.rounds = [];
 
   // Feels like time-to-first-token rather than an instant reply.
   await sleep(450, params.signal);
@@ -177,6 +243,31 @@ export async function streamMockChat(
     type: "assistant_message",
     text: prefix.length ? `${prefix.join(" ")}\n\n${script.opening}` : script.opening,
   });
+
+  if (preset.mode === "manual" && script.rounds.length > 0) {
+    // Park instead of running, and stop the stream: the turn resumes through
+    // streamMockApproval, exactly as the real one resumes through
+    // POST /api/chat/approve.
+    parked.set(params.sessionId, {
+      rounds: script.rounds,
+      closing: script.closing,
+    });
+
+    let pendingCounter = 0;
+    for (const round of script.rounds) {
+      pendingCounter += 1;
+      await sleep(300, params.signal);
+      onEvent({
+        type: "approval_request",
+        id: `call_mock_${pendingCounter}`,
+        name: round.tool,
+        arguments: round.args,
+      });
+    }
+
+    onEvent({ type: "done", reason: "awaiting_approval" });
+    return;
+  }
 
   let counter = 0;
   for (const round of script.rounds) {

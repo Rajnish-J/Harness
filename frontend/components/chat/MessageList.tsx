@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import AgentStepIndicator from "./AgentStepIndicator";
+import ApprovalCard from "./ApprovalCard";
 import MessageBubble from "./MessageBubble";
 import type { TranscriptItem } from "@/lib/types";
 
@@ -18,15 +19,16 @@ export default function MessageList({
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [items, streaming]);
 
+  // No `flex-1` here on purpose: taking the free space is what used to push the
+  // composer to the bottom edge on an empty chat. As a shrink-0 block it sits
+  // directly above the composer, and ChatWindow's `justify-center` centres the
+  // pair as one group.
   if (items.length === 0) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
+      <div className="flex shrink-0 flex-col items-center gap-1.5 px-6 pb-6 text-center">
+        <h2 className="text-lg font-semibold">What should the harness work on?</h2>
         <p className="text-sm text-muted-foreground">
-          The agent has file tools scoped to a sandboxed workspace.
-        </p>
-        <p className="max-w-md font-mono text-xs text-muted-foreground">
-          Try: &ldquo;list the files, then create notes.md with three bullet
-          points about agent loops, and read it back&rdquo;
+          File tools, scoped to a sandboxed workspace.
         </p>
       </div>
     );
@@ -34,13 +36,15 @@ export default function MessageList({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-6">
-      {items.map((item) =>
-        item.kind === "step" ? (
-          <AgentStepIndicator key={item.id} step={item} />
-        ) : (
-          <MessageBubble key={item.id} item={item} />
-        ),
-      )}
+      {items.map((item) => {
+        if (item.kind === "step") {
+          return <AgentStepIndicator key={item.id} step={item} />;
+        }
+        if (item.kind === "approval") {
+          return <ApprovalCard key={item.id} item={item} />;
+        }
+        return <MessageBubble key={item.id} item={item} />;
+      })}
 
       {streaming && (
         <div
