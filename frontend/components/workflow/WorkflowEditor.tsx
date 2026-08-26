@@ -10,7 +10,6 @@ import {
   type EdgeChange,
   type NodeChange,
 } from "@xyflow/react";
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 
 import NodeConfigPanel from "./NodeConfigPanel";
@@ -238,30 +237,21 @@ export default function WorkflowEditor({ workflow }: { workflow: Workflow }) {
   );
 
   return (
-    <div className="flex h-dvh flex-col font-sans">
-      <header className="flex items-center gap-3 border-b border-black/[.08] px-4 py-2.5 dark:border-white/[.12]">
-        <Link href="/workflows" className="text-sm text-zinc-500 hover:underline">
-          ← Workflows
-        </Link>
-        <h1 className="text-sm font-semibold">{workflow.name}</h1>
+    <div className="flex h-full min-h-0 flex-col font-sans">
+      {/* Editor toolbar, not app navigation — the sidebar owns the links now.
+          What stays here is state that belongs to this workflow. */}
+      <div className="flex shrink-0 items-center gap-3 border-b border-black/[.08] px-4 py-2.5 dark:border-white/[.12]">
+        <h2 className="truncate text-sm font-semibold">{workflow.name}</h2>
         {dirty && <span className="text-[11px] text-amber-600">unsaved</span>}
-        <div className="ml-auto flex items-center gap-2">
-          <Link
-            href="/"
-            className="rounded-lg border border-black/[.10] px-3 py-1.5 text-xs dark:border-white/[.14]"
-          >
-            Chat
-          </Link>
-          <button
-            type="button"
-            onClick={save}
-            disabled={saving || !dirty}
-            className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-50 disabled:opacity-30 dark:bg-zinc-100 dark:text-zinc-900"
-          >
-            {saving ? "Saving…" : "Save"}
-          </button>
-        </div>
-      </header>
+        <button
+          type="button"
+          onClick={save}
+          disabled={saving || !dirty}
+          className="ml-auto rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-50 disabled:opacity-30 dark:bg-zinc-100 dark:text-zinc-900"
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </div>
 
       <ValidationBanner issues={issues} onFocus={setSelectedId} />
 
@@ -278,7 +268,7 @@ export default function WorkflowEditor({ workflow }: { workflow: Workflow }) {
           </div>
         </aside>
 
-        <main className="min-w-0 flex-1">
+        <div className="h-full min-w-0 flex-1">
           <ReactFlowProvider>
             <WorkflowCanvas
               nodes={paintedNodes}
@@ -292,7 +282,7 @@ export default function WorkflowEditor({ workflow }: { workflow: Workflow }) {
               onDrop={onDrop}
             />
           </ReactFlowProvider>
-        </main>
+        </div>
 
         <aside className="flex w-80 shrink-0 flex-col border-l border-black/[.08] dark:border-white/[.12]">
           <RunPanel
