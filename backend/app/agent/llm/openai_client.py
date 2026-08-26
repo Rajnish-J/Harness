@@ -1,7 +1,7 @@
 import json
 from typing import Any
 
-from openai import AsyncOpenAI
+from openai import NOT_GIVEN, AsyncOpenAI
 
 from app.agent.llm.base import PARSE_ERROR_KEY, LLMTurn, ToolCallRequest, ToolResult
 from app.agent.tools.base import Tool
@@ -49,11 +49,13 @@ class OpenAIClient:
         tools: list[dict[str, Any]],
         system: str,
     ) -> LLMTurn:
+        # Same reasoning as the Anthropic client: an empty `tools` array is a
+        # 400, so chat mode omits the parameter entirely.
         response = await self._client.chat.completions.create(
             model=self._model,
             max_completion_tokens=self._max_tokens,
             messages=[{"role": "system", "content": system}, *history],
-            tools=tools,
+            tools=tools or NOT_GIVEN,
         )
         choice = response.choices[0]
         message = choice.message

@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.agent.llm.base import ToolCallRequest
+
 
 class ProviderMismatchError(Exception):
     """A session's history can't be replayed through a different provider."""
@@ -12,6 +14,10 @@ class Session:
     provider: str
     # Provider-native message list. Only the owning LLMClient understands it.
     history: list[Any] = field(default_factory=list)
+    # Manual mode: tool calls the model asked for and the user has not yet
+    # ruled on. The assistant turn holding them is ALREADY in `history`, so a
+    # resume only has to append the results.
+    pending: list[ToolCallRequest] | None = None
 
 
 class SessionStore:

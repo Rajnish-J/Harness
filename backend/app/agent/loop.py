@@ -10,6 +10,7 @@ from app.core.config import Settings
 from app.core.workspace import WorkspaceSecurityError
 from app.models.events import (
     AgentEvent,
+    ApprovalRequestEvent,
     AssistantMessageEvent,
     DoneEvent,
     ErrorEvent,
@@ -31,6 +32,13 @@ after writing it when correctness matters. When a tool returns an error, read \
 the message and adjust rather than repeating the same call. When you have \
 finished the task, reply with a short summary of what you did."""
 
+#: What a denied tool call returns to the model. Phrased as a fact about the
+#: user's choice, not a failure, so the model adapts rather than retrying.
+DENIED_MESSAGE = (
+    "The user denied this tool call. Do not retry it. Continue without it, or "
+    "explain what you would need instead."
+)
+
 
 async def run_agent_loop(
     *,
@@ -41,6 +49,7 @@ async def run_agent_loop(
     is_disconnected: Callable[[], Awaitable[bool]] | None = None,
     tools: list[Tool] | None = None,
     system: str | None = None,
+    require_approval: bool = False,
 ) -> AsyncIterator[AgentEvent]:
     """Drive one decide -> act -> observe -> repeat turn to completion.
 
@@ -50,22 +59,127 @@ async def run_agent_loop(
     during generator close would raise, and disconnects close this generator.
 
     `tools` narrows what this turn may call; None means the full registry, which
-    is exactly today's behaviour. It gates *dispatch*, not just the advertised
-    schemas, so a hallucinated tool name outside the subset is refused and comes
-    back as a normal error result the model can recover from.
+    is exactly today's behaviour, and `[]` means no tools at all (chat mode). It
+    gates *dispatch*, not just the advertised schemas, so a hallucinated tool
+    name outside the subset is refused and comes back as a normal error result
+    the model can recover from.
 
     `system` replaces the built-in prompt for this turn; None keeps SYSTEM_PROMPT,
     which is exactly today's behaviour. It is passed fresh on every iteration and
     never stored in `session.history`, so a caller may change it between turns of
     the same session without invalidating the transcript.
+
+    `require_approval` parks the turn at the first tool call instead of running
+    it: see `_drive`. The turn is finished by `resume_agent_loop`.
+    """
+    session.history.append(llm_client.user_message(user_message))
+
+    async for event in _drive(
+        session=session,
+        llm_client=llm_client,
+        settings=settings,
+        is_disconnected=is_disconnected,
+        tools=tools,
+        system=system,
+        require_approval=require_approval,
+    ):
+        yield event
+
+
+async def resume_agent_loop(
+    *,
+    session: Session,
+    llm_client: LLMClient,
+    settings: Settings,
+    decisions: dict[str, bool],
+    is_disconnected: Callable[[], Awaitable[bool]] | None = None,
+    tools: list[Tool] | None = None,
+    system: str | None = None,
+    require_approval: bool = True,
+) -> AsyncIterator[AgentEvent]:
+    """Finish a manual-mode turn that parked on `session.pending`.
+
+    No user message is appended: the assistant turn holding these tool_use
+    blocks is already in history, and the only thing missing is their results.
+
+    A pending call with no entry in `decisions` counts as denied — silence must
+    never authorise a write. A denial becomes an ordinary error result rather
+    than a dead end, so the model can apologise, try something narrower, or
+    answer without the tool.
+
+    The iteration budget restarts here. Approving a call is a deliberate act, so
+    spending another `max_agent_iterations` on it is the behaviour a user
+    expects; the cap still bounds any single stream.
+    """
+    pending = session.pending or []
+    # Cleared before anything can fail, so a crashed resume cannot leave a call
+    # parked for a second approval.
+    session.pending = None
+
+    if not pending:
+        yield ErrorEvent(
+            message="There is no tool call waiting for approval in this session.",
+            code="no_pending_approval",
+        )
+        yield DoneEvent(reason="error")
+        return
+
+    active_tools = ALL_TOOLS if tools is None else tools
+    tools_by_name = {tool.name: tool for tool in active_tools}
+
+    results: list[tuple[ToolCallRequest, ToolResult]] = []
+    for call in pending:
+        if decisions.get(call.id, False):
+            result = await _dispatch_tool(call, settings, tools_by_name)
+        else:
+            result = ToolResult(content=DENIED_MESSAGE, is_error=True)
+        results.append((call, result))
+        yield ToolResultEvent(
+            id=call.id,
+            name=call.name,
+            is_error=result.is_error,
+            content=truncate_for_event(result.content),
+        )
+
+    async for event in _drive(
+        session=session,
+        llm_client=llm_client,
+        settings=settings,
+        is_disconnected=is_disconnected,
+        tools=tools,
+        system=system,
+        require_approval=require_approval,
+        resolved=results,
+    ):
+        yield event
+
+
+async def _drive(
+    *,
+    session: Session,
+    llm_client: LLMClient,
+    settings: Settings,
+    is_disconnected: Callable[[], Awaitable[bool]] | None,
+    tools: list[Tool] | None,
+    system: str | None,
+    require_approval: bool,
+    resolved: list[tuple[ToolCallRequest, ToolResult]] | None = None,
+) -> AsyncIterator[AgentEvent]:
+    """The decide -> act -> observe iteration itself.
+
+    Shared by the fresh and resumed paths so manual mode cannot drift from
+    automatic mode. `resolved` is tool output produced before this generator
+    started (a resume), appended to history ahead of the first decision.
     """
     active_tools = ALL_TOOLS if tools is None else tools
     active_system = SYSTEM_PROMPT if system is None else system
     tools_by_name = {tool.name: tool for tool in active_tools}
     tool_schemas = llm_client.tool_schemas(active_tools)
-    session.history.append(llm_client.user_message(user_message))
 
     try:
+        if resolved:
+            llm_client.append_tool_results(session.history, resolved)
+
         for iteration in range(settings.max_agent_iterations):
             if is_disconnected is not None and await is_disconnected():
                 # The browser went away — stop before spending another call.
@@ -114,6 +228,18 @@ async def run_agent_loop(
             if turn.text:
                 # Models often narrate before calling a tool; surface it.
                 yield AssistantMessageEvent(text=turn.text)
+
+            if require_approval:
+                # Park the turn. History already ends with the assistant turn,
+                # so resuming only has to append results — which is why nothing
+                # else about the turn needs storing.
+                session.pending = list(turn.tool_calls)
+                for call in turn.tool_calls:
+                    yield ApprovalRequestEvent(
+                        id=call.id, name=call.name, arguments=call.arguments
+                    )
+                yield DoneEvent(reason="awaiting_approval")
+                return
 
             results: list[tuple[ToolCallRequest, ToolResult]] = []
             for call in turn.tool_calls:
