@@ -23,9 +23,15 @@ DDL = re.compile(
 ALLOWED = {"db/pool.py"}
 
 
+# A virtualenv accidentally created under app/ drags thousands of vendored
+# files into the walk, several of which are not decodable as the Windows
+# default codepage.
+SKIP_DIRS = {"__pycache__", "venv", ".venv", "site-packages", "node_modules"}
+
+
 def _python_sources():
     for path in APP_DIR.rglob("*.py"):
-        if "__pycache__" in path.parts:
+        if SKIP_DIRS & set(path.parts):
             continue
         yield path
 
@@ -36,7 +42,7 @@ def test_no_application_ddl_anywhere_in_app():
         rel = path.relative_to(APP_DIR).as_posix()
         if rel in ALLOWED:
             continue
-        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if DDL.search(line):
                 offenders.append(f"{rel}:{lineno}: {line.strip()}")
     assert not offenders, "Python must not emit DDL:\n" + "\n".join(offenders)
@@ -44,7 +50,7 @@ def test_no_application_ddl_anywhere_in_app():
 
 def test_repo_uses_placeholders_not_fstrings():
     """No f-string or %-format may appear in a SQL string in the repository."""
-    source = Path(repo.__file__).read_text()
+    source = Path(repo.__file__).read_text(encoding="utf-8")
     offenders = [
         f"line {i}: {line.strip()}"
         for i, line in enumerate(source.splitlines(), 1)

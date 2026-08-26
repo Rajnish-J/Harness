@@ -1,27 +1,10 @@
-from app.agent.tools.base import Tool
-from app.agent.tools.registry import ALL_TOOLS, TOOLS_BY_NAME
+"""Moved to app.agent.tools.toolsets — the chat path needs it too, and having
+chat import from app.workflow had the dependency backwards.
 
+Kept as a re-export so the workflow package and tests/test_tool_subset.py keep
+their import path.
+"""
 
-class UnknownToolError(ValueError):
-    pass
+from app.agent.tools.toolsets import UnknownToolError, resolve_toolset  # noqa: F401
 
-
-def resolve_toolset(names: list[str] | None) -> list[Tool]:
-    """Turn a node's configured tool names into Tool objects.
-
-    None or [] means the full registry. Order follows ALL_TOOLS rather than the
-    caller's list: a stable tool order keeps the request prefix cacheable, which
-    is why registry.py keeps ALL_TOOLS ordered in the first place.
-    """
-    if not names:
-        return ALL_TOOLS
-
-    unknown = [name for name in names if name not in TOOLS_BY_NAME]
-    if unknown:
-        raise UnknownToolError(
-            f"Unknown tool(s): {', '.join(sorted(unknown))}. "
-            f"Available: {', '.join(sorted(TOOLS_BY_NAME))}"
-        )
-
-    wanted = set(names)
-    return [tool for tool in ALL_TOOLS if tool.name in wanted]
+__all__ = ["UnknownToolError", "resolve_toolset"]

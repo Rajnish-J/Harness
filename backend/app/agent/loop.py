@@ -40,6 +40,7 @@ async def run_agent_loop(
     user_message: str,
     is_disconnected: Callable[[], Awaitable[bool]] | None = None,
     tools: list[Tool] | None = None,
+    system: str | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Drive one decide -> act -> observe -> repeat turn to completion.
 
@@ -52,8 +53,14 @@ async def run_agent_loop(
     is exactly today's behaviour. It gates *dispatch*, not just the advertised
     schemas, so a hallucinated tool name outside the subset is refused and comes
     back as a normal error result the model can recover from.
+
+    `system` replaces the built-in prompt for this turn; None keeps SYSTEM_PROMPT,
+    which is exactly today's behaviour. It is passed fresh on every iteration and
+    never stored in `session.history`, so a caller may change it between turns of
+    the same session without invalidating the transcript.
     """
     active_tools = ALL_TOOLS if tools is None else tools
+    active_system = SYSTEM_PROMPT if system is None else system
     tools_by_name = {tool.name: tool for tool in active_tools}
     tool_schemas = llm_client.tool_schemas(active_tools)
     session.history.append(llm_client.user_message(user_message))
@@ -72,7 +79,7 @@ async def run_agent_loop(
                 turn = await llm_client.send(
                     history=session.history,
                     tools=tool_schemas,
-                    system=SYSTEM_PROMPT,
+                    system=active_system,
                 )
             except Exception as exc:  # noqa: BLE001 - classified below
                 message, code = _classify_llm_error(exc)
