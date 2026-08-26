@@ -6,7 +6,7 @@ export default function MessageBubble({ item }: { item: Bubble }) {
   if (item.kind === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-sm bg-zinc-900 px-4 py-2.5 text-sm text-zinc-50 dark:bg-zinc-100 dark:text-zinc-900">
+        <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-sm bg-primary px-4 py-2.5 text-sm text-primary-foreground">
           {item.text}
         </div>
       </div>
@@ -23,7 +23,7 @@ export default function MessageBubble({ item }: { item: Bubble }) {
   }
 
   return (
-    <div className="max-w-[85%] whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-800 dark:text-zinc-200">
+    <div className="max-w-[85%] whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">
       {item.text}
     </div>
   );
