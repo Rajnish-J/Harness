@@ -27,6 +27,39 @@ export function getOrCreateSessionId(): string {
   }
 }
 
+// ---------------------------------------------------------------------------
+// External store
+//
+// localStorage is browser-only, so the id cannot be read during a server
+// render. Exposing it as a useSyncExternalStore source rather than resolving it
+// in an effect gives React a proper server snapshot (null) to hydrate against,
+// and avoids the cascading render that a setState-in-effect would cause.
+// ---------------------------------------------------------------------------
+
+let cached: string | null = null;
+const listeners = new Set<() => void>();
+
+export function subscribeSessionId(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+/**
+ * Browser snapshot. Memoised because useSyncExternalStore re-reads it on every
+ * render and would loop forever on a fresh value each time.
+ */
+export function getSessionIdSnapshot(): string {
+  if (cached === null) cached = getOrCreateSessionId();
+  return cached;
+}
+
+/** Server snapshot: no localStorage, so no session id yet. */
+export function getServerSessionIdSnapshot(): string | null {
+  return null;
+}
+
 export function rotateSessionId(): string {
   const created = newId();
   try {
@@ -34,5 +67,7 @@ export function rotateSessionId(): string {
   } catch {
     // Non-persistent session is still a usable session.
   }
+  cached = created;
+  for (const listener of listeners) listener();
   return created;
 }
