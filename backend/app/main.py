@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import chat, health, workflows
+from app.api import chat, health, mcp as mcp_api, workflows
 from app.core.config import get_settings
 
 logging.basicConfig(level=logging.INFO)
@@ -24,6 +24,12 @@ async def lifespan(app: FastAPI):
     app.state.pool = None
     app.state.checkpointer = None
 
+    # MCP does not need the database to exist, only to resolve server rows, so
+    # the manager is always available. It opens connections lazily.
+    from app.mcp.manager import McpManager
+
+    app.state.mcp = McpManager(settings)
+
     if settings.database_url:
         # Imported lazily so the app still boots if psycopg is unavailable.
         from app.db.pool import make_checkpointer, make_pool
@@ -39,6 +45,10 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        # MCP first: its child processes are reached through this manager, and
+        # closing them after the pool would leave them running a moment longer
+        # for no reason.
+        await app.state.mcp.aclose()
         if app.state.pool is not None:
             await app.state.pool.close()
 
@@ -60,4 +70,5 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(chat.router)
+app.include_router(mcp_api.router)
 app.include_router(workflows.router)
