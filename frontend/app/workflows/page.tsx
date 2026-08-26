@@ -26,7 +26,7 @@ export default async function WorkflowsPage() {
       )}
 
       {!error && workflows.length === 0 && (
-        <p className="py-16 text-center text-sm text-zinc-400">
+        <p className="py-16 text-center text-sm text-muted-foreground">
           No workflows yet. Create one to get started.
         </p>
       )}
@@ -36,17 +36,17 @@ export default async function WorkflowsPage() {
           <li key={workflow.id}>
             <Link
               href={`/workflows/${workflow.id}`}
-              className="flex items-center justify-between rounded-lg border border-black/[.10] px-3 py-2.5 transition-colors hover:bg-black/[.03] dark:border-white/[.14] dark:hover:bg-white/[.05]"
+              className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5 transition-colors hover:bg-accent"
             >
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium">{workflow.name}</p>
                 {workflow.description && (
-                  <p className="truncate text-xs text-zinc-500">
+                  <p className="truncate text-xs text-muted-foreground">
                     {workflow.description}
                   </p>
                 )}
               </div>
-              <span className="shrink-0 font-mono text-[10px] text-zinc-400">
+              <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
                 v{workflow.version}
               </span>
             </Link>
