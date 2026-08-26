@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { reportDbError } from "@/lib/server/db-error";
 import {
   createWorkflow,
   listWorkflows,
@@ -14,7 +15,7 @@ export async function GET() {
     return NextResponse.json(await listWorkflows());
   } catch (error) {
     return NextResponse.json(
-      { error: (error as Error).message }, { status: 500 },
+      { error: reportDbError("GET /api/workflows", error) }, { status: 500 },
     );
   }
 }
@@ -57,6 +58,9 @@ export async function POST(request: Request) {
     const row = await createWorkflow({ name, description: body.description, graph });
     return NextResponse.json(row, { status: 201 });
   } catch (error) {
-    return NextResponse.json({ error: (error as Error).message }, { status: 500 });
+    return NextResponse.json(
+      { error: reportDbError("POST /api/workflows", error) },
+      { status: 500 },
+    );
   }
 }

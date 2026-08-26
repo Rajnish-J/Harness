@@ -1,5 +1,37 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Database
+
+The workflows UI reads and writes Postgres, so `/workflows` needs a database
+before it renders anything. Drizzle owns every application table; the Python
+harness only reads them.
+
+Local setup (Windows, PostgreSQL 17 installed under `C:\Program Files\PostgreSQL\17`):
+
+```bash
+# The cluster lives outside Program Files so it can be created without admin.
+"/c/Program Files/PostgreSQL/17/bin/initdb.exe" --pgdata=C:/Users/<you>/pgdata/harness   --username=postgres --encoding=UTF8 --auth=scram-sha-256 --pwfile=<file with the password>
+createdb -h localhost -U postgres harness
+```
+
+It is registered as the `postgresql-harness` Windows service (StartType
+Automatic), so it comes back after a reboot. Start or stop it by hand with:
+
+```powershell
+Start-Service postgresql-harness
+Stop-Service  postgresql-harness
+```
+
+Then point `DATABASE_URL` at it in `frontend/.env` (and `backend/.env`, which
+shares the same database) and apply the migrations:
+
+```bash
+npm run db:migrate
+```
+
+If the page shows a "Cannot reach Postgres" or "tables are missing" banner,
+those two steps are what it is asking for.
+
 ## Getting Started
 
 First, run the development server:
