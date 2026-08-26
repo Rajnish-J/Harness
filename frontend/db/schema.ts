@@ -1,9 +1,9 @@
 /**
  * The single source of truth for application-table DDL.
  *
- * Ownership rule: Next.js writes `workflows` and only reads the run tables.
- * Python writes `workflow_runs` and `workflow_run_steps` and only reads
- * `workflows`. No table has two writers.
+ * Ownership rule: Next.js writes `workflows`, `mcp_servers`, `skills` and
+ * `agents`, and only reads the run tables. Python writes `workflow_runs` and
+ * `workflow_run_steps` and only reads `workflows`. No table has two writers.
  *
  * LangGraph's `checkpoints*` tables are NOT modelled here — AsyncPostgresSaver
  * creates and migrates them itself. `tablesFilter` in drizzle.config.ts keeps
@@ -126,3 +126,103 @@ export const workflowRunSteps = pgTable(
 export type WorkflowRow = typeof workflows.$inferSelect;
 export type WorkflowRunRow = typeof workflowRuns.$inferSelect;
 export type WorkflowRunStepRow = typeof workflowRunSteps.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Registries: MCP servers, skills, agents.
+//
+// These are configuration the operator edits in the UI and the harness reads.
+// Unlike `workflows` they have no dependents, so deletes are hard deletes —
+// soft deletion would only buy a permanently burned unique slug.
+// ---------------------------------------------------------------------------
+
+export const mcpTransport = pgEnum("mcp_transport", ["stdio", "sse", "http"]);
+
+export const mcpServers = pgTable(
+  "mcp_servers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    description: text("description"),
+    transport: mcpTransport("transport").notNull().default("stdio"),
+    /** stdio: the executable and its argv. Null for sse/http. */
+    command: text("command"),
+    args: jsonb("args").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    /** sse/http: the endpoint. Null for stdio. */
+    url: text("url"),
+    /** Holds API keys in plaintext. This is a localhost dev harness, so the
+     *  mitigation is scope, not encryption: the list endpoint masks values and
+     *  only the detail endpoint returns them. */
+    env: jsonb("env")
+      .$type<Record<string, string>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    headers: jsonb("headers")
+      .$type<Record<string, string>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique("mcp_servers_name_uq").on(t.name)],
+);
+
+export const skills = pgTable(
+  "skills",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    /** The "when to use this" line, cheap enough to always keep in context. */
+    description: text("description"),
+    /** Markdown body. text, not jsonb — it is a document, not structure. */
+    content: text("content").notNull().default(""),
+    /** Tool names from GET /api/workflows/tools. Free-form strings and NOT a
+     *  foreign key: the tool registry lives in Python, not in this database. */
+    allowedTools: jsonb("allowed_tools")
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique("skills_slug_uq").on(t.slug)],
+);
+
+export const agents = pgTable(
+  "agents",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    systemPrompt: text("system_prompt").notNull().default(""),
+    /** Null means inherit the harness default from GET /api/config. */
+    model: text("model"),
+    maxIterations: integer("max_iterations"),
+    toolNames: jsonb("tool_names")
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    /** Attachments held as id arrays rather than join tables: it keeps this to
+     *  three tables and means deleting a skill is never blocked by an FK. The
+     *  cost is dangling ids, which the editors drop when they resolve them. */
+    skillIds: jsonb("skill_ids")
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    mcpServerIds: jsonb("mcp_server_ids")
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique("agents_slug_uq").on(t.slug)],
+);
+
+export type McpServerRow = typeof mcpServers.$inferSelect;
+export type SkillRow = typeof skills.$inferSelect;
+export type AgentRow = typeof agents.$inferSelect;
