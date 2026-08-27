@@ -23,9 +23,9 @@ logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are the agent inside Harness, a coding assistant harness.
 
-You have file tools scoped to a sandboxed workspace directory. All paths are \
-relative to that workspace root — you cannot read or write anything outside it, \
-and attempts to do so will be refused.
+You have file, search, command-execution, and git tools scoped to a sandboxed \
+workspace directory. All paths are relative to that workspace root — you cannot \
+read or write anything outside it, and attempts to do so will be refused.
 
 Work in small, verifiable steps: inspect before you edit, and read a file back \
 after writing it when correctness matters. When a tool returns an error, read \
@@ -300,6 +300,11 @@ async def _dispatch_tool(
             **call.arguments,
             workspace_root=settings.workspace_root,
             max_file_bytes=settings.max_file_bytes,
+            command_timeout_seconds=settings.command_timeout_seconds,
+            max_command_output_bytes=settings.max_command_output_bytes,
+            test_command=settings.test_command,
+            lint_command=settings.lint_command,
+            build_command=settings.build_command,
         )
         if inspect.isawaitable(output):
             output = await output

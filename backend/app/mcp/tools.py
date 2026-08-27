@@ -18,7 +18,15 @@ NAME_RE = re.compile(r"[^a-zA-Z0-9_-]")
 MAX_NAME_LEN = 128
 
 #: Injected into every tool.run(...) by the agent loop; meaningless to MCP.
-LOOP_INJECTED_KWARGS = ("workspace_root", "max_file_bytes")
+LOOP_INJECTED_KWARGS = (
+    "workspace_root",
+    "max_file_bytes",
+    "command_timeout_seconds",
+    "max_command_output_bytes",
+    "test_command",
+    "lint_command",
+    "build_command",
+)
 
 
 class Caller(Protocol):
