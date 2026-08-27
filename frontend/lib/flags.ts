@@ -28,7 +28,11 @@ export const flags = {
   mockAgents: ALL || on(process.env.NEXT_PUBLIC_MOCK_AGENTS),
   mockSkills: ALL || on(process.env.NEXT_PUBLIC_MOCK_SKILLS),
   mockMcp: ALL || on(process.env.NEXT_PUBLIC_MOCK_MCP),
-  mockTools: ALL || on(process.env.NEXT_PUBLIC_MOCK_TOOLS),
+  // Deliberately NOT `ALL ||`: the /tools page and composer tool picker must
+  // reflect the real registry whenever NEXT_PUBLIC_MOCK_TOOLS says so, even
+  // under NEXT_PUBLIC_MOCK_ALL=true, so the live tool set is never masked by
+  // a stale fixture.
+  mockTools: on(process.env.NEXT_PUBLIC_MOCK_TOOLS),
   mockChat: ALL || on(process.env.NEXT_PUBLIC_MOCK_CHAT),
 } as const;
 
