@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import type { TranscriptItem } from "@/lib/types";
 
 type Step = Extract<TranscriptItem, { kind: "step" }>;
@@ -65,15 +66,17 @@ export default function AgentStepIndicator({ step }: { step: Step }) {
       </button>
 
       {open && step.result !== undefined && (
-        <pre
-          className={`mt-1 ml-6 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded border px-2 py-1.5 text-[11px] leading-relaxed ${
+        <ScrollArea
+          className={`mt-1 ml-6 max-h-64 rounded border ${
             step.status === "error"
               ? "border-red-500/30 bg-red-500/5 text-red-700 dark:text-red-300"
               : "border bg-muted/50 text-muted-foreground"
           }`}
         >
-          {step.result}
-        </pre>
+          <pre className="px-2 py-1.5 text-[11px] leading-relaxed whitespace-pre-wrap break-words">
+            {step.result}
+          </pre>
+        </ScrollArea>
       )}
     </div>
   );

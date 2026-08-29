@@ -5,6 +5,7 @@ import { Check, ShieldQuestion, X } from "lucide-react";
 import { useChatPreset } from "@/components/chat/ChatPresetProvider";
 import { useChatSession } from "@/components/chat/ChatSessionProvider";
 import { Button } from "@/components/ui/button";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import type { TranscriptItem } from "@/lib/types";
 
 type Approval = Extract<TranscriptItem, { kind: "approval" }>;
@@ -38,9 +39,12 @@ export default function ApprovalCard({ item }: { item: Approval }) {
         Approve <span className="font-mono">{item.name}</span>?
       </p>
 
-      <pre className="mt-1.5 max-h-40 overflow-auto rounded-md bg-background/70 p-2 font-mono text-[11px]">
-        {JSON.stringify(item.arguments, null, 2)}
-      </pre>
+      <ScrollArea className="mt-1.5 max-h-40 rounded-md bg-background/70">
+        <pre className="p-2 font-mono text-[11px]">
+          {JSON.stringify(item.arguments, null, 2)}
+        </pre>
+        <ScrollBar orientation="horizontal" />
+      </ScrollArea>
 
       <div className="mt-2 flex gap-2">
         <Button

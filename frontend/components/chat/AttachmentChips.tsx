@@ -4,6 +4,7 @@ import { Bot, Plug, Sparkles, X } from "lucide-react";
 
 import { useChatPreset } from "@/components/chat/ChatPresetProvider";
 import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { isPresetEmpty } from "@/lib/chat-preset";
 
 /**
@@ -23,38 +24,39 @@ export default function AttachmentChips() {
   if (isPresetEmpty(preset)) return null;
 
   return (
-    <div className="flex max-h-24 flex-wrap items-center gap-1.5 overflow-y-auto px-3 pt-3">
-      {preset.agent && (
-        <Chip
-          icon={<Bot className="size-3" />}
-          label={preset.agent.name}
-          onRemove={() => void setAgent(null)}
-          primary
-        />
-      )}
+    <ScrollArea className="max-h-24">
+      <div className="flex flex-wrap items-center gap-1.5 px-3 pt-3">
+        {preset.agent && (
+          <Chip
+            icon={<Bot className="size-3" />}
+            label={preset.agent.name}
+            onRemove={() => void setAgent(null)}
+            primary
+          />
+        )}
 
-      {preset.skills.map((skill) => (
-        <Chip
-          key={skill.id}
-          icon={<Sparkles className="size-3" />}
-          label={skill.name}
-          onRemove={() => detachSkill(skill.id)}
-        />
-      ))}
+        {preset.skills.map((skill) => (
+          <Chip
+            key={skill.id}
+            icon={<Sparkles className="size-3" />}
+            label={skill.name}
+            onRemove={() => detachSkill(skill.id)}
+          />
+        ))}
 
-      {preset.mcpServers.map((server) => (
-        <Chip
-          key={server.id}
-          icon={<Plug className="size-3" />}
-          label={server.name}
-          onRemove={() => {
-            const full = catalog.mcp.find((s) => s.id === server.id);
-            if (full) toggleMcp(full);
-          }}
-        />
-      ))}
-
-    </div>
+        {preset.mcpServers.map((server) => (
+          <Chip
+            key={server.id}
+            icon={<Plug className="size-3" />}
+            label={server.name}
+            onRemove={() => {
+              const full = catalog.mcp.find((s) => s.id === server.id);
+              if (full) toggleMcp(full);
+            }}
+          />
+        ))}
+      </div>
+    </ScrollArea>
   );
 }
 

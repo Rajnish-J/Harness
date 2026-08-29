@@ -10,6 +10,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatContext, formatPrice, type ModelInfo } from "@/lib/models";
 
 /**
@@ -53,39 +54,41 @@ export default function ModelPicker() {
           </p>
         ) : (
           <div className="flex">
-            <ul
-              className="max-h-72 w-44 shrink-0 overflow-y-auto border-r p-1.5"
+            <ScrollArea
+              className="max-h-72 w-44 shrink-0 border-r"
               onMouseLeave={() => setHovered(null)}
             >
-              {models.map((model) => (
-                <li key={model.id}>
-                  <button
-                    type="button"
-                    disabled={!model.available}
-                    onMouseEnter={() => setHovered(model.id)}
-                    onFocus={() => setHovered(model.id)}
-                    onClick={() => {
-                      // Selecting the configured default clears the override
-                      // rather than pinning it, so the turn keeps following
-                      // the harness if its configuration changes.
-                      setModel(model.default ? null : model.id);
-                      setOpen(false);
-                    }}
-                    className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-45"
-                  >
-                    <span className="truncate">{model.label}</span>
-                    {!model.available && (
-                      <span className="ml-auto text-[10px] text-muted-foreground">
-                        n/a
-                      </span>
-                    )}
-                    {model.id === activeId && (
-                      <Check className="ml-auto size-3.5 shrink-0" />
-                    )}
-                  </button>
-                </li>
-              ))}
-            </ul>
+              <ul className="p-1.5">
+                {models.map((model) => (
+                  <li key={model.id}>
+                    <button
+                      type="button"
+                      disabled={!model.available}
+                      onMouseEnter={() => setHovered(model.id)}
+                      onFocus={() => setHovered(model.id)}
+                      onClick={() => {
+                        // Selecting the configured default clears the override
+                        // rather than pinning it, so the turn keeps following
+                        // the harness if its configuration changes.
+                        setModel(model.default ? null : model.id);
+                        setOpen(false);
+                      }}
+                      className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-45"
+                    >
+                      <span className="truncate">{model.label}</span>
+                      {!model.available && (
+                        <span className="ml-auto text-[10px] text-muted-foreground">
+                          n/a
+                        </span>
+                      )}
+                      {model.id === activeId && (
+                        <Check className="ml-auto size-3.5 shrink-0" />
+                      )}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </ScrollArea>
 
             {detail && <ModelDetail model={detail} asOf={catalog.models.pricing_as_of} />}
           </div>

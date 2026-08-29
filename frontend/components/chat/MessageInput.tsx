@@ -12,6 +12,7 @@ import ModelPicker from "./ModelPicker";
 import ModeSelector from "./ModeSelector";
 import ToolsPopover from "./ToolsPopover";
 import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   filterSlashOptions,
   replaceToken,
@@ -171,44 +172,44 @@ export default function MessageInput({
         className="relative rounded-2xl border bg-card shadow-sm transition-shadow focus-within:ring-1 focus-within:ring-ring"
       >
         {slashOpen && options.length > 0 && (
-          <ul
-            role="listbox"
-            aria-label="Attach a skill or agent"
-            className="absolute bottom-full left-0 z-20 mb-2 max-h-64 w-full overflow-y-auto rounded-xl border bg-popover p-1 shadow-md"
-          >
-            {options.map((option, index) => (
-              <li
-                key={`${option.kind}-${option.id}`}
-                id={`slash-${option.kind}-${option.id}`}
-                role="option"
-                aria-selected={index === highlight}
-                // onMouseDown, not onClick: click fires after blur, which would
-                // move focus out of the textarea and close the menu first.
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                  accept(option);
-                }}
-                onMouseEnter={() =>
-                  setHl({ query: token?.query ?? "", index })
-                }
-                className={`flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm ${
-                  index === highlight ? "bg-accent" : ""
-                }`}
-              >
-                {option.kind === "agent" ? (
-                  <Bot className="size-3.5 shrink-0 opacity-70" />
-                ) : (
-                  <Sparkles className="size-3.5 shrink-0 opacity-70" />
-                )}
-                <span className="truncate">{option.label}</span>
-                {option.hint && (
-                  <span className="ml-auto truncate text-[11px] text-muted-foreground">
-                    {option.hint}
-                  </span>
-                )}
-              </li>
-            ))}
-          </ul>
+          <div className="absolute bottom-full left-0 z-20 mb-2 w-full rounded-xl border bg-popover shadow-md">
+            <ScrollArea className="max-h-64">
+              <ul role="listbox" aria-label="Attach a skill or agent" className="p-1">
+                {options.map((option, index) => (
+                  <li
+                    key={`${option.kind}-${option.id}`}
+                    id={`slash-${option.kind}-${option.id}`}
+                    role="option"
+                    aria-selected={index === highlight}
+                    // onMouseDown, not onClick: click fires after blur, which would
+                    // move focus out of the textarea and close the menu first.
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      accept(option);
+                    }}
+                    onMouseEnter={() =>
+                      setHl({ query: token?.query ?? "", index })
+                    }
+                    className={`flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm ${
+                      index === highlight ? "bg-accent" : ""
+                    }`}
+                  >
+                    {option.kind === "agent" ? (
+                      <Bot className="size-3.5 shrink-0 opacity-70" />
+                    ) : (
+                      <Sparkles className="size-3.5 shrink-0 opacity-70" />
+                    )}
+                    <span className="truncate">{option.label}</span>
+                    {option.hint && (
+                      <span className="ml-auto truncate text-[11px] text-muted-foreground">
+                        {option.hint}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </ScrollArea>
+          </div>
         )}
 
         <AttachmentChips />

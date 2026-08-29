@@ -11,6 +11,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { groupPresentation } from "@/lib/tool-groups";
 import {
@@ -69,7 +70,12 @@ export default function ToolsPopover() {
         </Button>
       </PopoverTrigger>
 
-      <PopoverContent align="start" className="w-96 p-0">
+      <PopoverContent
+        align="start"
+        side="bottom"
+        avoidCollisions={false}
+        className="w-96 overflow-hidden p-0"
+      >
         <header className="flex items-baseline justify-between border-b px-3 py-2.5">
           <span className="text-sm font-medium">Tools</span>
           <span className="text-[11px] text-muted-foreground">
@@ -84,30 +90,32 @@ export default function ToolsPopover() {
           </p>
         )}
 
-        <div className="max-h-80 overflow-y-auto p-1.5">
-          {groups.length === 0 && (
-            <p className="px-2 py-6 text-center text-[11px] text-muted-foreground">
-              {catalog.loading
-                ? "Loading tools…"
-                : "No tools reported. Check that the Python harness is running."}
-            </p>
-          )}
+        <ScrollArea className="max-h-80">
+          <div className="p-1.5">
+            {groups.length === 0 && (
+              <p className="px-2 py-6 text-center text-[11px] text-muted-foreground">
+                {catalog.loading
+                  ? "Loading tools…"
+                  : "No tools reported. Check that the Python harness is running."}
+              </p>
+            )}
 
-          {groups.map((group) => (
-            <GroupRow
-              key={group.name}
-              group={group}
-              disabled={disabled}
-              expanded={expanded === group.name}
-              onExpand={() =>
-                setExpanded((prev) => (prev === group.name ? null : group.name))
-              }
-              onToggleGroup={() => toggleToolGroup(group)}
-              onToggleTool={toggleTool}
-              toolNames={preset.toolNames}
-            />
-          ))}
-        </div>
+            {groups.map((group) => (
+              <GroupRow
+                key={group.name}
+                group={group}
+                disabled={disabled}
+                expanded={expanded === group.name}
+                onExpand={() =>
+                  setExpanded((prev) => (prev === group.name ? null : group.name))
+                }
+                onToggleGroup={() => toggleToolGroup(group)}
+                onToggleTool={toggleTool}
+                toolNames={preset.toolNames}
+              />
+            ))}
+          </div>
+        </ScrollArea>
 
         <section className="border-t px-3 py-2.5">
           <p className="pb-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
