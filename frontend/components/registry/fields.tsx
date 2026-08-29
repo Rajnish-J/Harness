@@ -111,6 +111,48 @@ export function ToggleField({
   );
 }
 
+/**
+ * Single-select over a short, fixed set — a transport, a credential provider.
+ *
+ * Buttons rather than a <select> because the options are few and always worth
+ * showing: the whole set is visible without a click, which is what makes an
+ * enum feel like a choice rather than a hidden default.
+ */
+export function SegmentedField<T extends string>({
+  label,
+  hint,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  hint?: string;
+  options: { value: T; label: string }[];
+  value: T;
+  onChange: (next: T) => void;
+}) {
+  return (
+    <Field label={label} hint={hint}>
+      <div className="flex flex-wrap gap-2">
+        {options.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => onChange(option.value)}
+            className={`rounded-md border px-3 py-1.5 text-xs transition-colors ${
+              value === option.value
+                ? "border-primary bg-primary text-primary-foreground"
+                : "hover:bg-accent"
+            }`}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </Field>
+  );
+}
+
 /** Multi-select over a fixed set of names, used for tool and attachment pickers. */
 export function CheckboxList({
   label,

@@ -9,6 +9,7 @@
 import {
   Bot,
   GitBranch,
+  KeyRound,
   MessageSquare,
   Plug,
   Sparkles,
@@ -60,6 +61,12 @@ export const NAV_ITEMS: NavItem[] = [
     label: "Tools",
     blurb: "The tool surface registered in the Python harness",
     icon: Wrench,
+  },
+  {
+    href: "/credentials",
+    label: "Credentials",
+    blurb: "Access tokens for GitHub and friends, encrypted at rest",
+    icon: KeyRound,
   },
 ];
 
