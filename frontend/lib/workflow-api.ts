@@ -159,12 +159,15 @@ export async function listWorkflows(): Promise<WorkflowSummary[]> {
   return json(await fetch("/api/workflows", { cache: "no-store" }));
 }
 
-export async function createWorkflow(name: string): Promise<Workflow> {
+export async function createWorkflow(
+  name: string,
+  graph?: WorkflowGraph,
+): Promise<Workflow> {
   return json(
     await fetch("/api/workflows", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, ...(graph ? { graph } : {}) }),
     }),
   );
 }
