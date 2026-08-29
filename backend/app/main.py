@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import chat, health, mcp as mcp_api, workflows
+from app.api import chat, credentials, health, mcp as mcp_api, workflows
 from app.core.config import get_settings
 
 logging.basicConfig(level=logging.INFO)
@@ -72,3 +72,4 @@ app.include_router(health.router)
 app.include_router(chat.router)
 app.include_router(mcp_api.router)
 app.include_router(workflows.router)
+app.include_router(credentials.router)
