@@ -29,6 +29,13 @@
       "when": 1788003654112,
       "tag": "0003_married_killraven",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788004944153,
+      "tag": "0004_rich_husk",
+      "breakpoints": true
     }
   ]
 }

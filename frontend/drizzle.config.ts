@@ -26,6 +26,8 @@ export default defineConfig({
     // This list is an allowlist, not just a LangGraph exclusion: a table added
     // to schema.ts but not named here is silently never migrated.
     "credentials",
+    "projects",
+    "project_files",
   ],
   verbose: true,
   strict: true,

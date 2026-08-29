@@ -276,3 +276,97 @@ export const credentials = pgTable(
 );
 
 export type CredentialRow = typeof credentials.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Projects: cloned repositories the agent can work inside.
+//
+// `projects` is operator config, so Next.js writes it. `project_files` is
+// derived from a clone on disk, so Python — which does the cloning — writes
+// that. Same split as workflows/workflow_runs, and for the same reason: the
+// side that produces the data is the side that owns the table.
+//
+// Deletes are soft (archivedAt), unlike the registries: a project has dependent
+// rows, and a container or an indexed tree outliving its project row is a worse
+// failure than a burned slug.
+// ---------------------------------------------------------------------------
+
+export const cloneStatus = pgEnum("clone_status", [
+  "pending",
+  "cloning",
+  "ready",
+  "error",
+]);
+
+export const projects = pgTable(
+  "projects",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    provider: credentialProvider("provider").notNull().default("github"),
+    repoOwner: text("repo_owner").notNull(),
+    repoName: text("repo_name").notNull(),
+    /** Clean HTTPS remote. The token is NEVER interpolated into this. */
+    repoUrl: text("repo_url").notNull(),
+    /** The provider's own id, as text. Survives a repository being renamed. */
+    repoId: text("repo_id"),
+    defaultBranch: text("default_branch").notNull().default("main"),
+    visibility: text("visibility").notNull().default("private"),
+    /** set null, not cascade: deleting a credential must not delete work. The
+     *  project simply cannot sync until another one is linked. */
+    credentialId: uuid("credential_id").references(() => credentials.id, {
+      onDelete: "set null",
+    }),
+    cloneStatus: cloneStatus("clone_status").notNull().default("pending"),
+    cloneError: text("clone_error"),
+    /** Checked out in the working tree right now — not necessarily the default. */
+    currentBranch: text("current_branch"),
+    lastPulledAt: timestamp("last_pulled_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("projects_slug_uq").on(t.slug),
+    index("projects_archived_updated_idx").on(t.archivedAt, t.updatedAt),
+  ],
+);
+
+/**
+ * A per-file index of a cloned repository.
+ *
+ * Deliberately holds no file CONTENT. The working tree on disk is the source of
+ * truth for bytes; duplicating them here would double the storage, go stale the
+ * moment the agent edits a file, and buy nothing, because reading a file off
+ * disk is already fast. What the database is genuinely better at is the SHAPE of
+ * the repo — rendering a 5,000-file tree without walking the filesystem on every
+ * keystroke — and cheap change detection, via the blob sha git already computed.
+ */
+export const projectFiles = pgTable(
+  "project_files",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    /** Repo-relative, always forward slashes, even when indexed on Windows. */
+    path: text("path").notNull(),
+    /** Parent directory, so one level of the tree is a single indexed query. */
+    dirPath: text("dir_path").notNull().default(""),
+    name: text("name").notNull(),
+    ext: text("ext"),
+    sizeBytes: integer("size_bytes").notNull().default(0),
+    /** Binary files are listed but never opened in the editor. */
+    isBinary: boolean("is_binary").notNull().default(false),
+    /** git's own object id. Re-indexing compares this instead of re-reading. */
+    gitBlobSha: text("git_blob_sha"),
+    indexedAt: timestamp("indexed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("project_files_project_path_uq").on(t.projectId, t.path),
+    index("project_files_project_dir_idx").on(t.projectId, t.dirPath),
+  ],
+);
+
+export type ProjectRow = typeof projects.$inferSelect;
+export type ProjectFileRow = typeof projectFiles.$inferSelect;
