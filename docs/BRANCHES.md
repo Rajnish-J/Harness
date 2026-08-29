@@ -8,12 +8,13 @@
 Every branch in [`Rajnish-J/Harness`](https://github.com/Rajnish-J/Harness) — what it was for, when it
 started, and when it landed. The base branch is `main`.
 
-_Last updated 2026-08-26 (UTC) · 4 merged · 0 open · 0 closed unmerged · 0 without a PR_
+_Last updated 2026-08-29 (UTC) · 5 merged · 0 open · 0 closed unmerged · 0 without a PR_
 
 ## Merged branches
 
 | Branch | PR | Purpose | Created | Merged | Into | Changes |
 | --- | --- | --- | --- | --- | --- | --- |
+| `feat/developer-tools-toolkit` | [#5](https://github.com/Rajnish-J/Harness/pull/5) | Expands the agent's tool surface (search, shell execution, git) with a live /tools UI, and layers workflow-editor and chat improvements on top: per-node durati… | 2026-08-27 | 2026-08-29 | `main` | 63 files, +4048 / −572 |
 | `feat/tool-modes-model-picker-and-theming` | [#4](https://github.com/Rajnish-J/Harness/pull/4) | Adds three things the chat composer on main cannot express today: a manual tool mode that holds every tool call for a human verdict before it runs, a model pic… | 2026-08-26 | 2026-08-26 | `main` | 71 files, +3530 / −550 |
 | `feat/agent-registries-and-mcp-chat` | [#3](https://github.com/Rajnish-J/Harness/pull/3) | Adds the registry layer the harness was missing: agents, skills and MCP servers become first-class stored objects with CRUD APIs and management pages, MCP serv… | 2026-08-26 | 2026-08-26 | `main` | 117 files, +12489 / −459 |
 | `feat/workflow-orchestration` | [#2](https://github.com/Rajnish-J/Harness/pull/2) | Builds out the whole Harness product on top of the scaffold that landed in #1: a from-scratch agent harness core in Python, a streaming chat UI, and a LangGrap… | 2026-08-25 | 2026-08-25 | `main` | 100 files, +14017 / −4002 |
@@ -30,6 +31,14 @@ _None — every branch on the remote has a pull request._
 ---
 
 ## Details
+
+### `feat/developer-tools-toolkit` → `main` ([#5](https://github.com/Rajnish-J/Harness/pull/5))
+
+**Merged** 2026-08-29 · created 2026-08-27 · by @Rajnish-J · 19 commits · 63 files, +4048 / −572 · branch still on the remote
+
+**feat: add developer tools, workflow editor upgrades, and UI polish**
+
+Expands the agent's tool surface (search, shell execution, git) with a live /tools UI, and layers workflow-editor and chat improvements on top: per-node duration/token auditing, an agent-picker creation modal, a non-drag node connector, and a broad ScrollArea consistency pass. main currently has none of this.
 
 ### `feat/tool-modes-model-picker-and-theming` → `main` ([#4](https://github.com/Rajnish-J/Harness/pull/4))
 
