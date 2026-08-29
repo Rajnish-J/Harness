@@ -83,7 +83,13 @@ export default function ModeSelector() {
         </Button>
       </PopoverTrigger>
 
-      <PopoverContent align="start" className="w-80 p-1.5">
+      <PopoverContent
+        align="start"
+        side="bottom"
+        sideOffset={8}
+        avoidCollisions={false}
+        className="w-80 p-1.5"
+      >
         <p className="px-2 pt-1 pb-2 text-[11px] font-medium text-muted-foreground">
           Select tool mode
         </p>
