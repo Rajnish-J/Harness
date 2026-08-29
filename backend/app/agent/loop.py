@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 
 from app.agent.llm.base import LLMClient, ToolCallRequest, ToolResult
 from app.agent.session import Session
+from app.agent.exec_context import ExecutionContext
 from app.agent.tools.base import Tool, ToolExecutionError
 from app.agent.tools.registry import ALL_TOOLS
 from app.core.config import Settings
@@ -293,6 +294,7 @@ async def _dispatch_tool(
     call: ToolCallRequest,
     settings: Settings,
     tools_by_name: dict[str, Tool],
+    executor: ExecutionContext | None = None,
 ) -> ToolResult:
     """Run one tool call, turning every failure into a result the model can read."""
     if call.parse_error:
@@ -321,6 +323,10 @@ async def _dispatch_tool(
             test_command=settings.test_command,
             lint_command=settings.lint_command,
             build_command=settings.build_command,
+            # Only the shell tools read this; every other tool absorbs it via
+            # **_ignored. None means the host, which is the pre-container
+            # behaviour and stays the default for a chat with no project.
+            executor=executor,
         )
         if inspect.isawaitable(output):
             output = await output
