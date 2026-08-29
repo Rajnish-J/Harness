@@ -82,12 +82,20 @@ class AnthropicClient:
             # turn as finished rather than inventing a loop continuation.
             stop_reason = "end_turn"
 
+        usage = None
+        if response.usage is not None:
+            usage = {
+                "input_tokens": response.usage.input_tokens,
+                "output_tokens": response.usage.output_tokens,
+            }
+
         return LLMTurn(
             text="\n".join(text_parts).strip() or None,
             tool_calls=tool_calls,
             stop_reason=stop_reason,
             raw=response.content,
             refusal_detail=refusal_detail,
+            usage=usage,
         )
 
     def append_assistant_turn(self, history: list[Any], turn: LLMTurn) -> None:

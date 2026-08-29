@@ -79,6 +79,13 @@ class OpenAIClient:
         else:
             stop_reason = "end_turn"
 
+        usage = None
+        if response.usage is not None:
+            usage = {
+                "input_tokens": response.usage.prompt_tokens,
+                "output_tokens": response.usage.completion_tokens,
+            }
+
         return LLMTurn(
             text=(message.content or "").strip() or None,
             tool_calls=tool_calls,
@@ -87,6 +94,7 @@ class OpenAIClient:
             refusal_detail=(
                 "content_filter" if choice.finish_reason == "content_filter" else None
             ),
+            usage=usage,
         )
 
     def append_assistant_turn(self, history: list[Any], turn: LLMTurn) -> None:
