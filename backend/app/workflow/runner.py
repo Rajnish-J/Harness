@@ -146,7 +146,9 @@ async def run_workflow(
                             output.get("text", ""), limit=400
                         ),
                         error=output.get("error"),
-                        duration_ms=0,
+                        duration_ms=output.get("duration_ms", 0),
+                        input_tokens=output.get("input_tokens"),
+                        output_tokens=output.get("output_tokens"),
                     )
                     for event in edges_from(node_id, output.get("branch")):
                         yield event

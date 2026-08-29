@@ -29,6 +29,15 @@ class Settings(BaseSettings):
     max_agent_iterations: int = 8
     max_file_bytes: int = 200_000
 
+    # ---- Execution tools ---------------------------------------------------
+    command_timeout_seconds: float = 30.0
+    max_command_output_bytes: int = 200_000
+    # Optional project commands for run_tests/run_lint/run_build. None means
+    # the tool refuses with a clear message rather than guessing a framework.
+    test_command: str | None = None
+    lint_command: str | None = None
+    build_command: str | None = None
+
     # Workflow subsystem. `database_url` is deliberately optional: chat must
     # keep working with no database, and /api/workflows/* returns 503 instead.
     database_url: str | None = None

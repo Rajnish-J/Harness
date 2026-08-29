@@ -23,9 +23,9 @@ logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are the agent inside Harness, a coding assistant harness.
 
-You have file tools scoped to a sandboxed workspace directory. All paths are \
-relative to that workspace root — you cannot read or write anything outside it, \
-and attempts to do so will be refused.
+You have file, search, command-execution, and git tools scoped to a sandboxed \
+workspace directory. All paths are relative to that workspace root — you cannot \
+read or write anything outside it, and attempts to do so will be refused.
 
 Work in small, verifiable steps: inspect before you edit, and read a file back \
 after writing it when correctness matters. When a tool returns an error, read \
@@ -176,6 +176,20 @@ async def _drive(
     tools_by_name = {tool.name: tool for tool in active_tools}
     tool_schemas = llm_client.tool_schemas(active_tools)
 
+    # Accumulated across every LLM call this turn makes — a node can iterate
+    # decide->act->observe several times before it's done, so a single call's
+    # usage understates the cost of the turn.
+    total_usage: dict[str, int] | None = None
+
+    def accumulate(usage: dict[str, int] | None) -> None:
+        nonlocal total_usage
+        if usage is None:
+            return
+        if total_usage is None:
+            total_usage = {"input_tokens": 0, "output_tokens": 0}
+        total_usage["input_tokens"] += usage.get("input_tokens", 0)
+        total_usage["output_tokens"] += usage.get("output_tokens", 0)
+
     try:
         if resolved:
             llm_client.append_tool_results(session.history, resolved)
@@ -199,13 +213,15 @@ async def _drive(
                 message, code = _classify_llm_error(exc)
                 logger.exception("LLM call failed on iteration %d", iteration)
                 yield ErrorEvent(message=message, code=code)
-                yield DoneEvent(reason="error")
+                yield DoneEvent(reason="error", usage=total_usage)
                 return
+
+            accumulate(turn.usage)
 
             if turn.stop_reason == "refusal":
                 detail = turn.refusal_detail or "the model declined this request"
                 yield ErrorEvent(message=f"Request refused ({detail}).", code="refusal")
-                yield DoneEvent(reason="error")
+                yield DoneEvent(reason="error", usage=total_usage)
                 return
 
             if turn.stop_reason != "tool_use":
@@ -218,7 +234,7 @@ async def _drive(
                         message="Response hit the max_tokens limit and was cut off.",
                         code="max_tokens",
                     )
-                yield DoneEvent(reason="end_turn")
+                yield DoneEvent(reason="end_turn", usage=total_usage)
                 return
 
             # ---- act ----------------------------------------------------
@@ -238,7 +254,7 @@ async def _drive(
                     yield ApprovalRequestEvent(
                         id=call.id, name=call.name, arguments=call.arguments
                     )
-                yield DoneEvent(reason="awaiting_approval")
+                yield DoneEvent(reason="awaiting_approval", usage=total_usage)
                 return
 
             results: list[tuple[ToolCallRequest, ToolResult]] = []
@@ -266,11 +282,11 @@ async def _drive(
             ),
             code="max_iterations",
         )
-        yield DoneEvent(reason="max_iterations")
+        yield DoneEvent(reason="max_iterations", usage=total_usage)
     except Exception as exc:  # noqa: BLE001 - a harness bug must still close the stream
         logger.exception("Agent loop crashed for session %s", session.session_id)
         yield ErrorEvent(message=f"Harness error: {exc}", code="internal")
-        yield DoneEvent(reason="error")
+        yield DoneEvent(reason="error", usage=total_usage)
 
 
 async def _dispatch_tool(
@@ -300,6 +316,11 @@ async def _dispatch_tool(
             **call.arguments,
             workspace_root=settings.workspace_root,
             max_file_bytes=settings.max_file_bytes,
+            command_timeout_seconds=settings.command_timeout_seconds,
+            max_command_output_bytes=settings.max_command_output_bytes,
+            test_command=settings.test_command,
+            lint_command=settings.lint_command,
+            build_command=settings.build_command,
         )
         if inspect.isawaitable(output):
             output = await output

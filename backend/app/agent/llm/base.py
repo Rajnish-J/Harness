@@ -37,6 +37,10 @@ class LLMTurn:
     # append it back to history without losing tool_use/thinking blocks.
     raw: Any = None
     refusal_detail: str | None = None
+    # {"input_tokens": int, "output_tokens": int}, normalized across providers.
+    # None when the provider response omitted usage (rare, but seen on some
+    # SDK error/edge-case response shapes).
+    usage: dict[str, int] | None = None
 
 
 @runtime_checkable

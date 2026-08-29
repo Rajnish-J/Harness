@@ -69,6 +69,9 @@ class DoneEvent(AgentEvent):
         # POST /api/chat/approve. Terminal for THIS stream, not for the turn.
         "awaiting_approval",
     ]
+    # Accumulated across every LLM call made during this turn. None when no
+    # call completed (e.g. the very first call errored).
+    usage: dict[str, int] | None = None
 
 
 def sse_comment(text: str) -> str:

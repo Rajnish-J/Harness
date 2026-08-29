@@ -5,6 +5,7 @@ import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 export function Field({
   label,
@@ -141,31 +142,33 @@ export function CheckboxList({
           {emptyMessage}
         </p>
       ) : (
-        <div className="flex max-h-64 flex-col gap-1 overflow-y-auto rounded-md border p-2">
-          {options.map((option) => (
-            <label
-              key={option.value}
-              className="flex cursor-pointer items-start gap-2 rounded px-1.5 py-1 hover:bg-accent"
-            >
-              <input
-                type="checkbox"
-                checked={selected.includes(option.value)}
-                onChange={() => toggle(option.value)}
-                className="mt-0.5 size-3.5 accent-primary"
-              />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate font-mono text-xs">
-                  {option.label}
-                </span>
-                {option.description && (
-                  <span className="block truncate text-[11px] text-muted-foreground">
-                    {option.description}
+        <ScrollArea className="max-h-64 rounded-md border">
+          <div className="flex flex-col gap-1 p-2">
+            {options.map((option) => (
+              <label
+                key={option.value}
+                className="flex cursor-pointer items-start gap-2 rounded px-1.5 py-1 hover:bg-accent"
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.includes(option.value)}
+                  onChange={() => toggle(option.value)}
+                  className="mt-0.5 size-3.5 accent-primary"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-mono text-xs">
+                    {option.label}
                   </span>
-                )}
-              </span>
-            </label>
-          ))}
-        </div>
+                  {option.description && (
+                    <span className="block truncate text-[11px] text-muted-foreground">
+                      {option.description}
+                    </span>
+                  )}
+                </span>
+              </label>
+            ))}
+          </div>
+        </ScrollArea>
       )}
     </Field>
   );

@@ -14,6 +14,7 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import {
   Sheet,
@@ -373,17 +374,39 @@ function SidebarSeparator({
   )
 }
 
-function SidebarContent({ className, ...props }: React.ComponentProps<"div">) {
+function SidebarContent({ className, children, ...props }: React.ComponentProps<"div">) {
+  const { state, isMobile } = useSidebar()
+
+  // Radix's ScrollArea sets overflow via inline style on the viewport, which
+  // beats a Tailwind class — so the icon-collapsed state (no room for a
+  // scrollbar, nothing to scroll to) is handled by skipping ScrollArea
+  // entirely rather than fighting its inline style with CSS. `state` only
+  // means "icon-collapsed" on desktop — on mobile the sidebar is always
+  // rendered full-width inside a Sheet, so it must keep scrolling.
+  if (state === "collapsed" && !isMobile) {
+    return (
+      <div
+        data-slot="sidebar-content"
+        data-sidebar="content"
+        className={cn("flex min-h-0 flex-1 flex-col gap-2 overflow-hidden", className)}
+        {...props}
+      >
+        {children}
+      </div>
+    )
+  }
+
   return (
     <div
       data-slot="sidebar-content"
       data-sidebar="content"
-      className={cn(
-        "flex min-h-0 flex-1 flex-col gap-2 overflow-auto group-data-[collapsible=icon]:overflow-hidden",
-        className
-      )}
+      className={cn("flex min-h-0 flex-1 flex-col", className)}
       {...props}
-    />
+    >
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="flex flex-col gap-2">{children}</div>
+      </ScrollArea>
+    </div>
   )
 }
 

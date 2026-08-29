@@ -215,6 +215,8 @@ export function mockRunEvents(workflowId: string): WorkflowEvent[] {
       output_preview: "The sidebar does not persist its collapsed state across reloads.",
       error: null,
       duration_ms: 2140,
+      input_tokens: 612,
+      output_tokens: 148,
     },
     { type: "edge_taken", source: "read", target: "classify", branch: null },
     {
@@ -231,6 +233,8 @@ export function mockRunEvents(workflowId: string): WorkflowEvent[] {
       output_preview: "bug",
       error: null,
       duration_ms: 810,
+      input_tokens: 340,
+      output_tokens: 22,
     },
     { type: "edge_taken", source: "classify", target: "draft", branch: null },
     {
@@ -268,6 +272,8 @@ export function mockRunEvents(workflowId: string): WorkflowEvent[] {
       output_preview: "Drafted a reply and saved it to replies/1042.md.",
       error: null,
       duration_ms: 3320,
+      input_tokens: 890,
+      output_tokens: 264,
     },
     {
       type: "workflow_done",

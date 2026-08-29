@@ -10,9 +10,12 @@ import {
   type EdgeChange,
   type NodeChange,
 } from "@xyflow/react";
+import { ArrowLeft, PanelLeft, PanelRight } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 
 import NodeConfigPanel from "./NodeConfigPanel";
+import NodeConnector from "./NodeConnector";
 import NodePalette from "./NodePalette";
 import RunPanel from "./RunPanel";
 import ValidationBanner from "./ValidationBanner";
@@ -40,6 +43,9 @@ export default function WorkflowEditor({ workflow }: { workflow: Workflow }) {
   const [input, setInput] = useState("");
   const [runState, dispatch] = useReducer(applyWorkflowEvent, IDLE_RUN);
   const abortRef = useRef<AbortController | null>(null);
+  const [leftPanelOpen, setLeftPanelOpen] = useState(true);
+  const [rightPanelOpen, setRightPanelOpen] = useState(true);
+  const [leftTab, setLeftTab] = useState<"configure" | "connect">("configure");
 
   const selected = nodes.find((n) => n.id === selectedId) ?? null;
   const labels = useMemo(
@@ -129,6 +135,11 @@ export default function WorkflowEditor({ workflow }: { workflow: Workflow }) {
       current.filter((e) => e.source !== nodeId && e.target !== nodeId),
     );
     setSelectedId(null);
+    setDirty(true);
+  }, []);
+
+  const removeEdge = useCallback((edgeId: string) => {
+    setEdges((current) => current.filter((e) => e.id !== edgeId));
     setDirty(true);
   }, []);
 
@@ -241,13 +252,38 @@ export default function WorkflowEditor({ workflow }: { workflow: Workflow }) {
       {/* Editor toolbar, not app navigation — the sidebar owns the links now.
           What stays here is state that belongs to this workflow. */}
       <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-2.5">
+        <Link
+          href="/workflows"
+          aria-label="Back to workflows"
+          className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          <ArrowLeft className="size-4" />
+        </Link>
+        <button
+          type="button"
+          onClick={() => setLeftPanelOpen((v) => !v)}
+          aria-pressed={leftPanelOpen}
+          aria-label="Toggle node palette"
+          className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          <PanelLeft className="size-4" />
+        </button>
         <h2 className="truncate text-sm font-semibold">{workflow.name}</h2>
         {dirty && <span className="text-[11px] text-amber-600">unsaved</span>}
         <button
           type="button"
+          onClick={() => setRightPanelOpen((v) => !v)}
+          aria-pressed={rightPanelOpen}
+          aria-label="Toggle run panel"
+          className="ml-auto rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          <PanelRight className="size-4" />
+        </button>
+        <button
+          type="button"
           onClick={save}
           disabled={saving || !dirty}
-          className="ml-auto rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-30"
+          className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-30"
         >
           {saving ? "Saving…" : "Save"}
         </button>
@@ -256,17 +292,52 @@ export default function WorkflowEditor({ workflow }: { workflow: Workflow }) {
       <ValidationBanner issues={issues} onFocus={setSelectedId} />
 
       <div className="flex min-h-0 flex-1">
-        <aside className="flex w-64 shrink-0 flex-col border-r border-border">
-          <NodePalette />
-          <div className="min-h-0 flex-1">
-            <NodeConfigPanel
-              node={selected}
-              otherNodeIds={nodes.filter((n) => n.id !== selectedId).map((n) => n.id)}
-              onChange={patchNode}
-              onDelete={deleteNode}
-            />
-          </div>
-        </aside>
+        {leftPanelOpen && (
+          <aside className="flex w-64 shrink-0 flex-col border-r border-border">
+            <NodePalette />
+            <div className="flex shrink-0 border-b border-border text-xs">
+              <button
+                type="button"
+                onClick={() => setLeftTab("configure")}
+                className={`flex-1 px-2 py-1.5 font-medium ${
+                  leftTab === "configure"
+                    ? "border-b-2 border-primary text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Configure
+              </button>
+              <button
+                type="button"
+                onClick={() => setLeftTab("connect")}
+                className={`flex-1 px-2 py-1.5 font-medium ${
+                  leftTab === "connect"
+                    ? "border-b-2 border-primary text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Connect
+              </button>
+            </div>
+            <div className="min-h-0 flex-1">
+              {leftTab === "configure" ? (
+                <NodeConfigPanel
+                  node={selected}
+                  otherNodeIds={nodes.filter((n) => n.id !== selectedId).map((n) => n.id)}
+                  onChange={patchNode}
+                  onDelete={deleteNode}
+                />
+              ) : (
+                <NodeConnector
+                  nodes={nodes}
+                  edges={edges}
+                  onConnect={onConnect}
+                  onRemoveEdge={removeEdge}
+                />
+              )}
+            </div>
+          </aside>
+        )}
 
         <div className="h-full min-w-0 flex-1">
           <ReactFlowProvider>
@@ -284,16 +355,18 @@ export default function WorkflowEditor({ workflow }: { workflow: Workflow }) {
           </ReactFlowProvider>
         </div>
 
-        <aside className="flex w-80 shrink-0 flex-col border-l border-border">
-          <RunPanel
-            runState={runState}
-            input={input}
-            onInputChange={setInput}
-            onRun={run}
-            onCancel={stop}
-            labels={labels}
-          />
-        </aside>
+        {rightPanelOpen && (
+          <aside className="flex w-80 shrink-0 flex-col border-l border-border">
+            <RunPanel
+              runState={runState}
+              input={input}
+              onInputChange={setInput}
+              onRun={run}
+              onCancel={stop}
+              labels={labels}
+            />
+          </aside>
+        )}
       </div>
     </div>
   );

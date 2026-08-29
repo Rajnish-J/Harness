@@ -8,7 +8,15 @@
  * has never seen, so adding a tool group in Python needs no frontend change.
  */
 
-import { FolderOpen, Plug, ShieldCheck, Terminal, Wrench, type LucideIcon } from "lucide-react";
+import {
+  FolderOpen,
+  GitBranch,
+  Plug,
+  ShieldCheck,
+  Terminal,
+  Wrench,
+  type LucideIcon,
+} from "lucide-react";
 
 import type { CardTone } from "@/components/registry/ResourceCard";
 import type { ToolInfo } from "@/lib/workflow-api";
@@ -25,6 +33,7 @@ const PRESENTATION: Record<string, { icon: LucideIcon; tone: CardTone }> = {
   "File Operations": { icon: FolderOpen, tone: "blue" },
   Validation: { icon: ShieldCheck, tone: "green" },
   Execution: { icon: Terminal, tone: "amber" },
+  "Version Control": { icon: GitBranch, tone: "sky" },
 };
 
 const MCP_PRESENTATION = { icon: Plug, tone: "purple" } as const;

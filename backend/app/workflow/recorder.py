@@ -65,6 +65,9 @@ class DatabaseRecorder:
                 events=result.get("events") or [],
                 tool_call_count=result.get("tool_call_count", 0),
                 error=result.get("error"),
+                duration_ms=result.get("duration_ms", 0),
+                input_tokens=result.get("input_tokens"),
+                output_tokens=result.get("output_tokens"),
             )
         except Exception:  # noqa: BLE001
             logger.exception("Could not record completion of node %s", node_id)

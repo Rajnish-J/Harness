@@ -62,6 +62,8 @@ class NodeFinishedEvent(AgentEvent):
     output_preview: str = ""
     error: str | None = None
     duration_ms: int = 0
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
 
 class EdgeTakenEvent(AgentEvent):

@@ -28,6 +28,9 @@ class NodeOutput(TypedDict):
     tool_calls: NotRequired[int]
     started_at: str
     finished_at: str
+    duration_ms: NotRequired[int]
+    input_tokens: NotRequired[int | None]
+    output_tokens: NotRequired[int | None]
 
 
 def merge_outputs(

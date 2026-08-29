@@ -20,8 +20,19 @@ export type ValidationResult = { ok: boolean; issues: ValidationIssue[] };
  * Validate a graph via the Python harness before writing it.
  *
  * Python owns the graph schema — the TypeScript types are for editor
- * ergonomics, not a security boundary. Every write goes through here so a graph
- * that cannot execute never reaches the database.
+ * ergonomics, not a security boundary. Both creation (POST) and update
+ * (PATCH) call this so a graph with a real config error (a malformed
+ * predicate, an unknown tool reference, ...) never reaches the database.
+ *
+ * The one thing creation tolerates that PATCH does not: `multiple_entry_points`
+ * / `no_entry_point`. A brand new workflow may start as a set of disconnected
+ * nodes (e.g. several agents dropped in from the "New workflow" picker, not
+ * yet wired together), and that connectivity gap is resolved by connecting
+ * nodes in the editor, not by fixing a node's config — so the POST route
+ * filters those two codes out of what it treats as blocking. This function's
+ * own `ok` stays strict for every other caller (the client-side Save path
+ * calls the harness directly, not through here, and relies on the unfiltered
+ * result).
  *
  * If the harness is unreachable we refuse the write rather than storing
  * something unvalidated.

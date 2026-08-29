@@ -201,6 +201,9 @@ async def finish_step(
     events: list[Any],
     tool_call_count: int,
     error: str | None,
+    duration_ms: int = 0,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
 ) -> None:
     async with pool.connection() as conn, conn.cursor() as cur:
         await cur.execute(
@@ -211,10 +214,23 @@ async def finish_step(
                    events = %s,
                    tool_call_count = %s,
                    error = %s,
+                   duration_ms = %s,
+                   input_tokens = %s,
+                   output_tokens = %s,
                    finished_at = now()
              where id = %s
             """,
-            (status, output, json.dumps(events), tool_call_count, error, step_id),
+            (
+                status,
+                output,
+                json.dumps(events),
+                tool_call_count,
+                error,
+                duration_ms,
+                input_tokens,
+                output_tokens,
+                step_id,
+            ),
         )
 
 
@@ -240,7 +256,8 @@ async def list_run_steps(pool: AsyncConnectionPool, run_id: str) -> list[dict[st
         await cur.execute(
             """
             select id, node_id, node_type, label, seq, attempt, status, input,
-                   output, events, tool_call_count, error, started_at, finished_at
+                   output, events, tool_call_count, error, started_at, finished_at,
+                   duration_ms, input_tokens, output_tokens
               from workflow_run_steps
              where run_id = %s
              order by seq asc

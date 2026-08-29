@@ -27,5 +27,21 @@ class ToolExecutionError(Exception):
     """A tool failed in a way the model should see and can recover from."""
 
 
-def workspace_tool_context(workspace_root: Path, max_file_bytes: int) -> dict[str, Any]:
-    return {"workspace_root": workspace_root, "max_file_bytes": max_file_bytes}
+def workspace_tool_context(
+    workspace_root: Path,
+    max_file_bytes: int,
+    command_timeout_seconds: float,
+    max_command_output_bytes: int,
+    test_command: str | None,
+    lint_command: str | None,
+    build_command: str | None,
+) -> dict[str, Any]:
+    return {
+        "workspace_root": workspace_root,
+        "max_file_bytes": max_file_bytes,
+        "command_timeout_seconds": command_timeout_seconds,
+        "max_command_output_bytes": max_command_output_bytes,
+        "test_command": test_command,
+        "lint_command": lint_command,
+        "build_command": build_command,
+    }
