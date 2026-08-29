@@ -10,7 +10,13 @@
  */
 
 import { API_BASE } from "./api";
-import type { CloneEvent, Project, ProjectInput, RemoteRepo } from "./project-types";
+import type {
+  CloneEvent,
+  ContainerState,
+  Project,
+  ProjectInput,
+  RemoteRepo,
+} from "./project-types";
 import { consumeSSE } from "./sse";
 
 const BASE = "/api/projects";
@@ -94,4 +100,42 @@ export const projectsApi = {
     if (!res.ok) await json(res);
     await consumeSSE<CloneEvent>(res, onEvent);
   },
+};
+
+/**
+ * Container lifecycle.
+ *
+ * Straight to the Python harness rather than through a Next.js route: only that
+ * side talks to the Docker daemon, and proxying would add a hop that could only
+ * relay the answer verbatim.
+ */
+export const containerApi = {
+  status: async (projectId: string, signal?: AbortSignal): Promise<ContainerState> =>
+    json(
+      await fetch(`${API_BASE}/api/projects/${projectId}/container`, {
+        cache: "no-store",
+        signal,
+      }),
+    ),
+
+  start: async (projectId: string): Promise<ContainerState> =>
+    json(
+      await fetch(`${API_BASE}/api/projects/${projectId}/container/start`, {
+        method: "POST",
+      }),
+    ),
+
+  stop: async (projectId: string): Promise<ContainerState> =>
+    json(
+      await fetch(`${API_BASE}/api/projects/${projectId}/container/stop`, {
+        method: "POST",
+      }),
+    ),
+
+  remove: async (projectId: string): Promise<ContainerState> =>
+    json(
+      await fetch(`${API_BASE}/api/projects/${projectId}/container/remove`, {
+        method: "POST",
+      }),
+    ),
 };

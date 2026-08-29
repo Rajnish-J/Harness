@@ -67,3 +67,17 @@ export const CLONE_STATUS_LABELS: Record<CloneStatus, string> = {
   ready: "Ready",
   error: "Clone failed",
 };
+
+/** What GET /api/projects/{id}/container reports, after reconciling with Docker. */
+export type ContainerState = {
+  exists: boolean;
+  running: boolean;
+  status: string;
+  container_id: string | null;
+  container_name: string;
+  image: string | null;
+  host_port: number | null;
+  /** False when there is no usable daemon — a state to show, not an error. */
+  docker_available: boolean;
+  message: string | null;
+};

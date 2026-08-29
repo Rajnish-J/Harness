@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import (
     chat,
+    containers,
     credentials,
     health,
     mcp as mcp_api,
@@ -81,3 +82,4 @@ app.include_router(mcp_api.router)
 app.include_router(workflows.router)
 app.include_router(credentials.router)
 app.include_router(projects.router)
+app.include_router(containers.router)
