@@ -93,6 +93,7 @@ def make_agent_node(node: WorkflowNode, deps: NodeDeps):
         error: str | None = None
         done_reason: str | None = None
         tool_calls = 0
+        usage: dict[str, int] | None = None
 
         async for event in run_agent_loop(
             session=session,
@@ -116,6 +117,7 @@ def make_agent_node(node: WorkflowNode, deps: NodeDeps):
                 error = event.message
             elif event.type == "done":
                 done_reason = event.reason
+                usage = event.usage
 
         # The loop returns silently on disconnect/cancel — no `done` event.
         cancelled = done_reason is None
@@ -125,6 +127,10 @@ def make_agent_node(node: WorkflowNode, deps: NodeDeps):
             status = "error"
         else:
             status = "ok"
+
+        duration_ms = int((time.monotonic() - started) * 1000)
+        input_tokens = usage.get("input_tokens") if usage else None
+        output_tokens = usage.get("output_tokens") if usage else None
 
         output: NodeOutput = {
             "node_id": node.id,
@@ -136,6 +142,9 @@ def make_agent_node(node: WorkflowNode, deps: NodeDeps):
             "tool_calls": tool_calls,
             "started_at": started_at,
             "finished_at": _now(),
+            "duration_ms": duration_ms,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
         }
 
         if deps.on_node_finish is not None:
@@ -147,7 +156,9 @@ def make_agent_node(node: WorkflowNode, deps: NodeDeps):
                     "events": collected,
                     "tool_call_count": tool_calls,
                     "error": error,
-                    "duration_ms": int((time.monotonic() - started) * 1000),
+                    "duration_ms": duration_ms,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
                 },
             )
 
