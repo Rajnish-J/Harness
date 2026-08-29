@@ -39,6 +39,21 @@ class GitHubError(Exception):
 
 
 @dataclass
+class Repo:
+    """One repository, reduced to what the picker and the clone need."""
+
+    id: str
+    name: str
+    full_name: str
+    owner: str
+    clone_url: str
+    default_branch: str
+    private: bool
+    description: str | None
+    updated_at: str | None
+
+
+@dataclass
 class TokenIdentity:
     """Who a token belongs to, and what it may do."""
 
@@ -103,3 +118,50 @@ async def validate_token(token: str) -> TokenIdentity:
         scopes=scopes,
         fine_grained=not scopes,
     )
+
+
+def _repo(body: dict) -> Repo:
+    owner = (body.get("owner") or {}).get("login") or ""
+    return Repo(
+        # GitHub's id is a number; stored and compared as text everywhere here.
+        id=str(body.get("id") or ""),
+        name=body.get("name") or "",
+        full_name=body.get("full_name") or "",
+        owner=owner,
+        clone_url=body.get("clone_url") or "",
+        default_branch=body.get("default_branch") or "main",
+        private=bool(body.get("private")),
+        description=body.get("description"),
+        updated_at=body.get("updated_at"),
+    )
+
+
+async def list_repos(token: str, *, page: int = 1, per_page: int = 50) -> list[Repo]:
+    """One page of repositories the token can see, most recently pushed first.
+
+    Paged rather than exhaustive: an account with 800 repositories would
+    otherwise mean sixteen sequential API calls before the picker could render
+    anything, and the operator is going to type a filter regardless.
+
+    `affiliation` is set explicitly so repositories reachable only through an
+    organisation still appear — the default omits some of them.
+    """
+    params = {
+        "per_page": str(max(1, min(per_page, 100))),
+        "page": str(max(1, page)),
+        "sort": "pushed",
+        "affiliation": "owner,collaborator,organization_member",
+    }
+
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        try:
+            response = await client.get(
+                f"{API_ROOT}/user/repos", headers=_auth(token), params=params
+            )
+        except httpx.RequestError as exc:
+            raise GitHubError(f"Could not reach GitHub: {exc}") from exc
+
+    if response.status_code != 200:
+        raise GitHubError(_explain(response), status=response.status_code)
+
+    return [_repo(item) for item in response.json()]
