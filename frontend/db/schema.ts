@@ -116,6 +116,9 @@ export const workflowRunSteps = pgTable(
     error: text("error"),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
+    durationMs: integer("duration_ms").notNull().default(0),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
   },
   (t) => [
     index("workflow_run_steps_run_seq_idx").on(t.runId, t.seq),
