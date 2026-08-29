@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import AgentStepIndicator from "@/components/chat/AgentStepIndicator";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { describeRun, type RunState } from "@/lib/run-state";
 import type { TranscriptItem } from "@/lib/types";
 
@@ -102,68 +103,70 @@ export default function RunPanel({
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto px-2 pb-3">
-        {nodeIds.length === 0 && !running && (
-          <p className="px-2 py-6 text-center text-xs text-muted-foreground">
-            Run the workflow to see each step here.
-          </p>
-        )}
-        {nodeIds.map((nodeId) => {
-          const node = runState.nodes[nodeId];
-          const isOpen = open === nodeId;
-          return (
-            <div key={nodeId} className="mb-1">
-              <button
-                type="button"
-                onClick={() => setOpen(isOpen ? null : nodeId)}
-                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent"
-              >
-                <span
-                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                    node.status === "running"
-                      ? "animate-pulse bg-amber-500"
-                      : node.status === "ok"
-                        ? "bg-emerald-500"
-                        : node.status === "error"
-                          ? "bg-red-500"
-                          : "bg-muted-foreground"
-                  }`}
-                />
-                <span className="flex-1 truncate font-medium">
-                  {labels[nodeId] ?? nodeId}
-                </span>
-                <span className="font-mono text-[10px] text-muted-foreground">
-                  {node.toolCalls > 0 && `${node.toolCalls} tools`}
-                </span>
-                <span className="text-muted-foreground">{isOpen ? "−" : "+"}</span>
-              </button>
-              {isOpen && (
-                <div className="ml-3 border-l border-border pl-2">
-                  {toTranscript(node.events).map((item) =>
-                    item.kind === "step" ? (
-                      <AgentStepIndicator key={item.id} step={item} />
-                    ) : item.kind === "assistant" ? (
-                      <p
-                        key={item.id}
-                        className="whitespace-pre-wrap px-2 py-1 text-xs text-foreground"
-                      >
-                        {item.text}
-                      </p>
-                    ) : item.kind === "error" ? (
-                      <p
-                        key={item.id}
-                        className="px-2 py-1 text-xs text-red-600 dark:text-red-400"
-                      >
-                        {item.message}
-                      </p>
-                    ) : null,
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      <ScrollArea className="flex-1">
+        <div className="px-2 pb-3">
+          {nodeIds.length === 0 && !running && (
+            <p className="px-2 py-6 text-center text-xs text-muted-foreground">
+              Run the workflow to see each step here.
+            </p>
+          )}
+          {nodeIds.map((nodeId) => {
+            const node = runState.nodes[nodeId];
+            const isOpen = open === nodeId;
+            return (
+              <div key={nodeId} className="mb-1">
+                <button
+                  type="button"
+                  onClick={() => setOpen(isOpen ? null : nodeId)}
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent"
+                >
+                  <span
+                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                      node.status === "running"
+                        ? "animate-pulse bg-amber-500"
+                        : node.status === "ok"
+                          ? "bg-emerald-500"
+                          : node.status === "error"
+                            ? "bg-red-500"
+                            : "bg-muted-foreground"
+                    }`}
+                  />
+                  <span className="flex-1 truncate font-medium">
+                    {labels[nodeId] ?? nodeId}
+                  </span>
+                  <span className="font-mono text-[10px] text-muted-foreground">
+                    {node.toolCalls > 0 && `${node.toolCalls} tools`}
+                  </span>
+                  <span className="text-muted-foreground">{isOpen ? "−" : "+"}</span>
+                </button>
+                {isOpen && (
+                  <div className="ml-3 border-l border-border pl-2">
+                    {toTranscript(node.events).map((item) =>
+                      item.kind === "step" ? (
+                        <AgentStepIndicator key={item.id} step={item} />
+                      ) : item.kind === "assistant" ? (
+                        <p
+                          key={item.id}
+                          className="whitespace-pre-wrap px-2 py-1 text-xs text-foreground"
+                        >
+                          {item.text}
+                        </p>
+                      ) : item.kind === "error" ? (
+                        <p
+                          key={item.id}
+                          className="px-2 py-1 text-xs text-red-600 dark:text-red-400"
+                        >
+                          {item.message}
+                        </p>
+                      ) : null,
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </ScrollArea>
     </div>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import { ScrollArea } from "@/components/ui/scroll-area";
 import type { FlowNode } from "@/lib/graph-serde";
 import { fetchTools, type ToolInfo } from "@/lib/workflow-api";
 import type {
@@ -51,40 +52,42 @@ export default function NodeConfigPanel({
   const isAgent = node.data.nodeType === "agent";
 
   return (
-    <div className="flex h-full flex-col gap-4 overflow-y-auto p-4">
-      <div>
-        <label className={label}>Label</label>
-        <input
-          className={`${field} mt-1`}
-          value={node.data.label}
-          onChange={(e) => onChange(node.id, { label: e.target.value })}
-        />
-        <p className="mt-1 font-mono text-[10px] text-muted-foreground">id: {node.id}</p>
+    <ScrollArea className="h-full">
+      <div className="flex flex-col gap-4 p-4">
+        <div>
+          <label className={label}>Label</label>
+          <input
+            className={`${field} mt-1`}
+            value={node.data.label}
+            onChange={(e) => onChange(node.id, { label: e.target.value })}
+          />
+          <p className="mt-1 font-mono text-[10px] text-muted-foreground">id: {node.id}</p>
+        </div>
+
+        {isAgent ? (
+          <AgentConfig
+            config={node.data.config as AgentNodeConfig}
+            tools={tools}
+            otherNodeIds={otherNodeIds}
+            onChange={(config) => onChange(node.id, { config })}
+          />
+        ) : (
+          <ConditionConfig
+            config={node.data.config as ConditionNodeConfig}
+            otherNodeIds={otherNodeIds}
+            onChange={(config) => onChange(node.id, { config })}
+          />
+        )}
+
+        <button
+          type="button"
+          onClick={() => onDelete(node.id)}
+          className="mt-auto rounded-lg border border-red-500/30 px-3 py-1.5 text-sm text-red-600 transition-colors hover:bg-red-500/5 dark:text-red-400"
+        >
+          Delete node
+        </button>
       </div>
-
-      {isAgent ? (
-        <AgentConfig
-          config={node.data.config as AgentNodeConfig}
-          tools={tools}
-          otherNodeIds={otherNodeIds}
-          onChange={(config) => onChange(node.id, { config })}
-        />
-      ) : (
-        <ConditionConfig
-          config={node.data.config as ConditionNodeConfig}
-          otherNodeIds={otherNodeIds}
-          onChange={(config) => onChange(node.id, { config })}
-        />
-      )}
-
-      <button
-        type="button"
-        onClick={() => onDelete(node.id)}
-        className="mt-auto rounded-lg border border-red-500/30 px-3 py-1.5 text-sm text-red-600 transition-colors hover:bg-red-500/5 dark:text-red-400"
-      >
-        Delete node
-      </button>
-    </div>
+    </ScrollArea>
   );
 }
 
