@@ -8,6 +8,7 @@
 
 import {
   Bot,
+  FolderGit2,
   GitBranch,
   KeyRound,
   MessageSquare,
@@ -31,6 +32,12 @@ export const NAV_ITEMS: NavItem[] = [
     label: "Chat",
     blurb: "Talk to the harness agent",
     icon: MessageSquare,
+  },
+  {
+    href: "/projects",
+    label: "Projects",
+    blurb: "Cloned repositories the agent can work inside",
+    icon: FolderGit2,
   },
   {
     href: "/workflows",
