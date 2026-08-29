@@ -23,6 +23,9 @@ export default defineConfig({
     "mcp_servers",
     "skills",
     "agents",
+    // This list is an allowlist, not just a LangGraph exclusion: a table added
+    // to schema.ts but not named here is silently never migrated.
+    "credentials",
   ],
   verbose: true,
   strict: true,

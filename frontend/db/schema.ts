@@ -229,3 +229,50 @@ export const agents = pgTable(
 export type McpServerRow = typeof mcpServers.$inferSelect;
 export type SkillRow = typeof skills.$inferSelect;
 export type AgentRow = typeof agents.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Credentials: personal access tokens for GitHub and friends.
+//
+// Unlike `mcp_servers.env` above — which stores API keys in plaintext and
+// mitigates by scope — a PAT can push code and merge pull requests, so the
+// secret is encrypted at rest with AES-256-GCM (see lib/server/crypto.ts and
+// backend/app/core/secrets.py, which must agree byte for byte).
+//
+// It is ENCRYPTED, not hashed: the token has to be replayed to GitHub, so a
+// one-way digest would be useless. Next.js encrypts on write, Python decrypts
+// when it needs to call an API. The plaintext is never sent back to the browser
+// by any endpoint — `lastFour` exists so the UI can identify a token without
+// one.
+// ---------------------------------------------------------------------------
+
+export const credentialProvider = pgEnum("credential_provider", [
+  "github",
+  "azure_devops",
+  "gitlab",
+  "generic",
+]);
+
+export const credentials = pgTable(
+  "credentials",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    provider: credentialProvider("provider").notNull().default("github"),
+    /** The account the token belongs to. Needed to build an HTTPS clone URL. */
+    username: text("username"),
+    /** `v1.<base64url nonce>.<base64url ciphertext||tag>`. Never leaves the server. */
+    secretCiphertext: text("secret_ciphertext").notNull(),
+    /** Last 4 characters, so the list can render `ghp_••••1234` without decrypting. */
+    lastFour: text("last_four").notNull(),
+    /** Reported by the provider on a connection test, not requested by us. */
+    scopes: jsonb("scopes").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    enabled: boolean("enabled").notNull().default(true),
+    lastValidatedAt: timestamp("last_validated_at", { withTimezone: true }),
+    lastValidationError: text("last_validation_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique("credentials_name_uq").on(t.name)],
+);
+
+export type CredentialRow = typeof credentials.$inferSelect;
