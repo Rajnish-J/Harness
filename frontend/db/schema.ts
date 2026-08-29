@@ -370,3 +370,56 @@ export const projectFiles = pgTable(
 
 export type ProjectRow = typeof projects.$inferSelect;
 export type ProjectFileRow = typeof projectFiles.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Project containers: where a project's commands actually run.
+//
+// Python-owned. The truth about a container is whether the Docker daemon has
+// one, and only the side that talks to the daemon knows that — Next.js reads
+// these rows to render status and never writes them.
+//
+// Rows are a CACHE of daemon state, not the state itself. A container can be
+// removed by `docker rm` or a Docker Desktop restart without anything telling
+// us, so every read reconciles against the daemon rather than trusting the row.
+// ---------------------------------------------------------------------------
+
+export const containerStatus = pgEnum("container_status", [
+  "creating",
+  "running",
+  "stopped",
+  "error",
+  "removed",
+]);
+
+export const projectContainers = pgTable(
+  "project_containers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    /** Docker's own 64-char id. Null until the daemon has actually created it. */
+    containerId: text("container_id"),
+    /** Deterministic: harness-project-<project id>, so an orphan is findable. */
+    containerName: text("container_name").notNull(),
+    image: text("image").notNull(),
+    status: containerStatus("status").notNull().default("creating"),
+    /** Chosen by Docker, read back after start. Null when nothing is published. */
+    hostPort: integer("host_port"),
+    /** The host directory bind-mounted at /workspace. */
+    workspacePath: text("workspace_path"),
+    error: text("error"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    stoppedAt: timestamp("stopped_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One live container per project. Partial-unique would be better but Drizzle
+    // has no first-class support, and a project only ever has one anyway.
+    unique("project_containers_project_uq").on(t.projectId),
+    index("project_containers_status_idx").on(t.status),
+  ],
+);
+
+export type ProjectContainerRow = typeof projectContainers.$inferSelect;

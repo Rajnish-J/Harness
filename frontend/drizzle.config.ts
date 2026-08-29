@@ -28,6 +28,7 @@ export default defineConfig({
     "credentials",
     "projects",
     "project_files",
+    "project_containers",
   ],
   verbose: true,
   strict: true,
