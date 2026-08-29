@@ -7,7 +7,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import type { ToolInfo } from "@/lib/workflow-api";
 
 /**
@@ -53,9 +53,12 @@ export default function ToolGroupDialog({
                   <summary className="cursor-pointer text-[11px] text-muted-foreground select-none">
                     Input schema
                   </summary>
-                  <pre className="mt-1.5 overflow-x-auto rounded-md bg-muted/50 p-2.5 font-mono text-[11px]">
-                    {JSON.stringify(tool.input_schema, null, 2)}
-                  </pre>
+                  <ScrollArea className="mt-1.5 rounded-md bg-muted/50">
+                    <pre className="p-2.5 font-mono text-[11px]">
+                      {JSON.stringify(tool.input_schema, null, 2)}
+                    </pre>
+                    <ScrollBar orientation="horizontal" />
+                  </ScrollArea>
                 </details>
               </li>
             ))}

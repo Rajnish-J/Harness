@@ -1,3 +1,4 @@
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
 /**
@@ -37,7 +38,9 @@ export default function PageBody({
           {toolbar}
         </div>
       )}
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">{children}</div>
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="p-4">{children}</div>
+      </ScrollArea>
     </div>
   );
 }
