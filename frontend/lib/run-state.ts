@@ -26,6 +26,8 @@ export type NodeRunState = {
   outputPreview?: string;
   error?: string;
   attempt: number;
+  inputTokens?: number;
+  outputTokens?: number;
 };
 
 export type RunState = {
@@ -106,6 +108,8 @@ export function applyWorkflowEvent(prev: RunState, event: WorkflowEvent): RunSta
             outputPreview: event.output_preview,
             error: event.error ?? current.error,
             finishedAt: Date.now(),
+            inputTokens: event.input_tokens ?? undefined,
+            outputTokens: event.output_tokens ?? undefined,
           },
         },
       };

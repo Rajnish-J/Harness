@@ -46,6 +46,7 @@ export type DoneEvent = {
     | "disconnected"
     // Terminal for this stream only — the turn resumes via /api/chat/approve.
     | "awaiting_approval";
+  usage?: { input_tokens: number; output_tokens: number } | null;
 };
 
 export type AgentEvent =
