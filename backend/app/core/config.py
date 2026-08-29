@@ -49,6 +49,16 @@ class Settings(BaseSettings):
     # it, and the credential endpoints 503 rather than the server refusing to
     # boot.
     credentials_encryption_key: str | None = None
+
+    # ---- Project containers ------------------------------------------------
+    # One container per project, so a repo's toolchain never has to exist on the
+    # host. Debian-slim with Node because that suits most repos this harness
+    # will see; a Python repo wants a different image, which is why this is
+    # configurable rather than hard-coded.
+    default_project_image: str = "node:22-bookworm-slim"
+    # Published so a dev server started inside the container is reachable. The
+    # HOST port is chosen by Docker, not by us -- it already solves allocation.
+    project_container_port: int = 3000
     db_pool_min: int = 1
     db_pool_max: int = 5
 

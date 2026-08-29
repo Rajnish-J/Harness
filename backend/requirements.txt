@@ -86,3 +86,9 @@ pycparser==3.0
 opentelemetry-api==1.44.0
 # stdio transport reads process handles on Windows; no-op elsewhere.
 pywin32==312; sys_platform == "win32"
+
+# --- Docker ------------------------------------------------------------------
+# Runs each project's commands inside its own container, so a repo's toolchain
+# and dependencies never have to exist on the host. The SDK is synchronous, so
+# every call is wrapped in asyncio.to_thread (see app/projects/containers.py).
+docker==7.2.0
