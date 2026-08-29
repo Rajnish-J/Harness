@@ -41,6 +41,14 @@ class Settings(BaseSettings):
     # Workflow subsystem. `database_url` is deliberately optional: chat must
     # keep working with no database, and /api/workflows/* returns 503 instead.
     database_url: str | None = None
+
+    # ---- Credentials -------------------------------------------------------
+    # Base64 of 32 random bytes, and it must be the SAME value as the frontend's
+    # CREDENTIALS_ENCRYPTION_KEY: Next.js encrypts tokens, this side decrypts
+    # them. Optional for the same reason database_url is — chat works without
+    # it, and the credential endpoints 503 rather than the server refusing to
+    # boot.
+    credentials_encryption_key: str | None = None
     db_pool_min: int = 1
     db_pool_max: int = 5
 
