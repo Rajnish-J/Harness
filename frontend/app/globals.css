@@ -11,8 +11,9 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  /* Wired to the Geist faces loaded in app/layout.tsx. */
-  --font-sans: var(--font-geist-sans);
+  /* Wired to the faces loaded in app/layout.tsx. */
+  --font-sans: var(--font-ubuntu);
+  --font-display: var(--font-outfit);
   --font-mono: var(--font-geist-mono);
 
   --color-background: var(--background);
@@ -116,6 +117,6 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-family: var(--font-sans), system-ui, sans-serif;
+    font-family: var(--font-sans), Ubuntu, system-ui, sans-serif;
   }
 }
