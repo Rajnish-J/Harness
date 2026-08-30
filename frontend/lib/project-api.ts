@@ -12,10 +12,16 @@
 import { API_BASE } from "./api";
 import type {
   CloneEvent,
+  ConnectGithubInput,
   ContainerState,
+  FileContent,
+  GitStatus,
   Project,
   ProjectInput,
+  PullRequest,
   RemoteRepo,
+  StoredMessage,
+  TreeLevel,
 } from "./project-types";
 import { consumeSSE } from "./sse";
 
@@ -100,6 +106,39 @@ export const projectsApi = {
     if (!res.ok) await json(res);
     await consumeSSE<CloneEvent>(res, onEvent);
   },
+
+  /**
+   * Set up a Blank Project's working tree: `git init`, a README, one commit.
+   *
+   * Unlike `clone`, this never touches the network, so it answers once rather
+   * than streaming.
+   */
+  init: async (id: string): Promise<{ branch: string | null; file_count: number }> =>
+    json(
+      await fetch(`${API_BASE}/api/projects/${id}/init`, { method: "POST" }),
+    ),
+
+  /**
+   * Link a Blank Project to a GitHub remote it hasn't been connected to yet.
+   *
+   * Two steps against two servers, same as create+clone: this call persists
+   * the remote's coordinates (Next.js owns that), then `pushToRemote` actually
+   * pushes to it (only Python's side has a decrypted token and a working tree).
+   */
+  connect: async (id: string, input: ConnectGithubInput): Promise<Project> =>
+    json(
+      await fetch(`${BASE}/${id}/connect`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      }),
+    ),
+
+  /** Point the working tree at the remote just linked with `connect`, and push. */
+  pushToRemote: async (id: string): Promise<{ branch: string | null }> =>
+    json(
+      await fetch(`${API_BASE}/api/projects/${id}/connect`, { method: "POST" }),
+    ),
 };
 
 /**
@@ -136,6 +175,110 @@ export const containerApi = {
     json(
       await fetch(`${API_BASE}/api/projects/${projectId}/container/remove`, {
         method: "POST",
+      }),
+    ),
+};
+
+/** Files and git for one project. Straight to the harness, like the container API. */
+export const projectFilesApi = {
+  tree: async (projectId: string, dirPath = ""): Promise<TreeLevel> =>
+    json(
+      await fetch(
+        `${API_BASE}/api/projects/${projectId}/tree?dir_path=${encodeURIComponent(dirPath)}`,
+        { cache: "no-store" },
+      ),
+    ),
+
+  read: async (projectId: string, path: string): Promise<FileContent> =>
+    json(
+      await fetch(
+        `${API_BASE}/api/projects/${projectId}/file?path=${encodeURIComponent(path)}`,
+        { cache: "no-store" },
+      ),
+    ),
+
+  write: async (
+    projectId: string,
+    path: string,
+    content: string,
+  ): Promise<FileContent> =>
+    json(
+      await fetch(`${API_BASE}/api/projects/${projectId}/file`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path, content }),
+      }),
+    ),
+
+  history: async (projectId: string): Promise<{ messages: StoredMessage[] }> =>
+    json(
+      await fetch(`${API_BASE}/api/projects/${projectId}/chat/history`, {
+        cache: "no-store",
+      }),
+    ),
+};
+
+export const projectGitApi = {
+  status: async (projectId: string): Promise<GitStatus> =>
+    json(
+      await fetch(`${API_BASE}/api/projects/${projectId}/git`, { cache: "no-store" }),
+    ),
+
+  createBranch: async (
+    projectId: string,
+    name: string,
+    base?: string,
+  ): Promise<GitStatus> =>
+    json(
+      await fetch(`${API_BASE}/api/projects/${projectId}/branches`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, base }),
+      }),
+    ),
+
+  commit: async (
+    projectId: string,
+    message: string,
+    pushAfter = true,
+  ): Promise<{ committed: boolean; pushed: boolean; branch: string | null }> =>
+    json(
+      await fetch(`${API_BASE}/api/projects/${projectId}/commit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message, push_after: pushAfter }),
+      }),
+    ),
+
+  listPulls: async (projectId: string): Promise<{ pulls: PullRequest[] }> =>
+    json(
+      await fetch(`${API_BASE}/api/projects/${projectId}/pulls`, {
+        cache: "no-store",
+      }),
+    ),
+
+  createPull: async (
+    projectId: string,
+    input: { title: string; body?: string; base?: string; draft?: boolean },
+  ): Promise<PullRequest> =>
+    json(
+      await fetch(`${API_BASE}/api/projects/${projectId}/pulls`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      }),
+    ),
+
+  mergePull: async (
+    projectId: string,
+    number: number,
+    method = "merge",
+  ): Promise<{ merged: boolean; sha: string }> =>
+    json(
+      await fetch(`${API_BASE}/api/projects/${projectId}/pulls/${number}/merge`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ method }),
       }),
     ),
 };

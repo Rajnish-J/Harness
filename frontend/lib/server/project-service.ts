@@ -16,13 +16,20 @@ import { and, count, desc, eq, isNull } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import { projectFiles, projects, type ProjectRow } from "@/db/schema";
-import type { Project, ProjectInput } from "@/lib/project-types";
+import type {
+  BlankProjectInput,
+  ConnectGithubInput,
+  GithubProjectInput,
+  Project,
+} from "@/lib/project-types";
 
 function toProject(row: ProjectRow): Project {
   return {
     id: row.id,
     name: row.name,
     slug: row.slug,
+    description: row.description,
+    kind: row.kind,
     provider: row.provider,
     repoOwner: row.repoOwner,
     repoName: row.repoName,
@@ -58,12 +65,15 @@ export async function getProject(id: string): Promise<Project | null> {
   return row ? toProject(row) : null;
 }
 
-export async function createProject(input: ProjectInput & { slug: string }) {
+export async function createGithubProject(
+  input: GithubProjectInput & { name: string; slug: string },
+) {
   const [row] = await getDb()
     .insert(projects)
     .values({
       name: input.name,
       slug: input.slug,
+      kind: "github",
       provider: input.provider ?? "github",
       repoOwner: input.repoOwner,
       repoName: input.repoName,
@@ -80,9 +90,56 @@ export async function createProject(input: ProjectInput & { slug: string }) {
   return toProject(row!);
 }
 
+export async function createBlankProject(input: BlankProjectInput & { slug: string }) {
+  const [row] = await getDb()
+    .insert(projects)
+    .values({
+      name: input.name,
+      slug: input.slug,
+      description: input.description ?? null,
+      kind: "blank",
+      // No repo coordinates yet — repoOwner/repoName/repoUrl stay null until
+      // this project is connected to a remote.
+      cloneStatus: "pending",
+    })
+    .returning();
+  return toProject(row!);
+}
+
+/**
+ * Link a Blank Project to a GitHub remote it hasn't been connected to yet.
+ *
+ * The `repoUrl is null` guard makes this a one-time, atomic transition rather
+ * than a read-then-write: a project that already has a remote cannot be
+ * silently re-pointed at a different one through this path.
+ */
+export async function connectProjectToGithub(
+  id: string,
+  input: ConnectGithubInput,
+): Promise<Project | null> {
+  const [row] = await getDb()
+    .update(projects)
+    .set({
+      provider: "github",
+      repoOwner: input.repoOwner,
+      repoName: input.repoName,
+      repoUrl: input.repoUrl,
+      repoId: input.repoId ?? null,
+      defaultBranch: input.defaultBranch ?? "main",
+      visibility: input.visibility ?? "private",
+      credentialId: input.credentialId,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(eq(projects.id, id), isNull(projects.archivedAt), isNull(projects.repoUrl)),
+    )
+    .returning();
+  return row ? toProject(row) : null;
+}
+
 export async function updateProject(
   id: string,
-  patch: Partial<Pick<ProjectInput, "name" | "credentialId" | "defaultBranch">>,
+  patch: Partial<Pick<GithubProjectInput, "name" | "credentialId" | "defaultBranch">>,
 ): Promise<Project | null> {
   const [row] = await getDb()
     .update(projects)
