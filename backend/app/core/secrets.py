@@ -77,10 +77,26 @@ def _key(settings: Settings) -> bytes:
 
 
 def encrypt_secret(plaintext: str, settings: Settings) -> str:
-    """Encrypt a token. Mirrors encryptSecret() in crypto.ts."""
+    """Encrypt a token. Mirrors encryptSecret() in crypto.ts.
+
+    Empty is a mistake worth failing on: a credential whose secret is ``""`` is
+    not a credential, and the row would look complete.
+    """
     if not plaintext:
         raise CredentialCryptoError("Refusing to encrypt an empty secret.")
 
+    return encrypt_value(plaintext, settings)
+
+
+def encrypt_value(plaintext: str, settings: Settings) -> str:
+    """The same envelope and key, but ``""`` is allowed. Mirrors encryptValue().
+
+    Project environment variables use this one: ``KEY=`` is a real line in a real
+    ``.env``, and refusing it would silently drop a variable from the file the
+    container is given. AES-GCM over an empty plaintext is well defined — the
+    payload is then exactly the 16-byte tag, which ``AESGCM.decrypt`` has always
+    accepted here (there is no payload length check on this side).
+    """
     nonce = os.urandom(NONCE_BYTES)
     # Returns ciphertext || tag, which is exactly what the format stores.
     payload = AESGCM(_key(settings)).encrypt(nonce, plaintext.encode("utf-8"), None)
