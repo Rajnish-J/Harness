@@ -1,11 +1,13 @@
 "use client";
 
-import { Trash2 } from "lucide-react";
+import { ArrowLeft, Trash2 } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { toast } from "@/components/ui/toast";
 
 /**
  * Save / delete chrome shared by the three registry editors.
@@ -16,6 +18,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
  */
 export default function EditorShell({
   title,
+  backHref,
   dirty,
   onSave,
   onDelete,
@@ -24,6 +27,12 @@ export default function EditorShell({
   children,
 }: {
   title: string;
+  /**
+   * The list page this record belongs to. A hardcoded link rather than
+   * router.back(): a detail page reached by direct link or refresh has no
+   * useful history entry behind it, and Back must still land on the list.
+   */
+  backHref: string;
   dirty: boolean;
   onSave: () => Promise<void>;
   onDelete: () => Promise<void>;
@@ -34,18 +43,17 @@ export default function EditorShell({
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<"save" | "delete" | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   async function save() {
     setBusy("save");
-    setError(null);
     try {
       await onSave();
       // The list pages are server-rendered, so a client-side save is invisible
       // to them until their cache is invalidated.
       router.refresh();
+      toast.success(`${title} saved`);
     } catch (err) {
-      setError((err as Error).message);
+      toast.error({ title: "Save failed", description: (err as Error).message });
     } finally {
       setBusy(null);
     }
@@ -54,12 +62,11 @@ export default function EditorShell({
   async function remove() {
     if (!window.confirm(deleteLabel)) return;
     setBusy("delete");
-    setError(null);
     try {
       await onDelete();
       router.refresh();
     } catch (err) {
-      setError((err as Error).message);
+      toast.error({ title: "Delete failed", description: (err as Error).message });
       setBusy(null);
     }
   }
@@ -67,6 +74,12 @@ export default function EditorShell({
   return (
     <div className="mx-auto flex h-full w-full max-w-3xl flex-col font-sans">
       <div className="flex shrink-0 items-center gap-3 border-b px-4 py-2.5">
+        <Button asChild variant="ghost" size="sm" className="-ml-2 h-7 px-2">
+          <Link href={backHref} aria-label="Back to list">
+            <ArrowLeft className="size-3.5" />
+            Back
+          </Link>
+        </Button>
         <h2 className="truncate text-sm font-semibold">{title}</h2>
         {dirty && <span className="text-[11px] text-amber-600">unsaved</span>}
         <div className="ml-auto flex items-center gap-2">
@@ -95,11 +108,6 @@ export default function EditorShell({
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="p-4">
-          {error && (
-            <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2 text-sm text-red-700 dark:text-red-300">
-              {error}
-            </div>
-          )}
           <div className="flex flex-col gap-5">{children}</div>
         </div>
       </ScrollArea>

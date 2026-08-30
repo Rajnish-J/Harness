@@ -40,6 +40,7 @@ export default function SkillEditor({ skill }: { skill: Skill }) {
   return (
     <EditorShell
       title={skill.name}
+      backHref="/skills"
       dirty={dirty}
       actions={<UseInChatButton kind="skill" value={skill.slug} />}
       deleteLabel={`Delete the skill "${skill.name}"? This cannot be undone.`}
