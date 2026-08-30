@@ -35,6 +35,7 @@ from app.projects.containers import (
     status,
     stop_container,
 )
+from app.projects.image_detect import detect_image
 from app.projects.workspaces import InvalidProjectIdError, project_workspace
 
 logger = logging.getLogger(__name__)
@@ -146,11 +147,15 @@ async def container_start(
     except InvalidProjectIdError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # One image for every project was the old behaviour -- this picks a
+    # better one from whatever manifest file the repo actually has.
+    image = detect_image(mount, default=settings.default_project_image)
+
     try:
         state = await ensure_container(
             project_id,
             mount,
-            image=settings.default_project_image,
+            image=image,
             container_port=settings.project_container_port,
         )
     except DockerUnavailableError as exc:
@@ -161,7 +166,7 @@ async def container_start(
             pool,
             project_id,
             container_name=container_name(project_id),
-            image=settings.default_project_image,
+            image=image,
             status="error",
             error=str(exc),
             workspace_path=str(mount),
@@ -172,7 +177,7 @@ async def container_start(
         pool,
         project_id,
         container_name=container_name(project_id),
-        image=state.image or settings.default_project_image,
+        image=state.image or image,
         status=state.status,
         container_id=state.container_id,
         host_port=state.host_port,
