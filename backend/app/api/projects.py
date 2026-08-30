@@ -1,14 +1,19 @@
-"""Repository discovery and cloning.
+"""Repository discovery, cloning, and blank-project setup.
 
-Two endpoints, both reached only from the Projects UI:
+Reached only from the Projects UI:
 
-- ``GET  /api/projects/github/repos`` — what can this credential see?
-- ``POST /api/projects/{id}/clone``   — clone it, streaming progress.
+- ``GET  /api/projects/github/repos``     — what can this credential see?
+- ``POST /api/projects/{id}/clone``       — clone a repo into it, streaming progress.
+- ``POST /api/projects/{id}/init``        — set up a Blank Project's working tree.
+- ``POST /api/projects/{id}/connect``     — point a Blank Project at a GitHub
+  remote and push its history to it.
 
 The clone streams SSE for the same reason chat does: it takes tens of seconds,
 and a spinner that cannot say *which* of clone / index / finish is happening is
 much worse than one that can. It reuses the frame format the frontend's
-`consumeSSE` already parses, so no new client plumbing is needed.
+`consumeSSE` already parses, so no new client plumbing is needed. `init` and
+`connect` are local and typically instant by comparison, so they answer once
+rather than streaming.
 
 Progress is reported as discrete named steps rather than parsed out of git's
 stdout. git writes progress to a TTY it does not have here, and scraping
@@ -38,7 +43,15 @@ from app.db.project_repo import (
 )
 from app.integrations.github import GitHubError, list_repos
 from app.models.events import AgentEvent, sse_comment
-from app.projects.git_ops import GitOperationError, clone, current_branch
+from app.projects.git_ops import (
+    GitOperationError,
+    clone,
+    commit_all,
+    current_branch,
+    init_repo,
+    push,
+    set_remote,
+)
 from app.projects.indexer import index_repository
 from app.projects.workspaces import (
     InvalidProjectIdError,
@@ -221,5 +234,112 @@ async def _clone_stream(
         yield CloneErrorEvent(message=message).to_sse()
         yield CloneDoneEvent(reason="error").to_sse()
 
+    finally:
+        del token
+
+
+class InitResult(BaseModel):
+    branch: str | None = None
+    file_count: int = 0
+
+
+@router.post("/projects/{project_id}/init")
+async def init_project(
+    project_id: str,
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> InitResult:
+    """Set up a Blank Project's working tree: `git init`, a README, one commit.
+
+    Reuses the clone-status columns rather than adding new ones — a Blank
+    Project has no remote, but "has this project's working tree been set up
+    yet" is the same question `clone_status` already answers for a cloned one.
+    """
+    pool = _require_pool(request)
+    project = await get_project(pool, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+    try:
+        destination = project_workspace(settings, project_id)
+    except InvalidProjectIdError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    await mark_clone_started(pool, project_id)
+
+    try:
+        await init_repo(destination, branch=project.default_branch or "main")
+        (destination / "README.md").write_text(
+            f"# {project.name}\n", encoding="utf-8", newline=""
+        )
+        await commit_all(destination, "Initial commit")
+
+        files = await index_repository(
+            destination, max_file_bytes=settings.max_file_bytes
+        )
+        count = await replace_project_files(pool, project_id, files)
+
+        branch = await current_branch(destination)
+        await mark_clone_succeeded(pool, project_id, branch=branch)
+        return InitResult(branch=branch, file_count=count)
+
+    except (GitOperationError, OSError) as exc:
+        message = str(exc)
+        logger.warning("init failed for project %s: %s", project_id, message)
+        await mark_clone_failed(pool, project_id, error=message)
+        try:
+            remove_project_workspace(settings, project_id)
+        except OSError:
+            logger.exception("could not clean up failed init %s", project_id)
+        raise HTTPException(status_code=500, detail=message) from exc
+
+
+class ConnectResult(BaseModel):
+    branch: str | None = None
+
+
+@router.post("/projects/{project_id}/connect")
+async def connect_project(
+    project_id: str,
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> ConnectResult:
+    """Point a Blank Project's working tree at its newly-linked GitHub remote
+    and push everything to it.
+
+    The remote coordinates (`repo_url`, `credential_id`, ...) are written by
+    the Next.js side first — this only runs once the project row already
+    names a repository to push to. There is deliberately no `git init` here:
+    if the working tree is not already set up, `/init` was skipped or failed,
+    and connecting to a remote would not fix that.
+    """
+    pool = _require_pool(request)
+    project = await get_project(pool, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    if not project.repo_url:
+        raise HTTPException(
+            status_code=400,
+            detail="This project has no repository linked yet.",
+        )
+
+    destination = project_workspace(settings, project_id)
+    if not (destination / ".git").is_dir():
+        raise HTTPException(
+            status_code=409, detail="This project's working tree is not set up yet."
+        )
+
+    token: str | None = None
+    if project.credential_id:
+        token = await _token_for(pool, str(project.credential_id), settings)
+
+    try:
+        await set_remote(destination, project.repo_url)
+        branch = await current_branch(destination) or project.default_branch
+        await push(destination, branch, token=token)
+        await mark_clone_succeeded(pool, project_id, branch=branch)
+        return ConnectResult(branch=branch)
+    except GitOperationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     finally:
         del token

@@ -34,9 +34,10 @@ class ProjectRow:
     name: str
     slug: str
     provider: str
-    repo_owner: str
-    repo_name: str
-    repo_url: str
+    # Null for a Blank Project until it is connected to a remote.
+    repo_owner: str | None
+    repo_name: str | None
+    repo_url: str | None
     default_branch: str
     credential_id: UUID | None
     clone_status: str
