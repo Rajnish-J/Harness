@@ -4,7 +4,7 @@ What is **not** finished across the five milestones of the projects feature
 (credentials → projects → containers → IDE → GitHub actions).
 
 Hand-maintained, unlike [`BRANCHES.md`](./BRANCHES.md) which is generated. Last
-reviewed 2026-08-29, against the code on `feat/project-integration-vs-code`.
+reviewed 2026-08-30, against the code on `feat/project-integration-vs-code`.
 
 Two categories are kept apart on purpose, because they carry very different risk:
 
@@ -20,9 +20,9 @@ Two categories are kept apart on purpose, because they carry very different risk
 | --- | --- | --- |
 | M1 Credentials | Working end to end | GitHub only; other providers store but do not validate |
 | M2 Projects: clone & list | Working end to end | Clone only — no pull, no re-sync |
-| M3 Docker runtime | **Never executed** | Docker is not installed on this machine |
+| M3 Docker runtime | **Never executed** | Docker Desktop is installed but its engine won't start — WSL2's "Virtual Machine Platform" feature isn't enabled yet |
 | M4 Project IDE | Working end to end | Read/edit only — no create, delete or rename |
-| M5 GitHub actions | **Never executed** | No push, PR or merge has run against a real repo |
+| M5 GitHub actions | **Never executed** | No push, PR or merge has run against a real repo — blocked on a GitHub credential being added through the app |
 
 ---
 
@@ -30,8 +30,21 @@ Two categories are kept apart on purpose, because they carry very different risk
 
 ### Docker container lifecycle (M3)
 
-Docker is not installed here (no CLI, no `\\.\pipe\docker_engine`, no WSL
-distro), so none of this has run:
+Still never executed. Docker Desktop is now installed, but its engine cannot
+start yet, for a more specific reason than "Docker isn't installed": **WSL2
+itself isn't usable on this machine**. `docker info`/`docker ps` return a 500
+from `dockerDesktopLinuxEngine`, and `wsl --status` names the actual cause —
+the **"Virtual Machine Platform" Windows optional feature is not enabled**
+(distinct from firmware-level virtualization, which `systeminfo` confirms
+already has a hypervisor present). The fix, in an **elevated** PowerShell:
+
+```
+wsl.exe --install --no-distribution
+```
+
+then a restart. This is a real first-failure discovered by actually trying to
+verify M3 on Windows, ahead of the two failures anticipated below — worth
+checking before either of them.
 
 - `ensure_container()` — create, image pull, start
 - The bind mount of a Windows host path into a Linux container
@@ -40,8 +53,8 @@ distro), so none of this has run:
 
 `DockerExec` is tested against a fake client, which pins path translation and
 failure behaviour but says nothing about whether Docker Desktop will mount
-`C:\Users\...`. **The two most likely first failures**, both of which surface as
-explicit messages rather than crashes:
+`C:\Users\...`. **The two most likely first failures once the engine is up**,
+both of which surface as explicit messages rather than crashes:
 
 1. **Drive sharing** — the drive must be added under Docker Desktop →
    Settings → Resources → File sharing.
@@ -54,9 +67,30 @@ host with a stated reason.
 
 ### The GitHub write path (M5)
 
-`push`, `create_pull_request` and `merge_pull_request` have never been called
-against a real repository. Their error branches are tested; the success branches
-are not. The first real push will be the first execution of that code.
+Still never executed against a real repository, pending a GitHub credential
+being added through the app's own Credentials page (`POST /api/credentials`
+with a PAT with `repo` scope) — deliberately not something this harness
+extracts from a locally-authenticated `gh` CLI session on the operator's
+behalf, so a person has to do that step themselves.
+
+While reviewing this path ahead of that first real run, one real bug was
+found and fixed: in `commit()` (`backend/app/api/project_git.py`), if
+`commit_all()` succeeded but resolving the project's GitHub token then failed
+(no credential linked, disabled, or a decrypt error), the endpoint raised a
+bare error with no indication the commit had already landed locally —
+inconsistent with the push-failure branch a few lines below, which already
+says "Committed locally, but the push failed." Fixed to say the equivalent
+for a token failure. No route-level test exists for this yet (nothing in this
+module has any — see Cross-cutting below); the fix was verified by reading,
+not by a new test.
+
+Beyond that, `git_ops.push()` and the git-subprocess plumbing it shares with
+`clone()` are lower-risk than they look: `clone()` has already run
+successfully against a real repository in this environment (the `HW` test
+project), which exercises the same `_git()`/`run_subprocess()` machinery
+`push()` uses — the genuinely untested part is narrower than "all of git_ops,"
+it's really just the GitHub REST calls in `app/integrations/github.py`
+(`create_pull_request`, `merge_pull_request`) and the push auth path.
 
 ---
 
@@ -102,11 +136,23 @@ are not. The first real push will be the first execution of that code.
 
 Beyond "never executed" above:
 
-- **One image for every project.** `Settings.default_project_image` is
-  `node:22-bookworm-slim` for everything. `project_containers.image` stores what
-  was used, but there is no per-project override and no UI for one — a Python
-  repo gets a Node image. Detecting an image from the repo's manifest files is
-  the obvious follow-up.
+- **Image is now detected from the repo's manifest file, not hardcoded.**
+  `app/projects/image_detect.py` checks the repo root for `package.json`,
+  `pyproject.toml`/`requirements.txt`/`Pipfile`, `go.mod`, `Cargo.toml`,
+  `pom.xml`/`build.gradle(.kts)`, `Gemfile`, or `composer.json` and picks a
+  matching image, falling back to `Settings.default_project_image`
+  (`node:22-bookworm-slim`) when nothing matches. Root-level only — no
+  recursive scan, no per-project override UI, and a repo with more than one
+  manifest just takes whichever rule is listed first.
+- **Each clone also gets a `.devcontainer/devcontainer.json`.**
+  `app/projects/devcontainer.py::ensure_devcontainer()` writes one (using the
+  same detected image) right after a successful clone or `init`, so the
+  checkout can be opened directly in VS Code's own Dev Containers extension.
+  It never overwrites a repo that already ships its own devcontainer config,
+  and it is written but **not** `git add`ed for a cloned project — it only
+  becomes visible in the in-app tree once the user's own next commit picks it
+  up. This is scaffolding only: nothing in the app attaches VS Code to the
+  container the badge starts, and the two containers are unrelated.
 - **The image pull blocks.** First use of an image can take minutes inside
   `ensure_container()`, with no progress streamed to the UI. The clone endpoint
   already shows how to stream this.
@@ -169,7 +215,7 @@ Beyond "never executed" above:
 - **The README does not mention any of this.** It still describes Milestone 1 of
   the original harness — no projects, no credentials, no containers.
 - **No integration tests for Docker or GitHub.** Both need real credentials and
-  a real daemon. The pure logic is covered (235 backend tests); the I/O is not.
+  a real daemon. The pure logic is covered (254 backend tests); the I/O is not.
 - **`NEXT_PUBLIC_MOCK_ALL=true` is set in `frontend/.env`,** and the credentials
   and projects pages deliberately have no mock branch — they always hit
   Postgres. Worth knowing when the rest of the app is showing fixtures.
@@ -178,13 +224,17 @@ Beyond "never executed" above:
 
 ## Suggested order
 
-1. **Install Docker Desktop and exercise M3.** It is the largest block of
-   unverified code, and everything about the container path is guesswork until
-   one actually starts.
-2. **Push a branch and open a PR through the UI.** Second-largest block of
-   unverified code, and quick to check.
+1. **Enable "Virtual Machine Platform" (`wsl.exe --install --no-distribution`,
+   elevated) and restart, then exercise M3.** Docker Desktop is installed but
+   its engine can't start without this. Still the largest block of unverified
+   code, and everything about the container path is guesswork until one
+   actually starts.
+2. **Add a GitHub credential through the app's own Credentials page, then push
+   a branch and open a PR through the UI.** Second-largest block of unverified
+   code, and quick to check once a credential exists.
 3. **Add pull/fetch** (M2). Without it a project is a one-time snapshot, which
    undercuts the point of pointing the agent at a live repository.
 4. **File create/delete/rename** (M4). The most obviously missing IDE verb.
-5. **Per-project container image** (M3). One image for every language is the
-   assumption most likely to annoy in practice.
+
+Per-project container image selection (M3) and a `.devcontainer/devcontainer.json`
+scaffold on clone/init are now done — see M3 above.
