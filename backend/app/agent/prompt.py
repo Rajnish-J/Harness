@@ -30,6 +30,18 @@ class SkillLike(Protocol):
 
 TRUNCATION_NOTE = "\n[skill content truncated]"
 
+#: Appended when no project is open (the global chat) and propose_create_project
+#: is on offer. A two-state boolean rather than per-request text, so it stays as
+#: cacheable-prefix-friendly as the rest of this module.
+NO_PROJECT_OPEN_BLOCK = """## No project is open right now
+This is the global chat: there is no project associated with this conversation \
+yet. If the user describes a new idea or project they want to build, call \
+propose_create_project(name, description) to suggest starting a blank one, \
+instead of building it directly in this general-purpose scratch workspace. It \
+creates nothing by itself -- a human must approve it in the UI -- so call it \
+once per idea and then wait; do not call it again unless they describe a \
+different idea, and do not retry it if they decline."""
+
 
 def _escape(text: str) -> str:
     """Keep skill bodies from closing the tag that delimits them.
@@ -61,6 +73,7 @@ def compose_system_prompt(
     agent_name: str | None = None,
     agent_prompt: str | None = None,
     skills: Sequence[SkillLike] = (),
+    no_project_open: bool = False,
     max_chars: int | None = None,
 ) -> str:
     """Build the system prompt for one turn.
@@ -74,6 +87,9 @@ def compose_system_prompt(
     markdown under more markdown makes the boundary ambiguous; a tag does not.
     """
     sections: list[str] = [base.strip()]
+
+    if no_project_open:
+        sections.append(NO_PROJECT_OPEN_BLOCK)
 
     agent_prompt = (agent_prompt or "").strip()
     if agent_prompt:

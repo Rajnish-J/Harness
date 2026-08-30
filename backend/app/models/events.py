@@ -47,6 +47,21 @@ class ApprovalRequestEvent(AgentEvent):
     arguments: dict[str, Any]
 
 
+class ProjectProposalEvent(AgentEvent):
+    """The model wants to create a new blank project; a human must say yes.
+
+    Emitted instead of ApprovalRequestEvent for a propose_create_project call,
+    in every tool mode -- creating a project is a one-way door, so this park
+    is never optional the way manual-mode approval is. Carries the same `id`
+    the eventual `tool_result` will, exactly like ApprovalRequestEvent.
+    """
+
+    type: Literal["project_proposal"] = "project_proposal"
+    id: str
+    name: str
+    description: str
+
+
 class AssistantMessageEvent(AgentEvent):
     type: Literal["assistant_message"] = "assistant_message"
     text: str
@@ -91,6 +106,7 @@ __all__ = [
     "ToolCallEvent",
     "ToolResultEvent",
     "ApprovalRequestEvent",
+    "ProjectProposalEvent",
     "AssistantMessageEvent",
     "ErrorEvent",
     "DoneEvent",

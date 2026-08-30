@@ -6,6 +6,7 @@ from app.agent.llm.base import LLMClient, ToolCallRequest, ToolResult
 from app.agent.session import Session
 from app.agent.exec_context import ExecutionContext
 from app.agent.tools.base import Tool, ToolExecutionError
+from app.agent.tools.project_tools import PROPOSE_CREATE_PROJECT_TOOL_NAME
 from app.agent.tools.registry import ALL_TOOLS
 from app.core.config import Settings
 from app.core.workspace import WorkspaceSecurityError
@@ -15,6 +16,7 @@ from app.models.events import (
     AssistantMessageEvent,
     DoneEvent,
     ErrorEvent,
+    ProjectProposalEvent,
     ToolCallEvent,
     ToolResultEvent,
     truncate_for_event,
@@ -251,15 +253,30 @@ async def _drive(
                 # Models often narrate before calling a tool; surface it.
                 yield AssistantMessageEvent(text=turn.text)
 
-            if require_approval:
+            proposal_ids = {
+                call.id
+                for call in turn.tool_calls
+                if call.name == PROPOSE_CREATE_PROJECT_TOOL_NAME
+            }
+
+            if require_approval or proposal_ids:
                 # Park the turn. History already ends with the assistant turn,
                 # so resuming only has to append results — which is why nothing
-                # else about the turn needs storing.
+                # else about the turn needs storing. A project proposal parks
+                # even in agent mode: creating a project is a one-way door, so
+                # this pause is never optional the way manual-mode approval is.
                 session.pending = list(turn.tool_calls)
                 for call in turn.tool_calls:
-                    yield ApprovalRequestEvent(
-                        id=call.id, name=call.name, arguments=call.arguments
-                    )
+                    if call.id in proposal_ids:
+                        yield ProjectProposalEvent(
+                            id=call.id,
+                            name=str(call.arguments.get("name", "")),
+                            description=str(call.arguments.get("description", "")),
+                        )
+                    else:
+                        yield ApprovalRequestEvent(
+                            id=call.id, name=call.name, arguments=call.arguments
+                        )
                 yield DoneEvent(reason="awaiting_approval", usage=total_usage)
                 return
 
