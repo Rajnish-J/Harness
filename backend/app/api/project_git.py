@@ -183,7 +183,15 @@ async def commit(
     pushed = False
 
     if body.push_after:
-        token = await _token(pool, project, settings)
+        try:
+            token = await _token(pool, project, settings)
+        except HTTPException as exc:
+            # The commit already happened -- say so, or the operator re-runs
+            # it looking for work that already landed.
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail=f"Committed locally, but not pushed: {exc.detail}",
+            ) from exc
         try:
             await push(repo, branch or project.default_branch, token=token)
             pushed = True
