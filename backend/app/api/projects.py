@@ -43,6 +43,7 @@ from app.db.project_repo import (
 )
 from app.integrations.github import GitHubError, list_repos
 from app.models.events import AgentEvent, sse_comment
+from app.projects.devcontainer import ensure_devcontainer
 from app.projects.git_ops import (
     GitOperationError,
     clone,
@@ -204,6 +205,19 @@ async def _clone_stream(
             branch=project.default_branch or None,
         )
 
+        try:
+            ensure_devcontainer(
+                destination,
+                project_name=project.name,
+                default_image=settings.default_project_image,
+            )
+        except OSError:
+            # A local VS Code convenience file, not required for anything
+            # downstream -- the clone has already succeeded.
+            logger.exception(
+                "could not write devcontainer scaffold for %s", project_id
+            )
+
         yield CloneProgressEvent(
             step="index", message="Indexing the working tree…"
         ).to_sse()
@@ -271,6 +285,11 @@ async def init_project(
         await init_repo(destination, branch=project.default_branch or "main")
         (destination / "README.md").write_text(
             f"# {project.name}\n", encoding="utf-8", newline=""
+        )
+        ensure_devcontainer(
+            destination,
+            project_name=project.name,
+            default_image=settings.default_project_image,
         )
         await commit_all(destination, "Initial commit")
 
