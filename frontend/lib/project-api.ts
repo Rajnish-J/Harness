@@ -18,7 +18,9 @@ import type {
   GitStatus,
   Project,
   ProjectInput,
+  ProjectPatch,
   PullRequest,
+  PurgeResult,
   RemoteRepo,
   StoredMessage,
   TreeLevel,
@@ -54,7 +56,7 @@ export const projectsApi = {
       }),
     ),
 
-  update: async (id: string, patch: Partial<ProjectInput>): Promise<Project> =>
+  update: async (id: string, patch: ProjectPatch): Promise<Project> =>
     json(
       await fetch(`${BASE}/${id}`, {
         method: "PATCH",
@@ -63,11 +65,29 @@ export const projectsApi = {
       }),
     ),
 
-  /** Soft delete — the row is archived, not destroyed. */
+  /** Soft delete — the row is archived, not destroyed. Pair with `purge`. */
   remove: async (id: string): Promise<void> => {
     const res = await fetch(`${BASE}/${id}`, { method: "DELETE" });
     if (!res.ok) await json(res);
   },
+
+  /**
+   * Reclaim what archiving leaves behind: the container, the file index, and
+   * the checkout on disk.
+   *
+   * Separate from `remove` because the two halves of a project live on two
+   * servers — Next.js owns the row, Python owns the disk — and only one of them
+   * can be undone. Call it *after* `remove`: the row going away is the outcome
+   * the operator asked for, and a purge that fails (no daemon, a locked file)
+   * should degrade to "the files are still there" rather than stranding a
+   * gutted project in the list.
+   *
+   * POST, not DELETE: the harness runs CORS with `allow_methods=["GET","POST"]`.
+   */
+  purge: async (id: string): Promise<PurgeResult> =>
+    json(
+      await fetch(`${API_BASE}/api/projects/${id}/purge`, { method: "POST" }),
+    ),
 
   /** Repositories a stored credential can see. Paged, not exhaustive. */
   listRemoteRepos: async (
@@ -247,6 +267,15 @@ export const projectGitApi = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message, push_after: pushAfter }),
+      }),
+    ),
+
+  pull: async (
+    projectId: string,
+  ): Promise<{ branch: string | null; output: string }> =>
+    json(
+      await fetch(`${API_BASE}/api/projects/${projectId}/pull`, {
+        method: "POST",
       }),
     ),
 
