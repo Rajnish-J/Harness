@@ -14,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { toast } from "@/components/ui/toast";
 import type { Credential } from "@/lib/credential-types";
 import { projectsApi } from "@/lib/project-api";
 import type { RemoteRepo } from "@/lib/project-types";
@@ -39,20 +40,17 @@ export default function ConnectGithubDialog({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [phase, setPhase] = useState<Phase>("pick");
-  const [error, setError] = useState<string | null>(null);
 
   function onOpenChange(next: boolean) {
     if (phase === "pushing") return;
     setOpen(next);
     if (next) {
       setPhase("pick");
-      setError(null);
     }
   }
 
   async function connectAndPush(repo: RemoteRepo, credentialId: string) {
     setPhase("pushing");
-    setError(null);
 
     try {
       await projectsApi.connect(projectId, {
@@ -68,8 +66,9 @@ export default function ConnectGithubDialog({
 
       setOpen(false);
       router.refresh();
+      toast.success("Pushed to GitHub");
     } catch (err) {
-      setError((err as Error).message);
+      toast.error({ title: "Push failed", description: (err as Error).message });
       setPhase("failed");
     }
   }
@@ -110,14 +109,6 @@ export default function ConnectGithubDialog({
                   "The push did not complete."
                 )}
               </div>
-              {error && (
-                <p
-                  role="alert"
-                  className="whitespace-pre-wrap rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs text-red-700 dark:text-red-300"
-                >
-                  {error}
-                </p>
-              )}
             </div>
           ) : (
             <GithubRepoPicker credentials={credentials} onPick={connectAndPush} />

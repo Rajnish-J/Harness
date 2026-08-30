@@ -1,15 +1,19 @@
 "use client";
 
-import { GitBranch, Loader2, Lock, Search } from "lucide-react";
-import { useState } from "react";
+import { GitBranch, Loader2, Lock, RefreshCw } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { toast } from "@/components/ui/toast";
+import CredentialPicker from "@/components/projects/CredentialPicker";
 import type { Credential } from "@/lib/credential-types";
 import { projectsApi } from "@/lib/project-api";
 import type { RemoteRepo } from "@/lib/project-types";
+
+/** "idle" only ever means there is no GitHub credential to load from. */
+type Status = "idle" | "loading" | "loaded" | "error";
 
 /**
  * Pick a credential, then a repository it can see.
@@ -17,6 +21,12 @@ import type { RemoteRepo } from "@/lib/project-types";
  * Shared by NewProjectDialog's "Import from GitHub" step and
  * ConnectGithubDialog: both need the exact same "which account, which repo"
  * choice, just followed by a different action once one is picked.
+ *
+ * The selected credential's repositories load on open rather than behind a
+ * button. The chip is already rendered as chosen, so asking the operator to
+ * confirm that choice was a click that told us nothing — and with a single
+ * token there is no choice to confirm at all, which is why the chip row is
+ * dropped in that case.
  */
 export default function GithubRepoPicker({
   credentials,
@@ -27,39 +37,54 @@ export default function GithubRepoPicker({
   onPick: (repo: RemoteRepo, credentialId: string) => void;
   disabled?: boolean;
 }) {
-  const usable = credentials.filter((credential) => credential.enabled);
+  // Only a GitHub token can answer /api/projects/github/repos. Offering an
+  // Azure DevOps or generic credential here just moves the failure to after
+  // the click.
+  const usable = credentials.filter(
+    (credential) => credential.enabled && credential.provider === "github",
+  );
+  const soleCredential = usable.length === 1 ? usable[0] : null;
+
   const [credentialId, setCredentialId] = useState<string>(usable[0]?.id ?? "");
   const [repos, setRepos] = useState<RemoteRepo[]>([]);
   const [search, setSearch] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<Status>(usable[0] ? "loading" : "idle");
+  const [reloadKey, setReloadKey] = useState(0);
 
-  async function loadRepos(id: string) {
-    if (!id) return;
-    setLoading(true);
-    setError(null);
-    try {
-      setRepos(await projectsApi.listRemoteRepos(id));
-    } catch (err) {
-      setError((err as Error).message);
-      setRepos([]);
-    } finally {
-      setLoading(false);
-    }
-  }
+  useEffect(() => {
+    if (!credentialId) return;
+    const controller = new AbortController();
 
-  function chooseCredential(id: string) {
-    setCredentialId(id);
+    projectsApi
+      .listRemoteRepos(credentialId, { signal: controller.signal })
+      .then((next) => {
+        setRepos(next);
+        setStatus("loaded");
+      })
+      .catch((err: Error) => {
+        // Strict Mode double-mounts in dev, so the first request is aborted by
+        // this effect's own cleanup. That is not a failure worth a toast.
+        if (controller.signal.aborted) return;
+        toast.error({ title: "Could not load repositories", description: err.message });
+        setStatus("error");
+      });
+
+    return () => controller.abort();
+  }, [credentialId, reloadKey]);
+
+  // The reset belongs to the click, not to the effect: a state transition
+  // caused by an event is not something to synchronize after the fact.
+  function selectCredential(next: string) {
+    if (next === credentialId) return;
+    setCredentialId(next);
     setRepos([]);
-    void loadRepos(id);
+    setSearch("");
+    setStatus("loading");
   }
 
-  if (usable.length === 0) {
-    return (
-      <div className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
-        No enabled credentials. Add a GitHub token on the Credentials page first.
-      </div>
-    );
+  function retry() {
+    setStatus("loading");
+    setReloadKey((n) => n + 1);
   }
 
   const filtered = search.trim()
@@ -70,49 +95,45 @@ export default function GithubRepoPicker({
 
   return (
     <div className="flex flex-col gap-3 py-2">
-      <div className="flex flex-col gap-2">
-        <Label className="text-xs font-medium">Credential</Label>
-        <div className="flex flex-wrap gap-2">
-          {usable.map((credential) => (
-            <button
-              key={credential.id}
-              type="button"
-              disabled={disabled}
-              onClick={() => chooseCredential(credential.id)}
-              className={`rounded-md border px-3 py-1.5 text-xs transition-colors ${
-                credentialId === credential.id
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "hover:bg-accent"
-              }`}
-            >
-              {credential.name}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {repos.length === 0 && !loading && (
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="self-start"
-          onClick={() => loadRepos(credentialId)}
-          disabled={!credentialId || disabled}
-        >
-          <Search />
-          Load repositories
-        </Button>
+      {/* Zero credentials still needs the picker for its empty state; one
+          credential is a control with nothing to choose. */}
+      {usable.length !== 1 && (
+        <CredentialPicker
+          credentials={usable}
+          value={credentialId || null}
+          onChange={(next) => selectCredential(next ?? "")}
+          disabled={disabled}
+        />
       )}
 
-      {loading && (
+      {status === "loading" && (
         <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
           <Loader2 className="size-4 animate-spin" />
           Asking GitHub…
         </div>
       )}
 
-      {repos.length > 0 && (
+      {status === "error" && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="self-start"
+          onClick={retry}
+          disabled={disabled}
+        >
+          <RefreshCw />
+          Try again
+        </Button>
+      )}
+
+      {status === "loaded" && repos.length === 0 && (
+        <p className="py-6 text-center text-xs text-muted-foreground">
+          No repositories found for this account.
+        </p>
+      )}
+
+      {status === "loaded" && repos.length > 0 && (
         <>
           <Input
             autoFocus
@@ -155,13 +176,12 @@ export default function GithubRepoPicker({
               )}
             </div>
           </ScrollArea>
+          {soleCredential && (
+            <p className="text-[11px] text-muted-foreground">
+              via {soleCredential.name}
+            </p>
+          )}
         </>
-      )}
-
-      {error && (
-        <p className="text-xs text-destructive" role="alert">
-          {error}
-        </p>
       )}
     </div>
   );
