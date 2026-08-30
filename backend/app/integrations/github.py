@@ -165,3 +165,154 @@ async def list_repos(token: str, *, page: int = 1, per_page: int = 50) -> list[R
         raise GitHubError(_explain(response), status=response.status_code)
 
     return [_repo(item) for item in response.json()]
+
+
+# ---------------------------------------------------------------------------
+# Pull requests.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PullRequest:
+    number: int
+    title: str
+    state: str
+    html_url: str
+    head: str
+    base: str
+    draft: bool
+    mergeable_state: str | None = None
+
+
+def _pull(body: dict) -> PullRequest:
+    return PullRequest(
+        number=int(body.get("number") or 0),
+        title=body.get("title") or "",
+        state=body.get("state") or "open",
+        html_url=body.get("html_url") or "",
+        head=(body.get("head") or {}).get("ref") or "",
+        base=(body.get("base") or {}).get("ref") or "",
+        draft=bool(body.get("draft")),
+        mergeable_state=body.get("mergeable_state"),
+    )
+
+
+async def create_pull_request(
+    token: str,
+    owner: str,
+    repo: str,
+    *,
+    title: str,
+    head: str,
+    base: str,
+    body: str = "",
+    draft: bool = False,
+) -> PullRequest:
+    """Open a pull request from `head` into `base`."""
+    payload = {
+        "title": title,
+        "head": head,
+        "base": base,
+        "body": body,
+        "draft": draft,
+    }
+
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        try:
+            response = await client.post(
+                f"{API_ROOT}/repos/{owner}/{repo}/pulls",
+                headers=_auth(token),
+                json=payload,
+            )
+        except httpx.RequestError as exc:
+            raise GitHubError(f"Could not reach GitHub: {exc}") from exc
+
+    if response.status_code == 422:
+        # 422 covers several ordinary situations, and the generic "Validation
+        # Failed" hides which one. The errors array names it.
+        detail = ""
+        try:
+            errors = response.json().get("errors") or []
+            detail = "; ".join(e.get("message", "") for e in errors if e.get("message"))
+        except Exception:  # noqa: BLE001
+            pass
+        if "already exists" in detail.lower():
+            raise GitHubError(f"A pull request for {head} is already open.")
+        if "no commits between" in detail.lower():
+            raise GitHubError(
+                f"{head} has no commits that {base} does not. Commit and push first."
+            )
+        raise GitHubError(detail or "GitHub rejected the pull request.")
+
+    if response.status_code not in (200, 201):
+        raise GitHubError(_explain(response), status=response.status_code)
+
+    return _pull(response.json())
+
+
+async def list_pull_requests(
+    token: str, owner: str, repo: str, *, head_branch: str | None = None
+) -> list[PullRequest]:
+    """Open pull requests, optionally only those from one branch."""
+    params = {"state": "open", "per_page": "50"}
+    if head_branch:
+        # GitHub wants owner-qualified head refs here.
+        params["head"] = f"{owner}:{head_branch}"
+
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        try:
+            response = await client.get(
+                f"{API_ROOT}/repos/{owner}/{repo}/pulls",
+                headers=_auth(token),
+                params=params,
+            )
+        except httpx.RequestError as exc:
+            raise GitHubError(f"Could not reach GitHub: {exc}") from exc
+
+    if response.status_code != 200:
+        raise GitHubError(_explain(response), status=response.status_code)
+
+    return [_pull(item) for item in response.json()]
+
+
+async def merge_pull_request(
+    token: str,
+    owner: str,
+    repo: str,
+    number: int,
+    *,
+    method: str = "merge",
+    commit_title: str | None = None,
+) -> str:
+    """Merge a pull request. Returns the resulting commit sha."""
+    if method not in {"merge", "squash", "rebase"}:
+        raise GitHubError(f"Unknown merge method {method!r}.")
+
+    payload: dict[str, object] = {"merge_method": method}
+    if commit_title:
+        payload["commit_title"] = commit_title
+
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        try:
+            response = await client.put(
+                f"{API_ROOT}/repos/{owner}/{repo}/pulls/{number}/merge",
+                headers=_auth(token),
+                json=payload,
+            )
+        except httpx.RequestError as exc:
+            raise GitHubError(f"Could not reach GitHub: {exc}") from exc
+
+    if response.status_code == 405:
+        raise GitHubError(
+            "GitHub refused the merge. The pull request is probably blocked by "
+            "a required review or a failing check."
+        )
+    if response.status_code == 409:
+        raise GitHubError(
+            "The head branch moved since the merge was requested, or the branch "
+            "has conflicts that must be resolved on GitHub."
+        )
+    if response.status_code != 200:
+        raise GitHubError(_explain(response), status=response.status_code)
+
+    return response.json().get("sha") or ""

@@ -10,6 +10,8 @@ from app.api import (
     credentials,
     health,
     mcp as mcp_api,
+    project_files,
+    project_git,
     projects,
     workflows,
 )
@@ -83,3 +85,5 @@ app.include_router(workflows.router)
 app.include_router(credentials.router)
 app.include_router(projects.router)
 app.include_router(containers.router)
+app.include_router(project_files.router)
+app.include_router(project_git.router)
