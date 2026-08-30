@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { toast } from "@/components/ui/toast";
 import { newNodeId } from "@/lib/graph-serde";
 import { agentsApi } from "@/lib/registry-api";
 import type { Agent, AgentSummary } from "@/lib/registry-types";
@@ -36,7 +37,6 @@ export default function NewWorkflowButton() {
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   function onOpenChange(next: boolean) {
     if (busy) return;
@@ -44,7 +44,6 @@ export default function NewWorkflowButton() {
     if (next) {
       setName("Untitled workflow");
       setSelectedAgentIds([]);
-      setError(null);
       agentsApi.list().then(setAgents).catch(() => setAgents([]));
     }
   }
@@ -53,12 +52,11 @@ export default function NewWorkflowButton() {
     event.preventDefault();
     const trimmed = name.trim();
     if (!trimmed) {
-      setError("Give it a name first.");
+      toast.warning("Give it a name first.");
       return;
     }
 
     setBusy(true);
-    setError(null);
     try {
       const fullAgents = await Promise.all(
         selectedAgentIds.map((id) => agentsApi.get(id)),
@@ -83,8 +81,9 @@ export default function NewWorkflowButton() {
       );
       router.push(`/workflows/${workflow.id}`);
       setOpen(false);
+      toast.success(`Workflow "${trimmed}" created`);
     } catch (err) {
-      setError((err as Error).message);
+      toast.error({ title: "Could not create workflow", description: (err as Error).message });
     } finally {
       setBusy(false);
     }
@@ -132,12 +131,6 @@ export default function NewWorkflowButton() {
                 onChange={setSelectedAgentIds}
                 emptyMessage="No agents in the registry yet — you can add nodes manually after creating the workflow."
               />
-
-              {error && (
-                <p className="text-xs text-destructive" role="alert">
-                  {error}
-                </p>
-              )}
             </div>
 
             <DialogFooter>
