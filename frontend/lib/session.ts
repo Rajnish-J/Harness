@@ -1,4 +1,29 @@
-const STORAGE_KEY = "harness_session_id";
+/**
+ * Session ids, one per conversation scope.
+ *
+ * There used to be exactly one: a single `harness_session_id` in localStorage,
+ * because there was a single chat. A project page hosts its own chat, and it
+ * must not be the same conversation as the one on `/` — so the store is keyed
+ * by scope, and each scope gets its own id, its own storage key, and its own
+ * listener set.
+ *
+ * Per-scope listeners matter: rotating a project's session must not re-render
+ * the global chat, and vice versa. One shared listener set would wake every
+ * mounted chat on any "New chat" press.
+ */
+
+const BASE_KEY = "harness_session_id";
+
+/** `null` is the global chat; anything else namespaces beneath it. */
+export type SessionScope = string | null;
+
+export function scopeForProject(projectId: string): SessionScope {
+  return `project:${projectId}`;
+}
+
+function storageKey(scope: SessionScope): string {
+  return scope ? `${BASE_KEY}:${scope}` : BASE_KEY;
+}
 
 function newId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -9,18 +34,18 @@ function newId(): string {
 
 /**
  * The session id is the only thing tying successive requests to the same
- * server-side conversation history. It lives in localStorage so a refresh
- * keeps the backend conversation, even though the visible transcript resets
- * (there is no history endpoint in this milestone).
+ * server-side conversation history. It lives in localStorage so a refresh keeps
+ * the backend conversation.
  *
  * Storage can throw in private-browsing modes, so every access is guarded.
  */
-export function getOrCreateSessionId(): string {
+export function getOrCreateSessionId(scope: SessionScope = null): string {
+  const key = storageKey(scope);
   try {
-    const existing = window.localStorage.getItem(STORAGE_KEY);
+    const existing = window.localStorage.getItem(key);
     if (existing) return existing;
     const created = newId();
-    window.localStorage.setItem(STORAGE_KEY, created);
+    window.localStorage.setItem(key, created);
     return created;
   } catch {
     return newId();
@@ -36,23 +61,40 @@ export function getOrCreateSessionId(): string {
 // and avoids the cascading render that a setState-in-effect would cause.
 // ---------------------------------------------------------------------------
 
-let cached: string | null = null;
-const listeners = new Set<() => void>();
+/** Memoised per scope: useSyncExternalStore re-reads the snapshot on every
+ *  render and would loop forever on a fresh value each time. */
+const cached = new Map<string, string>();
+const listeners = new Map<string, Set<() => void>>();
 
-export function subscribeSessionId(listener: () => void): () => void {
-  listeners.add(listener);
+function listenersFor(key: string): Set<() => void> {
+  let set = listeners.get(key);
+  if (!set) {
+    set = new Set();
+    listeners.set(key, set);
+  }
+  return set;
+}
+
+export function subscribeSessionId(
+  scope: SessionScope,
+  listener: () => void,
+): () => void {
+  const key = storageKey(scope);
+  const set = listenersFor(key);
+  set.add(listener);
   return () => {
-    listeners.delete(listener);
+    set.delete(listener);
   };
 }
 
-/**
- * Browser snapshot. Memoised because useSyncExternalStore re-reads it on every
- * render and would loop forever on a fresh value each time.
- */
-export function getSessionIdSnapshot(): string {
-  if (cached === null) cached = getOrCreateSessionId();
-  return cached;
+export function getSessionIdSnapshot(scope: SessionScope = null): string {
+  const key = storageKey(scope);
+  let value = cached.get(key);
+  if (value === undefined) {
+    value = getOrCreateSessionId(scope);
+    cached.set(key, value);
+  }
+  return value;
 }
 
 /** Server snapshot: no localStorage, so no session id yet. */
@@ -60,14 +102,16 @@ export function getServerSessionIdSnapshot(): string | null {
   return null;
 }
 
-export function rotateSessionId(): string {
+export function rotateSessionId(scope: SessionScope = null): string {
+  const key = storageKey(scope);
   const created = newId();
   try {
-    window.localStorage.setItem(STORAGE_KEY, created);
+    window.localStorage.setItem(key, created);
   } catch {
     // Non-persistent session is still a usable session.
   }
-  cached = created;
-  for (const listener of listeners) listener();
+  cached.set(key, created);
+  // Only this scope's subscribers: a new project chat must not disturb `/`.
+  for (const listener of listenersFor(key)) listener();
   return created;
 }

@@ -13,6 +13,8 @@ export async function streamChat(
     sessionId: string;
     message: string;
     preset?: ChatPreset;
+    /** Scopes the turn to a project: its workspace, its container, its history. */
+    projectId?: string;
     signal?: AbortSignal;
   },
   onEvent: (event: AgentEvent) => void,
@@ -41,6 +43,9 @@ export async function streamChat(
       presetToBody(params.preset, {
         session_id: params.sessionId,
         message: params.message,
+        // Omitted entirely when absent, so a plain chat posts the same body it
+        // posted before projects existed.
+        ...(params.projectId ? { project_id: params.projectId } : {}),
       }),
     ),
     signal: params.signal,
@@ -62,6 +67,7 @@ export async function streamApproval(
     sessionId: string;
     decisions: { id: string; approved: boolean }[];
     preset?: ChatPreset;
+    projectId?: string;
     signal?: AbortSignal;
   },
   onEvent: (event: AgentEvent) => void,
@@ -80,6 +86,7 @@ export async function streamApproval(
       presetToBody(params.preset, {
         session_id: params.sessionId,
         decisions: params.decisions,
+        ...(params.projectId ? { project_id: params.projectId } : {}),
       }),
     ),
     signal: params.signal,
