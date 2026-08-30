@@ -36,7 +36,7 @@ export const NAV_ITEMS: NavItem[] = [
   {
     href: "/projects",
     label: "Projects",
-    blurb: "Cloned repositories the agent can work inside",
+    blurb: "Working trees the agent can work inside",
     icon: FolderGit2,
   },
   {
