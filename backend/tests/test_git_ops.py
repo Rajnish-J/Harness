@@ -16,6 +16,8 @@ from app.projects.git_ops import (
     _clone_hint,
     _scrub,
     clone,
+    init_repo,
+    set_remote,
 )
 
 TOKEN = "ghp_secretTokenValue0001"
@@ -84,3 +86,56 @@ def test_clone_hint_preserves_the_original_output() -> None:
 
 def test_clone_hint_handles_empty_output() -> None:
     assert _clone_hint("") != ""
+
+
+@pytest.mark.asyncio
+async def test_init_repo_creates_a_repository_on_the_requested_branch(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "repo"
+    await init_repo(destination, branch="main")
+
+    assert (destination / ".git").is_dir()
+
+
+@pytest.mark.asyncio
+async def test_init_repo_refuses_a_non_empty_destination(tmp_path: Path) -> None:
+    """Same guard as `clone`: never initialize over existing work."""
+    destination = tmp_path / "repo"
+    destination.mkdir()
+    (destination / "existing.txt").write_text("do not clobber me")
+
+    with pytest.raises(GitOperationError, match="not empty"):
+        await init_repo(destination)
+
+    assert (destination / "existing.txt").read_text() == "do not clobber me"
+
+
+@pytest.mark.asyncio
+async def test_set_remote_adds_origin_when_absent(tmp_path: Path) -> None:
+    destination = tmp_path / "repo"
+    await init_repo(destination)
+
+    await set_remote(destination, "https://github.com/octocat/example.git")
+
+    result = await _git_remote_urls(destination)
+    assert result == "https://github.com/octocat/example.git"
+
+
+@pytest.mark.asyncio
+async def test_set_remote_repoints_an_existing_origin(tmp_path: Path) -> None:
+    destination = tmp_path / "repo"
+    await init_repo(destination)
+    await set_remote(destination, "https://github.com/octocat/first.git")
+
+    await set_remote(destination, "https://github.com/octocat/second.git")
+
+    result = await _git_remote_urls(destination)
+    assert result == "https://github.com/octocat/second.git"
+
+
+async def _git_remote_urls(repo: Path) -> str:
+    from app.projects.git_ops import _git
+
+    result = await _git(["remote", "get-url", "origin"], cwd=repo)
+    return result.output.strip()

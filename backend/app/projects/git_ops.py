@@ -140,6 +140,41 @@ def _clone_hint(output: str) -> str:
     return output or "git clone failed with no output."
 
 
+async def init_repo(destination: Path, *, branch: str = "main") -> GitResult:
+    """Initialize a brand new repository at `destination`, which must be empty.
+
+    Used for a Blank Project: there is no remote to clone from, so the working
+    tree starts from nothing rather than from a `git clone`. `-b` pins the
+    initial branch name so it matches `projects.default_branch` instead of
+    whatever this machine's `init.defaultBranch` happens to be set to.
+    """
+    destination.mkdir(parents=True, exist_ok=True)
+    if any(destination.iterdir()):
+        raise GitOperationError(
+            f"{destination.name} is not empty — refusing to initialize over it."
+        )
+
+    result = await _git(["init", "-b", branch], cwd=destination)
+    if not result.ok:
+        raise GitOperationError(result.output)
+    return result
+
+
+async def set_remote(repo: Path, url: str, *, name: str = "origin") -> GitResult:
+    """Point `name` at `url`, adding it if absent and repointing it if present.
+
+    A Blank Project's repository is never cloned, so it has no remote until an
+    operator connects one — unlike `push`, which assumes `origin` already
+    exists.
+    """
+    existing = await _git(["remote"], cwd=repo)
+    verb = "set-url" if name in existing.output.split() else "add"
+    result = await _git(["remote", verb, name, url], cwd=repo)
+    if not result.ok:
+        raise GitOperationError(result.output)
+    return result
+
+
 async def current_branch(repo: Path) -> str | None:
     result = await _git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=repo)
     return result.output.strip() if result.ok else None
@@ -165,3 +200,108 @@ async def list_tracked_files(repo: Path) -> list[tuple[str, str]]:
         if path and len(parts) >= 2:
             entries.append((parts[1], path))
     return entries
+
+
+# ---------------------------------------------------------------------------
+# Branch, commit, push.
+#
+# The verbs git_tools.py withholds from the model. Reachable only from a route
+# handler, behind a button a person pressed.
+# ---------------------------------------------------------------------------
+
+
+async def create_branch(repo: Path, name: str, *, base: str | None = None) -> GitResult:
+    """Create and switch to a branch.
+
+    The name is validated with `git check-ref-format` rather than a regex of our
+    own: git already knows exactly which names it will accept, and a
+    hand-written pattern would drift from that.
+    """
+    check = await _git(["check-ref-format", "--branch", name], cwd=repo)
+    if not check.ok:
+        raise GitOperationError(f"{name!r} is not a valid branch name.")
+
+    args = ["checkout", "-b", name]
+    if base:
+        args.append(base)
+
+    result = await _git(args, cwd=repo)
+    if not result.ok:
+        if "already exists" in result.output.lower():
+            raise GitOperationError(f"A branch named {name!r} already exists.")
+        raise GitOperationError(result.output)
+    return result
+
+
+async def commit_all(repo: Path, message: str) -> GitResult:
+    """Stage every change and commit.
+
+    Identity is passed per-invocation with `-c`, not written into the repo's
+    config: this is the harness committing on the operator's behalf, and it
+    should not leave configuration behind in their checkout.
+    """
+    if not message.strip():
+        raise GitOperationError("A commit needs a message.")
+
+    staged = await _git(["add", "-A"], cwd=repo)
+    if not staged.ok:
+        raise GitOperationError(staged.output)
+
+    result = await _git(
+        [
+            "-c",
+            "user.name=Harness",
+            "-c",
+            "user.email=harness@localhost",
+            "commit",
+            "-m",
+            message,
+        ],
+        cwd=repo,
+    )
+    if not result.ok:
+        if "nothing to commit" in result.output.lower():
+            raise GitOperationError("Nothing to commit — the tree is clean.")
+        raise GitOperationError(result.output)
+    return result
+
+
+async def push(
+    repo: Path, branch: str, *, token: str | None = None, set_upstream: bool = True
+) -> GitResult:
+    """Push a branch to origin."""
+    args = ["push"]
+    if set_upstream:
+        args.append("-u")
+    args += ["origin", branch]
+
+    result = await _git(args, cwd=repo, token=token, timeout=CLONE_TIMEOUT_SECONDS)
+    if not result.ok:
+        lowered = result.output.lower()
+        if "authentication failed" in lowered or "403" in lowered:
+            raise GitOperationError(
+                "GitHub rejected the push. The token needs `repo` scope and "
+                f"write access to this repository.\n\n{result.output}"
+            )
+        if "non-fast-forward" in lowered or "rejected" in lowered:
+            raise GitOperationError(
+                "The remote has commits this branch does not. Pull before "
+                f"pushing.\n\n{result.output}"
+            )
+        raise GitOperationError(result.output)
+    return result
+
+
+async def list_branches(repo: Path) -> list[str]:
+    result = await _git(
+        ["for-each-ref", "--format=%(refname:short)", "refs/heads"], cwd=repo
+    )
+    if not result.ok:
+        raise GitOperationError(result.output)
+    return [line.strip() for line in result.output.splitlines() if line.strip()]
+
+
+async def working_tree_dirty(repo: Path) -> bool:
+    """True when there is anything to commit."""
+    result = await _git(["status", "--porcelain"], cwd=repo)
+    return bool(result.output.strip())
