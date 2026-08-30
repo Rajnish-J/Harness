@@ -43,6 +43,20 @@
       "when": 1788018194817,
       "tag": "0005_sharp_vermin",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788020284583,
+      "tag": "0006_robust_katie_power",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788065497938,
+      "tag": "0007_add_blank_projects",
+      "breakpoints": true
     }
   ]
 }

@@ -29,6 +29,8 @@ export default defineConfig({
     "projects",
     "project_files",
     "project_containers",
+    "project_chat_sessions",
+    "project_chat_messages",
   ],
   verbose: true,
   strict: true,

@@ -278,12 +278,14 @@ export const credentials = pgTable(
 export type CredentialRow = typeof credentials.$inferSelect;
 
 // ---------------------------------------------------------------------------
-// Projects: cloned repositories the agent can work inside.
+// Projects: working trees the agent can work inside — either cloned from
+// GitHub or started blank.
 //
 // `projects` is operator config, so Next.js writes it. `project_files` is
-// derived from a clone on disk, so Python — which does the cloning — writes
-// that. Same split as workflows/workflow_runs, and for the same reason: the
-// side that produces the data is the side that owns the table.
+// derived from what is on disk, so Python — which does the cloning or the
+// `git init` — writes that. Same split as workflows/workflow_runs, and for the
+// same reason: the side that produces the data is the side that owns the
+// table.
 //
 // Deletes are soft (archivedAt), unlike the registries: a project has dependent
 // rows, and a container or an indexed tree outliving its project row is a worse
@@ -297,17 +299,28 @@ export const cloneStatus = pgEnum("clone_status", [
   "error",
 ]);
 
+/**
+ * How a project came to exist. `blank` starts from nothing but a local git
+ * init; `github` starts from a clone. A `blank` project can later be linked to
+ * a GitHub remote (see `repoUrl`) without becoming a `github` row — `kind`
+ * records provenance, not the project's current connection state.
+ */
+export const projectKind = pgEnum("project_kind", ["blank", "github"]);
+
 export const projects = pgTable(
   "projects",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     name: text("name").notNull(),
     slug: text("slug").notNull(),
+    description: text("description"),
+    kind: projectKind("kind").notNull().default("github"),
     provider: credentialProvider("provider").notNull().default("github"),
-    repoOwner: text("repo_owner").notNull(),
-    repoName: text("repo_name").notNull(),
+    /** Null until a Blank Project is connected to a remote. */
+    repoOwner: text("repo_owner"),
+    repoName: text("repo_name"),
     /** Clean HTTPS remote. The token is NEVER interpolated into this. */
-    repoUrl: text("repo_url").notNull(),
+    repoUrl: text("repo_url"),
     /** The provider's own id, as text. Survives a repository being renamed. */
     repoId: text("repo_id"),
     defaultBranch: text("default_branch").notNull().default("main"),
@@ -423,3 +436,85 @@ export const projectContainers = pgTable(
 );
 
 export type ProjectContainerRow = typeof projectContainers.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Project chat: durable conversations about a repository.
+//
+// Both Python-owned. Until now the SessionStore was explicitly in-memory and a
+// backend restart lost everything, which is tolerable for a scratch chat and
+// not for a conversation about a codebase you are midway through changing.
+//
+// TWO tables, because they answer two different questions:
+//
+//   project_chat_sessions  -> what the MODEL needs to continue the conversation
+//   project_chat_messages  -> what the PAGE needs to repaint what you saw
+//
+// The first holds a provider-native message list, which is Anthropic-shaped or
+// OpenAI-shaped and not meaningfully queryable. The second holds the rendered
+// transcript. Storing only the first would mean reconstructing the UI from a
+// provider's wire format; storing only the second would mean the agent could
+// not actually resume.
+// ---------------------------------------------------------------------------
+
+export const chatRole = pgEnum("chat_role", [
+  "user",
+  "assistant",
+  "tool_call",
+  "tool_result",
+  "error",
+]);
+
+export const projectChatSessions = pgTable(
+  "project_chat_sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    /** The id the browser holds in localStorage. */
+    sessionId: text("session_id").notNull(),
+    /** Anthropic and OpenAI histories are not interchangeable, and replaying
+     *  one through the other is refused — so the provider is stored with it. */
+    provider: text("provider").notNull(),
+    /** Provider-native messages. Opaque here on purpose: this is the LLM's
+     *  format, and parsing it in SQL would couple the schema to a vendor. */
+    history: jsonb("history").$type<unknown[]>().notNull().default(sql`'[]'::jsonb`),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("project_chat_sessions_session_uq").on(t.sessionId),
+    index("project_chat_sessions_project_idx").on(t.projectId, t.updatedAt),
+  ],
+);
+
+export const projectChatMessages = pgTable(
+  "project_chat_messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    sessionId: text("session_id").notNull(),
+    /** Order within the session. Not a timestamp: two events inside one turn
+     *  can share a millisecond, and the transcript order must be exact. */
+    seq: integer("seq").notNull(),
+    role: chatRole("role").notNull(),
+    content: text("content"),
+    toolName: text("tool_name"),
+    /** The provider's id for the call, so a result folds into its own step. */
+    toolCallId: text("tool_call_id"),
+    toolArgs: jsonb("tool_args").$type<Record<string, unknown>>(),
+    isError: boolean("is_error").notNull().default(false),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("project_chat_messages_session_seq_idx").on(t.sessionId, t.seq),
+    unique("project_chat_messages_session_seq_uq").on(t.sessionId, t.seq),
+  ],
+);
+
+export type ProjectChatSessionRow = typeof projectChatSessions.$inferSelect;
+export type ProjectChatMessageRow = typeof projectChatMessages.$inferSelect;
