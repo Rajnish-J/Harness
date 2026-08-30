@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight, File, FileLock2, Folder } from "lucide-react
 import { useEffect, useState } from "react";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { toast } from "@/components/ui/toast";
 import { projectFilesApi } from "@/lib/project-api";
 import type { TreeLevel } from "@/lib/project-types";
 
@@ -56,9 +57,15 @@ export default function FileTree({
     try {
       const level = await projectFilesApi.tree(projectId, dirPath);
       setLevels((prev) => ({ ...prev, [dirPath]: level }));
-    } catch {
-      // A level that will not load renders as "loading…" rather than an alert.
-      // The tree is a navigation aid; one bad directory should not take it over.
+    } catch (err) {
+      // The row itself keeps showing "loading…" rather than an inline alert —
+      // the tree is a navigation aid, and one bad directory should not take it
+      // over — but a toast still says something went wrong instead of leaving
+      // it a silent dead end.
+      toast.error({
+        title: `Could not open ${dirPath || "the project root"}`,
+        description: (err as Error).message,
+      });
     }
   }
 

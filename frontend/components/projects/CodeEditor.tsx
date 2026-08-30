@@ -6,6 +6,7 @@ import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { toast } from "@/components/ui/toast";
 import { projectFilesApi } from "@/lib/project-api";
 
 /** Monaco's language id for a path, by extension. Unknown means plain text. */
@@ -97,7 +98,6 @@ export default function CodeEditor({
   const { resolvedTheme } = useTheme();
   const [file, setFile] = useState<FileState | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
 
   // The parent keys this component by path, so a different file mounts a fresh
   // instance and there is nothing to reset here.
@@ -124,14 +124,13 @@ export default function CodeEditor({
   async function save() {
     if (!path || !dirty) return;
     setSaving(true);
-    setSaveError(null);
     try {
       const written = await projectFilesApi.write(projectId, path, draft);
       // The saved text becomes the new baseline, so the dirty marker clears.
       setFile({ path, original: written.content, draft: written.content });
       onSaved?.(path);
     } catch (err) {
-      setSaveError((err as Error).message);
+      toast.error({ title: "Save failed", description: (err as Error).message });
     } finally {
       setSaving(false);
     }
@@ -169,9 +168,6 @@ export default function CodeEditor({
       <div className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5">
         <span className="truncate font-mono text-xs">{path}</span>
         {dirty && <span className="text-[11px] text-amber-600">unsaved</span>}
-        {saveError && (
-          <span className="truncate text-[11px] text-destructive">{saveError}</span>
-        )}
         <Button
           type="button"
           size="sm"
@@ -200,6 +196,7 @@ export default function CodeEditor({
           options={{
             minimap: { enabled: false },
             fontSize: 13,
+            fontFamily: "var(--font-mono)",
             scrollBeyondLastLine: false,
             tabSize: 2,
             renderWhitespace: "selection",
