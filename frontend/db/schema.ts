@@ -385,6 +385,56 @@ export type ProjectRow = typeof projects.$inferSelect;
 export type ProjectFileRow = typeof projectFiles.$inferSelect;
 
 // ---------------------------------------------------------------------------
+// Project environment variables: a project's .env, stored per key.
+//
+// Sibling of `credentials`, not a variant of it. A credential is a token the
+// HARNESS replays to a provider — it has a username, an account, scopes and a
+// verdict from the last connection test. An env var is a string the PROJECT
+// reads at runtime; none of those five columns mean anything for it, and a
+// nullable `project_id` bolted onto `credentials` would have made every one of
+// them nullable-and-meaningless for half the rows.
+//
+// Rows per key rather than one blob per project, so the UI can list, filter,
+// sort and delete a single variable, and so `updated_at` is per variable — the
+// question "when did DATABASE_URL last change" has an answer.
+//
+// Values use the SAME AES-256-GCM envelope as `credentials.secret_ciphertext`
+// (lib/server/crypto.ts / backend/app/core/secrets.py), so Python can decrypt
+// them when it writes the container's .env. `secret` decides only whether the
+// plaintext is ever served BACK to the browser: `NODE_ENV=production` is worth
+// reading in the UI, a database password is not. Encryption at rest does not
+// depend on it.
+// ---------------------------------------------------------------------------
+
+export const projectEnvVars = pgTable(
+  "project_env_vars",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    /** POSIX-ish env name: A-Z, 0-9, underscore. Enforced by the route. */
+    key: text("key").notNull(),
+    /** `v1.<base64url nonce>.<base64url ciphertext||tag>`, as for credentials. */
+    valueCiphertext: text("value_ciphertext").notNull(),
+    /** Last 4 characters, so a secret can be identified without decrypting. */
+    lastFour: text("last_four").notNull(),
+    /** Masked in the UI and never returned in full. Cleared for a value like a
+     *  hostname or a feature flag, which is more useful visible than hidden. */
+    secret: boolean("secret").notNull().default(true),
+    /** Optional note — what this variable is for. */
+    description: text("description"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  // Also the (project_id, key) index every list query wants — a separate index
+  // on project_id alone would be a redundant leftmost prefix of this one.
+  (t) => [unique("project_env_vars_project_key_uq").on(t.projectId, t.key)],
+);
+
+export type ProjectEnvVarRow = typeof projectEnvVars.$inferSelect;
+
+// ---------------------------------------------------------------------------
 // Project containers: where a project's commands actually run.
 //
 // Python-owned. The truth about a container is whether the Docker daemon has

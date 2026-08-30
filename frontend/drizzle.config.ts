@@ -28,6 +28,7 @@ export default defineConfig({
     "credentials",
     "projects",
     "project_files",
+    "project_env_vars",
     "project_containers",
     "project_chat_sessions",
     "project_chat_messages",

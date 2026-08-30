@@ -70,11 +70,28 @@ function b64url(buffer: Buffer): string {
   return buffer.toString("base64url");
 }
 
+/**
+ * Encrypt a token. Empty is a mistake worth failing on: a credential whose
+ * secret is "" is not a credential, and the row would look complete.
+ */
 export function encryptSecret(plaintext: string): string {
   if (!plaintext) {
     throw new CredentialCryptoError("Refusing to encrypt an empty secret.");
   }
+  return encryptValue(plaintext);
+}
 
+/**
+ * The same envelope and the same key, but "" is allowed.
+ *
+ * Project environment variables use this one. `KEY=` is a real line in a real
+ * `.env`, and refusing it would mean silently dropping a variable from the file
+ * the container is given — a worse outcome than storing an empty string on
+ * purpose. AES-GCM over an empty plaintext is well defined; the payload is then
+ * exactly the 16-byte tag, which is why decryptSecret's length check below
+ * admits it.
+ */
+export function encryptValue(plaintext: string): string {
   const nonce = randomBytes(NONCE_BYTES);
   const cipher = createCipheriv("aes-256-gcm", key(), nonce);
   const ciphertext = Buffer.concat([
@@ -104,7 +121,10 @@ export function decryptSecret(blob: string): string {
 
   const nonce = Buffer.from(nonceB64, "base64url");
   const payload = Buffer.from(payloadB64, "base64url");
-  if (nonce.length !== NONCE_BYTES || payload.length <= TAG_BYTES) {
+  // `< TAG_BYTES`, not `<=`: a payload that is exactly the tag is the encryption
+  // of an empty string, which encryptValue can produce. Python has no length
+  // check here at all and has always accepted it — this is the twins agreeing.
+  if (nonce.length !== NONCE_BYTES || payload.length < TAG_BYTES) {
     throw new CredentialCryptoError("Malformed secret: bad nonce or payload length.");
   }
 
