@@ -13,7 +13,11 @@ from app.agent.session import ProviderMismatchError, Session, session_store
 from app.agent.tools.base import Tool
 from app.agent.tools.toolsets import UnknownToolError, merge_toolsets
 from app.api.sse import SSE_HEADERS
+from app.agent.exec_context import ExecutionContext
 from app.core.config import Settings, get_settings
+from app.db import project_chat_repo
+from app.projects.execution import resolve_executor
+from app.projects.workspaces import InvalidProjectIdError, settings_for_project
 from app.mcp import resolve_mcp_tools
 from app.models.chat import ApprovalRequest, ChatRequest, ResetRequest, TurnPreset
 from app.models.events import AgentEvent, DoneEvent, ErrorEvent, sse_comment
@@ -68,6 +72,11 @@ class Turn:
     system: str
     tools: list[Tool] | None
     require_approval: bool
+    #: None means the host, which is what a chat with no project always gets.
+    executor: ExecutionContext | None = None
+    project_id: str | None = None
+    #: Where commands will run, surfaced so the operator is never surprised.
+    execution_note: str | None = None
 
 
 class TurnSetupError(Exception):
@@ -104,6 +113,24 @@ async def _prepare_turn(
     if payload.max_iterations:
         overrides["max_agent_iterations"] = payload.max_iterations
     turn_settings = settings.model_copy(update=overrides) if overrides else settings
+
+    # A project-scoped turn works inside that project's checkout. This re-anchors
+    # the existing resolve_safe_path guardrail rather than relaxing it: the file
+    # tools already read settings.workspace_root, so they need no change.
+    executor = None
+    execution_note = None
+    project_id = getattr(payload, "project_id", None)
+    if project_id:
+        # resolve_executor is given the UN-rerooted settings on purpose: it
+        # derives the bind-mount path with project_workspace() itself, and
+        # handing it an already-rerooted root would nest the path twice.
+        resolved_exec = await resolve_executor(turn_settings, project_id)
+        try:
+            turn_settings = settings_for_project(turn_settings, project_id)
+        except InvalidProjectIdError as exc:
+            raise TurnSetupError(str(exc), "bad_project") from exc
+        executor = resolved_exec.executor
+        execution_note = resolved_exec.reason
 
     try:
         # Built from turn_settings, not settings: the model name is baked into
@@ -151,6 +178,9 @@ async def _prepare_turn(
             system=system,
             tools=tools,
             require_approval=payload.mode == "manual",
+            executor=executor,
+            project_id=project_id,
+            execution_note=execution_note,
         ),
         notices,
     )
@@ -161,6 +191,95 @@ def _setup_failure(exc: TurnSetupError) -> list[AgentEvent]:
         ErrorEvent(message=exc.message, code=exc.code),
         DoneEvent(reason="error"),
     ]
+
+
+
+# ------------------------------------------------------- project persistence
+
+
+async def _rehydrate(request: Request, turn: Turn) -> None:
+    """Reload a project chat's history so the agent can continue it.
+
+    Only fills an EMPTY in-memory session. A session already in memory is
+    ahead of the database (the flush happens after a turn, not during it), so
+    overwriting it would rewind the conversation by one turn.
+    """
+    if not turn.project_id or turn.session.history:
+        return
+    pool = getattr(request.app.state, "pool", None)
+    if pool is None:
+        return
+
+    try:
+        stored = await project_chat_repo.load_session(pool, turn.session.session_id)
+    except Exception:  # noqa: BLE001 - a chat must not die because history did
+        logger.exception("could not load history for %s", turn.session.session_id)
+        return
+
+    if stored is None:
+        return
+    if stored.provider != turn.session.provider:
+        # Anthropic and OpenAI histories are not interchangeable. Starting
+        # fresh beats failing deep inside the SDK on a replay.
+        logger.info(
+            "dropping %s history for session %s: server now runs %s",
+            stored.provider,
+            turn.session.session_id,
+            turn.session.provider,
+        )
+        return
+    turn.session.history = list(stored.history)
+
+
+async def _persist(
+    request: Request, turn: Turn, entries: list[project_chat_repo.TranscriptEntry]
+) -> None:
+    """Flush the provider history and the rendered transcript after a turn."""
+    if not turn.project_id:
+        return
+    pool = getattr(request.app.state, "pool", None)
+    if pool is None:
+        return
+
+    try:
+        await project_chat_repo.save_session(
+            pool,
+            turn.project_id,
+            turn.session.session_id,
+            provider=turn.session.provider,
+            history=turn.session.history,
+        )
+        await project_chat_repo.append_messages(
+            pool, turn.project_id, turn.session.session_id, entries
+        )
+    except Exception:  # noqa: BLE001 - the turn already happened
+        logger.exception("could not persist chat for %s", turn.project_id)
+
+
+def _entry_for(event: AgentEvent) -> project_chat_repo.TranscriptEntry | None:
+    """Turn a streamed event into a transcript row, or None if it is not one."""
+    kind = getattr(event, "type", None)
+    if kind == "assistant_message":
+        return project_chat_repo.TranscriptEntry(role="assistant", content=event.text)
+    if kind == "tool_call":
+        return project_chat_repo.TranscriptEntry(
+            role="tool_call",
+            tool_name=event.name,
+            tool_call_id=event.id,
+            tool_args=event.arguments,
+        )
+    if kind == "tool_result":
+        return project_chat_repo.TranscriptEntry(
+            role="tool_result",
+            tool_name=event.name,
+            tool_call_id=event.id,
+            content=event.content,
+            is_error=event.is_error,
+        )
+    if kind == "error":
+        return project_chat_repo.TranscriptEntry(role="error", content=event.message)
+    # approval_request and done carry no transcript line of their own.
+    return None
 
 
 # ------------------------------------------------------------------ streams
@@ -185,6 +304,12 @@ async def _chat_stream(
     for notice in notices:
         yield ErrorEvent(message=notice, code="mcp_unavailable").to_sse()
 
+    await _rehydrate(request, turn)
+
+    entries: list[project_chat_repo.TranscriptEntry] = [
+        project_chat_repo.TranscriptEntry(role="user", content=payload.message)
+    ]
+
     async for event in run_agent_loop(
         session=turn.session,
         llm_client=turn.llm_client,
@@ -194,8 +319,14 @@ async def _chat_stream(
         tools=turn.tools,
         system=turn.system,
         require_approval=turn.require_approval,
+        executor=turn.executor,
     ):
+        entry = _entry_for(event)
+        if entry is not None:
+            entries.append(entry)
         yield event.to_sse()
+
+    await _persist(request, turn, entries)
 
 
 async def _approve_stream(
@@ -217,6 +348,8 @@ async def _approve_stream(
 
     decisions = {decision.id: decision.approved for decision in payload.decisions}
 
+    entries: list[project_chat_repo.TranscriptEntry] = []
+
     async for event in resume_agent_loop(
         session=turn.session,
         llm_client=turn.llm_client,
@@ -226,8 +359,14 @@ async def _approve_stream(
         tools=turn.tools,
         system=turn.system,
         require_approval=turn.require_approval,
+        executor=turn.executor,
     ):
+        entry = _entry_for(event)
+        if entry is not None:
+            entries.append(entry)
         yield event.to_sse()
+
+    await _persist(request, turn, entries)
 
 
 # ------------------------------------------------------------------- config

@@ -51,6 +51,7 @@ async def run_agent_loop(
     tools: list[Tool] | None = None,
     system: str | None = None,
     require_approval: bool = False,
+    executor: ExecutionContext | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Drive one decide -> act -> observe -> repeat turn to completion.
 
@@ -83,6 +84,7 @@ async def run_agent_loop(
         tools=tools,
         system=system,
         require_approval=require_approval,
+        executor=executor,
     ):
         yield event
 
@@ -97,6 +99,7 @@ async def resume_agent_loop(
     tools: list[Tool] | None = None,
     system: str | None = None,
     require_approval: bool = True,
+    executor: ExecutionContext | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Finish a manual-mode turn that parked on `session.pending`.
 
@@ -131,7 +134,7 @@ async def resume_agent_loop(
     results: list[tuple[ToolCallRequest, ToolResult]] = []
     for call in pending:
         if decisions.get(call.id, False):
-            result = await _dispatch_tool(call, settings, tools_by_name)
+            result = await _dispatch_tool(call, settings, tools_by_name, executor)
         else:
             result = ToolResult(content=DENIED_MESSAGE, is_error=True)
         results.append((call, result))
@@ -151,6 +154,7 @@ async def resume_agent_loop(
         system=system,
         require_approval=require_approval,
         resolved=results,
+        executor=executor,
     ):
         yield event
 
@@ -165,6 +169,7 @@ async def _drive(
     system: str | None,
     require_approval: bool,
     resolved: list[tuple[ToolCallRequest, ToolResult]] | None = None,
+    executor: ExecutionContext | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """The decide -> act -> observe iteration itself.
 
@@ -263,7 +268,7 @@ async def _drive(
                 yield ToolCallEvent(
                     id=call.id, name=call.name, arguments=call.arguments
                 )
-                result = await _dispatch_tool(call, settings, tools_by_name)
+                result = await _dispatch_tool(call, settings, tools_by_name, executor)
                 results.append((call, result))
                 yield ToolResultEvent(
                     id=call.id,
