@@ -18,6 +18,7 @@ import {
   getSessionIdSnapshot,
   rotateSessionId,
   subscribeSessionId,
+  type SessionScope,
 } from "@/lib/session";
 import type { AgentEvent, TranscriptItem } from "@/lib/types";
 
@@ -51,19 +52,42 @@ const ChatSessionContext = createContext<ChatSessionValue | null>(null);
  * button had no way to reach it. Holding it here — in the root layout, which
  * React does not remount on navigation — also means the transcript survives a
  * trip to /workflows and back, instead of being wiped by the unmount.
+ *
+ * A project page mounts a SECOND instance of this provider, nested inside the
+ * root one, with its own `scope`. React resolves context to the nearest
+ * provider, so ChatWindow, MessageList, MessageInput and ApprovalCard bind to
+ * whichever session encloses them without knowing either exists — and the chat
+ * on `/` is left completely untouched.
  */
 export default function ChatSessionProvider({
   children,
+  scope = null,
+  projectId,
+  initialItems,
 }: {
   children: React.ReactNode;
+  /** null is the global chat. A project passes its own scope. */
+  scope?: SessionScope;
+  /** Sent with every turn so the backend persists to the right project. */
+  projectId?: string;
+  /** Server-loaded history, so a returning project repaints what it had. */
+  initialItems?: TranscriptItem[];
 }) {
+  // Curried so useSyncExternalStore gets stable callbacks: a new function
+  // identity every render would resubscribe on every render.
+  const subscribe = useCallback(
+    (listener: () => void) => subscribeSessionId(scope, listener),
+    [scope],
+  );
+  const snapshot = useCallback(() => getSessionIdSnapshot(scope), [scope]);
+
   const sessionId = useSyncExternalStore(
-    subscribeSessionId,
-    getSessionIdSnapshot,
+    subscribe,
+    snapshot,
     getServerSessionIdSnapshot,
   );
 
-  const [items, setItems] = useState<TranscriptItem[]>([]);
+  const [items, setItems] = useState<TranscriptItem[]>(initialItems ?? []);
   const [streaming, setStreaming] = useState(false);
   const [pending, setPending] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -160,6 +184,7 @@ export default function ChatSessionProvider({
             sessionId,
             message: text,
             preset,
+            projectId,
             signal: controller.signal,
           },
           (event) => {
@@ -191,7 +216,7 @@ export default function ChatSessionProvider({
         abortRef.current = null;
       }
     },
-    [sessionId, applyEvent],
+    [sessionId, projectId, applyEvent],
   );
 
   /**
@@ -225,7 +250,7 @@ export default function ChatSessionProvider({
 
       try {
         await streamApproval(
-          { sessionId, decisions, preset, signal: controller.signal },
+          { sessionId, decisions, preset, projectId, signal: controller.signal },
           (event) => {
             if (event.type === "done" && event.reason === "awaiting_approval") {
               setPending(true);
@@ -253,7 +278,7 @@ export default function ChatSessionProvider({
         abortRef.current = null;
       }
     },
-    [sessionId, applyEvent],
+    [sessionId, projectId, applyEvent],
   );
 
   const stop = useCallback(() => {
@@ -266,14 +291,14 @@ export default function ChatSessionProvider({
 
   const newChat = useCallback(() => {
     abortRef.current?.abort();
-    rotateSessionId();
+    rotateSessionId(scope);
     setItems([]);
     setPending(false);
     // Fire-and-forget: the UI clears immediately, and a stale server session is
     // harmless once we have rotated away from its id. resetSession swallows
     // its own errors.
     if (sessionId) void resetSession(sessionId);
-  }, [sessionId]);
+  }, [sessionId, scope]);
 
   const value = useMemo(
     () => ({

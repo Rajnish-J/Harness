@@ -85,12 +85,34 @@ export default function ChatPresetProvider({
   children: React.ReactNode;
 }) {
   const [preset, setPreset] = useState<ChatPreset>(EMPTY_PRESET);
-  const [catalog, setCatalog] = useState<Catalog>(EMPTY_CATALOG);
+  const [ownCatalog, setCatalog] = useState<Catalog>(EMPTY_CATALOG);
+
+  // A project page mounts a SECOND provider inside the root one so the chat in
+  // its side panel is a separate conversation. The *preset* must be per
+  // instance — attaching an agent there should not change the composer on `/` —
+  // but the catalog is identical global data, so a nested instance inherits it
+  // rather than repeating five requests on every project page load.
+  const parent = useContext(ChatPresetContext);
+  const inherited = parent?.catalog ?? null;
+
+  const catalog = useMemo(() => {
+    if (!inherited) return ownCatalog;
+    // MCP tools are still discovered per instance, because which servers are
+    // attached is part of the preset, not the catalog.
+    const own = ownCatalog.tools.filter((tool) => tool.name.startsWith("mcp__"));
+    return own.length
+      ? { ...inherited, tools: [...inherited.tools, ...own] }
+      : inherited;
+  }, [inherited, ownCatalog]);
 
   // Fetched once per page load. setState lands in a .then callback rather than
   // the effect body, which is what keeps react-hooks/set-state-in-effect quiet;
   // same shape as components/tools/ToolsBrowser.tsx.
   useEffect(() => {
+    // Nested: the root provider already has this, and re-fetching would only
+    // duplicate work and briefly render a second EMPTY_CATALOG.
+    if (inherited) return;
+
     const controller = new AbortController();
 
     Promise.all([
@@ -120,7 +142,7 @@ export default function ChatPresetProvider({
       });
 
     return () => controller.abort();
-  }, []);
+  }, [inherited]);
 
   // MCP tools are discovered separately, and only for servers the composer has
   // actually attached: discovery costs a round trip to each server, so doing it

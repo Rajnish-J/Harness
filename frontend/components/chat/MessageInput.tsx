@@ -1,16 +1,14 @@
 "use client";
 
-import { ArrowUp, Bot, Sparkles, Square } from "lucide-react";
+import { ArrowUp, Bot, Plug, Sparkles, Square } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
-import AgentSwitcher from "./AgentSwitcher";
-import AttachMenu from "./AttachMenu";
 import AttachmentChips from "./AttachmentChips";
-import ComposerHelp from "./ComposerHelp";
+import CommandMenu from "./CommandMenu";
 import { useChatPreset } from "./ChatPresetProvider";
 import ModelPicker from "./ModelPicker";
 import ModeSelector from "./ModeSelector";
-import ToolsPopover from "./ToolsPopover";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -26,6 +24,13 @@ import {
  * as three loose literals they drift apart the first time one is tuned.
  */
 const MAX_COMPOSER_PX = 320;
+
+/** Same glyphs the "/" panel uses, so a typed match reads as the same thing. */
+const SLASH_ICONS: Record<SlashOption["kind"], LucideIcon> = {
+  agent: Bot,
+  skill: Sparkles,
+  mcp: Plug,
+};
 
 export default function MessageInput({
   disabled,
@@ -51,7 +56,7 @@ export default function MessageInput({
   });
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { catalog, setAgent, attachSkill } = useChatPreset();
+  const { catalog, setAgent, attachSkill, toggleMcp } = useChatPreset();
 
   const token = slashTokenAt(value, caret);
   const slashOpen = token !== null && token.query !== dismissed;
@@ -72,6 +77,13 @@ export default function MessageInput({
             label: skill.name,
             hint: skill.description,
             terms: [skill.name, skill.slug],
+          })),
+          ...catalog.mcp.map((server) => ({
+            kind: "mcp" as const,
+            id: server.id,
+            label: server.name,
+            hint: server.description ?? server.transport,
+            terms: [server.name],
           })),
         ],
         token.query,
@@ -100,9 +112,12 @@ export default function MessageInput({
     if (option.kind === "agent") {
       const agent = catalog.agents.find((a) => a.id === option.id);
       if (agent) void setAgent(agent);
-    } else {
+    } else if (option.kind === "skill") {
       const skill = catalog.skills.find((s) => s.id === option.id);
       if (skill) void attachSkill(skill);
+    } else {
+      const server = catalog.mcp.find((s) => s.id === option.id);
+      if (server) toggleMcp(server);
     }
 
     requestAnimationFrame(() => {
@@ -174,7 +189,11 @@ export default function MessageInput({
         {slashOpen && options.length > 0 && (
           <div className="absolute bottom-full left-0 z-20 mb-2 w-full rounded-xl border bg-popover shadow-md">
             <ScrollArea className="max-h-64">
-              <ul role="listbox" aria-label="Attach a skill or agent" className="p-1">
+              <ul
+                role="listbox"
+                aria-label="Attach an agent, skill or MCP server"
+                className="p-1"
+              >
                 {options.map((option, index) => (
                   <li
                     key={`${option.kind}-${option.id}`}
@@ -194,11 +213,10 @@ export default function MessageInput({
                       index === highlight ? "bg-accent" : ""
                     }`}
                   >
-                    {option.kind === "agent" ? (
-                      <Bot className="size-3.5 shrink-0 opacity-70" />
-                    ) : (
-                      <Sparkles className="size-3.5 shrink-0 opacity-70" />
-                    )}
+                    {(() => {
+                      const Icon = SLASH_ICONS[option.kind];
+                      return <Icon className="size-3.5 shrink-0 opacity-70" />;
+                    })()}
                     <span className="truncate">{option.label}</span>
                     {option.hint && (
                       <span className="ml-auto truncate text-[11px] text-muted-foreground">
@@ -227,7 +245,7 @@ export default function MessageInput({
           placeholder={
             pending
               ? "Approve or deny the pending tool call to continue…"
-              : "Ask the harness anything.  /  to attach a skill or agent"
+              : "Ask the harness anything.  /  for agents, skills, tools and MCP"
           }
           aria-activedescendant={
             slashOpen && active ? `slash-${active.kind}-${active.id}` : undefined
@@ -237,15 +255,17 @@ export default function MessageInput({
           className="max-h-[320px] min-h-[84px] w-full resize-none bg-transparent px-3 pt-3 text-sm outline-none placeholder:text-muted-foreground"
         />
 
+        {/*
+          Only two controls ride in this row: the mode and the model. Everything
+          that can be *attached* — agents, skills, tools, MCP servers — lives
+          behind the "/" button, which is the same thing typing "/" opens.
+        */}
         <div className="flex flex-wrap items-center gap-1.5 px-2 pb-2">
-          <AttachMenu />
-          <AgentSwitcher />
+          <CommandMenu />
           <ModeSelector />
-          <ToolsPopover />
           <ModelPicker />
 
           <span className="ml-auto" />
-          <ComposerHelp />
 
           {disabled ? (
             <Button

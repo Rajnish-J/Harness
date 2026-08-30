@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.agent.tools._process import run_subprocess
+from app.agent.exec_context import ExecutionContext, LocalExec
 from app.agent.tools.base import Tool, ToolExecutionError
 from app.core.workspace import resolve_safe_path
 
@@ -26,10 +26,13 @@ async def run_command(
     workspace_root: Path,
     command_timeout_seconds: float,
     max_command_output_bytes: int,
+    executor: ExecutionContext | None = None,
     **_ignored: object,
 ) -> str:
     resolved_cwd = _resolve_cwd(cwd, workspace_root)
-    returncode, output = await run_subprocess(
+    # Defaults to the host, so a chat with no project attached behaves exactly
+    # as it did before containers existed.
+    returncode, output = await (executor or LocalExec()).run(
         command,
         cwd=resolved_cwd,
         timeout=command_timeout_seconds,
@@ -48,6 +51,7 @@ async def _run_configured(
     workspace_root: Path,
     command_timeout_seconds: float,
     max_command_output_bytes: int,
+    executor: ExecutionContext | None = None,
 ) -> str:
     command = override or configured
     if not command:
@@ -58,7 +62,7 @@ async def _run_configured(
         )
 
     resolved_cwd = _resolve_cwd(cwd, workspace_root)
-    returncode, output = await run_subprocess(
+    returncode, output = await (executor or LocalExec()).run(
         command,
         cwd=resolved_cwd,
         timeout=command_timeout_seconds,
@@ -76,6 +80,7 @@ async def run_tests(
     command_timeout_seconds: float,
     max_command_output_bytes: int,
     test_command: str | None,
+    executor: ExecutionContext | None = None,
     **_ignored: object,
 ) -> str:
     return await _run_configured(
@@ -84,6 +89,7 @@ async def run_tests(
         test_command,
         cwd=cwd,
         workspace_root=workspace_root,
+        executor=executor,
         command_timeout_seconds=command_timeout_seconds,
         max_command_output_bytes=max_command_output_bytes,
     )
@@ -97,6 +103,7 @@ async def run_lint(
     command_timeout_seconds: float,
     max_command_output_bytes: int,
     lint_command: str | None,
+    executor: ExecutionContext | None = None,
     **_ignored: object,
 ) -> str:
     return await _run_configured(
@@ -105,6 +112,7 @@ async def run_lint(
         lint_command,
         cwd=cwd,
         workspace_root=workspace_root,
+        executor=executor,
         command_timeout_seconds=command_timeout_seconds,
         max_command_output_bytes=max_command_output_bytes,
     )
@@ -118,6 +126,7 @@ async def run_build(
     command_timeout_seconds: float,
     max_command_output_bytes: int,
     build_command: str | None,
+    executor: ExecutionContext | None = None,
     **_ignored: object,
 ) -> str:
     return await _run_configured(
@@ -126,6 +135,7 @@ async def run_build(
         build_command,
         cwd=cwd,
         workspace_root=workspace_root,
+        executor=executor,
         command_timeout_seconds=command_timeout_seconds,
         max_command_output_bytes=max_command_output_bytes,
     )

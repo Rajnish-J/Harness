@@ -47,7 +47,13 @@ export default function ModelPicker() {
         </Button>
       </PopoverTrigger>
 
-      <PopoverContent align="start" className="w-[34rem] max-w-[90vw] p-0">
+      <PopoverContent
+        align="start"
+        side="bottom"
+        sideOffset={8}
+        avoidCollisions={false}
+        className="w-[34rem] max-w-[90vw] p-0"
+      >
         {models.length === 0 ? (
           <p className="px-3 py-6 text-center text-[11px] text-muted-foreground">
             The harness reported no models. Check that it is running.

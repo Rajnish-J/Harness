@@ -44,7 +44,7 @@ export function slashTokenAt(value: string, caret: number): SlashToken | null {
 }
 
 export type SlashOption = {
-  kind: "agent" | "skill";
+  kind: "agent" | "skill" | "mcp";
   id: string;
   label: string;
   hint?: string | null;
@@ -81,11 +81,12 @@ export function filterSlashOptions(
     );
   }
 
-  const counts = { agent: 0, skill: 0 };
+  const counts = { agent: 0, skill: 0, mcp: 0 };
   const out: SlashOption[] = [];
   // Agents first: picking one cascades its skills and tools, so it is the more
-  // consequential choice and belongs at the top.
-  for (const kind of ["agent", "skill"] as const) {
+  // consequential choice and belongs at the top. Servers last — attaching one
+  // costs a discovery round trip, so it is the least casual of the three.
+  for (const kind of ["agent", "skill", "mcp"] as const) {
     for (const { option } of scored) {
       if (option.kind !== kind) continue;
       if (counts[kind] >= limitPerKind) break;

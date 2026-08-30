@@ -229,3 +229,292 @@ export const agents = pgTable(
 export type McpServerRow = typeof mcpServers.$inferSelect;
 export type SkillRow = typeof skills.$inferSelect;
 export type AgentRow = typeof agents.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Credentials: personal access tokens for GitHub and friends.
+//
+// Unlike `mcp_servers.env` above — which stores API keys in plaintext and
+// mitigates by scope — a PAT can push code and merge pull requests, so the
+// secret is encrypted at rest with AES-256-GCM (see lib/server/crypto.ts and
+// backend/app/core/secrets.py, which must agree byte for byte).
+//
+// It is ENCRYPTED, not hashed: the token has to be replayed to GitHub, so a
+// one-way digest would be useless. Next.js encrypts on write, Python decrypts
+// when it needs to call an API. The plaintext is never sent back to the browser
+// by any endpoint — `lastFour` exists so the UI can identify a token without
+// one.
+// ---------------------------------------------------------------------------
+
+export const credentialProvider = pgEnum("credential_provider", [
+  "github",
+  "azure_devops",
+  "gitlab",
+  "generic",
+]);
+
+export const credentials = pgTable(
+  "credentials",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    provider: credentialProvider("provider").notNull().default("github"),
+    /** The account the token belongs to. Needed to build an HTTPS clone URL. */
+    username: text("username"),
+    /** `v1.<base64url nonce>.<base64url ciphertext||tag>`. Never leaves the server. */
+    secretCiphertext: text("secret_ciphertext").notNull(),
+    /** Last 4 characters, so the list can render `ghp_••••1234` without decrypting. */
+    lastFour: text("last_four").notNull(),
+    /** Reported by the provider on a connection test, not requested by us. */
+    scopes: jsonb("scopes").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    enabled: boolean("enabled").notNull().default(true),
+    lastValidatedAt: timestamp("last_validated_at", { withTimezone: true }),
+    lastValidationError: text("last_validation_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique("credentials_name_uq").on(t.name)],
+);
+
+export type CredentialRow = typeof credentials.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Projects: working trees the agent can work inside — either cloned from
+// GitHub or started blank.
+//
+// `projects` is operator config, so Next.js writes it. `project_files` is
+// derived from what is on disk, so Python — which does the cloning or the
+// `git init` — writes that. Same split as workflows/workflow_runs, and for the
+// same reason: the side that produces the data is the side that owns the
+// table.
+//
+// Deletes are soft (archivedAt), unlike the registries: a project has dependent
+// rows, and a container or an indexed tree outliving its project row is a worse
+// failure than a burned slug.
+// ---------------------------------------------------------------------------
+
+export const cloneStatus = pgEnum("clone_status", [
+  "pending",
+  "cloning",
+  "ready",
+  "error",
+]);
+
+/**
+ * How a project came to exist. `blank` starts from nothing but a local git
+ * init; `github` starts from a clone. A `blank` project can later be linked to
+ * a GitHub remote (see `repoUrl`) without becoming a `github` row — `kind`
+ * records provenance, not the project's current connection state.
+ */
+export const projectKind = pgEnum("project_kind", ["blank", "github"]);
+
+export const projects = pgTable(
+  "projects",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    description: text("description"),
+    kind: projectKind("kind").notNull().default("github"),
+    provider: credentialProvider("provider").notNull().default("github"),
+    /** Null until a Blank Project is connected to a remote. */
+    repoOwner: text("repo_owner"),
+    repoName: text("repo_name"),
+    /** Clean HTTPS remote. The token is NEVER interpolated into this. */
+    repoUrl: text("repo_url"),
+    /** The provider's own id, as text. Survives a repository being renamed. */
+    repoId: text("repo_id"),
+    defaultBranch: text("default_branch").notNull().default("main"),
+    visibility: text("visibility").notNull().default("private"),
+    /** set null, not cascade: deleting a credential must not delete work. The
+     *  project simply cannot sync until another one is linked. */
+    credentialId: uuid("credential_id").references(() => credentials.id, {
+      onDelete: "set null",
+    }),
+    cloneStatus: cloneStatus("clone_status").notNull().default("pending"),
+    cloneError: text("clone_error"),
+    /** Checked out in the working tree right now — not necessarily the default. */
+    currentBranch: text("current_branch"),
+    lastPulledAt: timestamp("last_pulled_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("projects_slug_uq").on(t.slug),
+    index("projects_archived_updated_idx").on(t.archivedAt, t.updatedAt),
+  ],
+);
+
+/**
+ * A per-file index of a cloned repository.
+ *
+ * Deliberately holds no file CONTENT. The working tree on disk is the source of
+ * truth for bytes; duplicating them here would double the storage, go stale the
+ * moment the agent edits a file, and buy nothing, because reading a file off
+ * disk is already fast. What the database is genuinely better at is the SHAPE of
+ * the repo — rendering a 5,000-file tree without walking the filesystem on every
+ * keystroke — and cheap change detection, via the blob sha git already computed.
+ */
+export const projectFiles = pgTable(
+  "project_files",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    /** Repo-relative, always forward slashes, even when indexed on Windows. */
+    path: text("path").notNull(),
+    /** Parent directory, so one level of the tree is a single indexed query. */
+    dirPath: text("dir_path").notNull().default(""),
+    name: text("name").notNull(),
+    ext: text("ext"),
+    sizeBytes: integer("size_bytes").notNull().default(0),
+    /** Binary files are listed but never opened in the editor. */
+    isBinary: boolean("is_binary").notNull().default(false),
+    /** git's own object id. Re-indexing compares this instead of re-reading. */
+    gitBlobSha: text("git_blob_sha"),
+    indexedAt: timestamp("indexed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("project_files_project_path_uq").on(t.projectId, t.path),
+    index("project_files_project_dir_idx").on(t.projectId, t.dirPath),
+  ],
+);
+
+export type ProjectRow = typeof projects.$inferSelect;
+export type ProjectFileRow = typeof projectFiles.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Project containers: where a project's commands actually run.
+//
+// Python-owned. The truth about a container is whether the Docker daemon has
+// one, and only the side that talks to the daemon knows that — Next.js reads
+// these rows to render status and never writes them.
+//
+// Rows are a CACHE of daemon state, not the state itself. A container can be
+// removed by `docker rm` or a Docker Desktop restart without anything telling
+// us, so every read reconciles against the daemon rather than trusting the row.
+// ---------------------------------------------------------------------------
+
+export const containerStatus = pgEnum("container_status", [
+  "creating",
+  "running",
+  "stopped",
+  "error",
+  "removed",
+]);
+
+export const projectContainers = pgTable(
+  "project_containers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    /** Docker's own 64-char id. Null until the daemon has actually created it. */
+    containerId: text("container_id"),
+    /** Deterministic: harness-project-<project id>, so an orphan is findable. */
+    containerName: text("container_name").notNull(),
+    image: text("image").notNull(),
+    status: containerStatus("status").notNull().default("creating"),
+    /** Chosen by Docker, read back after start. Null when nothing is published. */
+    hostPort: integer("host_port"),
+    /** The host directory bind-mounted at /workspace. */
+    workspacePath: text("workspace_path"),
+    error: text("error"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    stoppedAt: timestamp("stopped_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One live container per project. Partial-unique would be better but Drizzle
+    // has no first-class support, and a project only ever has one anyway.
+    unique("project_containers_project_uq").on(t.projectId),
+    index("project_containers_status_idx").on(t.status),
+  ],
+);
+
+export type ProjectContainerRow = typeof projectContainers.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Project chat: durable conversations about a repository.
+//
+// Both Python-owned. Until now the SessionStore was explicitly in-memory and a
+// backend restart lost everything, which is tolerable for a scratch chat and
+// not for a conversation about a codebase you are midway through changing.
+//
+// TWO tables, because they answer two different questions:
+//
+//   project_chat_sessions  -> what the MODEL needs to continue the conversation
+//   project_chat_messages  -> what the PAGE needs to repaint what you saw
+//
+// The first holds a provider-native message list, which is Anthropic-shaped or
+// OpenAI-shaped and not meaningfully queryable. The second holds the rendered
+// transcript. Storing only the first would mean reconstructing the UI from a
+// provider's wire format; storing only the second would mean the agent could
+// not actually resume.
+// ---------------------------------------------------------------------------
+
+export const chatRole = pgEnum("chat_role", [
+  "user",
+  "assistant",
+  "tool_call",
+  "tool_result",
+  "error",
+]);
+
+export const projectChatSessions = pgTable(
+  "project_chat_sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    /** The id the browser holds in localStorage. */
+    sessionId: text("session_id").notNull(),
+    /** Anthropic and OpenAI histories are not interchangeable, and replaying
+     *  one through the other is refused — so the provider is stored with it. */
+    provider: text("provider").notNull(),
+    /** Provider-native messages. Opaque here on purpose: this is the LLM's
+     *  format, and parsing it in SQL would couple the schema to a vendor. */
+    history: jsonb("history").$type<unknown[]>().notNull().default(sql`'[]'::jsonb`),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("project_chat_sessions_session_uq").on(t.sessionId),
+    index("project_chat_sessions_project_idx").on(t.projectId, t.updatedAt),
+  ],
+);
+
+export const projectChatMessages = pgTable(
+  "project_chat_messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    sessionId: text("session_id").notNull(),
+    /** Order within the session. Not a timestamp: two events inside one turn
+     *  can share a millisecond, and the transcript order must be exact. */
+    seq: integer("seq").notNull(),
+    role: chatRole("role").notNull(),
+    content: text("content"),
+    toolName: text("tool_name"),
+    /** The provider's id for the call, so a result folds into its own step. */
+    toolCallId: text("tool_call_id"),
+    toolArgs: jsonb("tool_args").$type<Record<string, unknown>>(),
+    isError: boolean("is_error").notNull().default(false),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("project_chat_messages_session_seq_idx").on(t.sessionId, t.seq),
+    unique("project_chat_messages_session_seq_uq").on(t.sessionId, t.seq),
+  ],
+);
+
+export type ProjectChatSessionRow = typeof projectChatSessions.$inferSelect;
+export type ProjectChatMessageRow = typeof projectChatMessages.$inferSelect;

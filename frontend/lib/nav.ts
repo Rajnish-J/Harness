@@ -8,7 +8,9 @@
 
 import {
   Bot,
+  FolderGit2,
   GitBranch,
+  KeyRound,
   MessageSquare,
   Plug,
   Sparkles,
@@ -30,6 +32,12 @@ export const NAV_ITEMS: NavItem[] = [
     label: "Chat",
     blurb: "Talk to the harness agent",
     icon: MessageSquare,
+  },
+  {
+    href: "/projects",
+    label: "Projects",
+    blurb: "Working trees the agent can work inside",
+    icon: FolderGit2,
   },
   {
     href: "/workflows",
@@ -60,6 +68,12 @@ export const NAV_ITEMS: NavItem[] = [
     label: "Tools",
     blurb: "The tool surface registered in the Python harness",
     icon: Wrench,
+  },
+  {
+    href: "/credentials",
+    label: "Credentials",
+    blurb: "Access tokens for GitHub and friends, encrypted at rest",
+    icon: KeyRound,
   },
 ];
 

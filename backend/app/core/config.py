@@ -41,6 +41,24 @@ class Settings(BaseSettings):
     # Workflow subsystem. `database_url` is deliberately optional: chat must
     # keep working with no database, and /api/workflows/* returns 503 instead.
     database_url: str | None = None
+
+    # ---- Credentials -------------------------------------------------------
+    # Base64 of 32 random bytes, and it must be the SAME value as the frontend's
+    # CREDENTIALS_ENCRYPTION_KEY: Next.js encrypts tokens, this side decrypts
+    # them. Optional for the same reason database_url is — chat works without
+    # it, and the credential endpoints 503 rather than the server refusing to
+    # boot.
+    credentials_encryption_key: str | None = None
+
+    # ---- Project containers ------------------------------------------------
+    # One container per project, so a repo's toolchain never has to exist on the
+    # host. Debian-slim with Node because that suits most repos this harness
+    # will see; a Python repo wants a different image, which is why this is
+    # configurable rather than hard-coded.
+    default_project_image: str = "node:22-bookworm-slim"
+    # Published so a dev server started inside the container is reachable. The
+    # HOST port is chosen by Docker, not by us -- it already solves allocation.
+    project_container_port: int = 3000
     db_pool_min: int = 1
     db_pool_max: int = 5
 

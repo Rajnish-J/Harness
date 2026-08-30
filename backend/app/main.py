@@ -4,7 +4,17 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import chat, health, mcp as mcp_api, workflows
+from app.api import (
+    chat,
+    containers,
+    credentials,
+    health,
+    mcp as mcp_api,
+    project_files,
+    project_git,
+    projects,
+    workflows,
+)
 from app.core.config import get_settings
 
 logging.basicConfig(level=logging.INFO)
@@ -72,3 +82,8 @@ app.include_router(health.router)
 app.include_router(chat.router)
 app.include_router(mcp_api.router)
 app.include_router(workflows.router)
+app.include_router(credentials.router)
+app.include_router(projects.router)
+app.include_router(containers.router)
+app.include_router(project_files.router)
+app.include_router(project_git.router)

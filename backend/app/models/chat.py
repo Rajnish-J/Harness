@@ -56,6 +56,10 @@ class TurnPreset(BaseModel):
     """
 
     session_id: str = Field(min_length=1, max_length=200)
+    # Scopes the turn to a project: its checkout becomes the workspace, its
+    # container runs the commands, and the conversation is persisted. Absent
+    # means the global chat, which behaves exactly as it always has.
+    project_id: str | None = Field(default=None, max_length=64)
 
     # ---- preset -----------------------------------------------------------
     # Every field below is optional and defaults to today's behaviour, so a
@@ -95,3 +99,7 @@ class ApprovalRequest(TurnPreset):
 
 class ResetRequest(BaseModel):
     session_id: str = Field(min_length=1, max_length=200)
+    # Scopes the turn to a project: its checkout becomes the workspace, its
+    # container runs the commands, and the conversation is persisted. Absent
+    # means the global chat, which behaves exactly as it always has.
+    project_id: str | None = Field(default=None, max_length=64)
