@@ -202,14 +202,24 @@ export default function CommandMenu() {
       <PopoverContent
         align="start"
         side="bottom"
-        sideOffset={8}
+        // Bigger than the row's other two menus (8px): Radix measures this
+        // from the trigger BUTTON, which sits ~10px above the composer's own
+        // bottom edge (the row's bottom padding) — so an 8px offset here
+        // actually lands the panel flush against, or slightly under, the
+        // composer's border rather than clear of it.
+        sideOffset={22}
         // Never flips above the composer: the panel opening in a different
         // place depending on how far the transcript has scrolled is worse than
         // it opening low, and the row's other two menus behave the same way.
         avoidCollisions={false}
-        className="w-[40rem] max-w-[92vw] overflow-hidden p-0"
+        // Keeps a gap below the panel instead of letting it butt up against
+        // the viewport edge (which, this low in the page, is effectively the
+        // composer) — Radix folds this into the available-height variable
+        // below even though collisions themselves are never avoided.
+        collisionPadding={{ top: 16, bottom: 16 }}
+        className="flex h-[min(24rem,var(--radix-popover-content-available-height,24rem))] w-[40rem] max-w-[92vw] flex-col overflow-hidden p-0"
       >
-        <div className="relative border-b">
+        <div className="relative shrink-0 border-b">
           <Search className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             autoFocus
@@ -220,10 +230,10 @@ export default function CommandMenu() {
           />
         </div>
 
-        <div className="flex">
+        <div className="flex min-h-0 flex-1">
           <nav
             aria-label="Categories"
-            className="flex w-40 shrink-0 flex-col gap-0.5 border-r p-1.5"
+            className="flex w-40 shrink-0 flex-col gap-0.5 overflow-y-auto border-r p-1.5"
           >
             {CATEGORIES.map((entry) => {
               const Icon = entry.icon;
@@ -250,8 +260,11 @@ export default function CommandMenu() {
             })}
           </nav>
 
-          <ScrollArea className="h-80 flex-1">
-            <div className="p-1.5">
+          <ScrollArea className="h-full flex-1">
+            {/* Keyed by category so switching tabs remounts this pane and
+                re-triggers the fade — a plain class change wouldn't animate
+                since the content underneath is also changing. */}
+            <div key={category} className="animate-in fade-in-0 p-1.5 duration-150">
               {blank && (
                 <p className="px-2 py-12 text-center text-xs text-muted-foreground">
                   {catalog.loading
@@ -437,7 +450,7 @@ export default function CommandMenu() {
           </ScrollArea>
         </div>
 
-        <footer className="flex items-center gap-3 border-t px-3 py-2 text-[11px] text-muted-foreground">
+        <footer className="flex shrink-0 items-center gap-3 border-t px-3 py-2 text-[11px] text-muted-foreground">
           {/* The shortcuts the composer no longer spends a row of chrome on. */}
           <span className="min-w-0 truncate">
             <kbd className="font-mono">/</kbd> attaches by name ·{" "}
