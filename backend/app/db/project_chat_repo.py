@@ -1,4 +1,4 @@
-"""Durable chat for a project.
+"""Durable chat, project-scoped or global.
 
 Writes both chat tables. Same rules as the other repos -- `%s` placeholders
 only, no DDL -- plus the split those two tables encode:
@@ -9,9 +9,11 @@ only, no DDL -- plus the split those two tables encode:
 - ``project_chat_messages`` is what the PAGE needs to repaint: the rendered
   transcript, in the order it was shown.
 
-Only project-scoped sessions come through here. The chat on `/` stays in memory
-exactly as before, which is why `SessionStore` gained a hook rather than a
-dependency on this module.
+``project_id`` is nullable on both tables: NULL is the chat on `/`, a string is
+a project's. The global chat used to stay in memory only -- `SessionStore`'s
+own doc comment still describes that milestone -- and everything here now
+treats NULL exactly like any other project_id, via `is not distinct from`
+rather than `=`, which is the one place NULL needs different SQL than a value.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Sequence
 
 from psycopg import sql as _sql  # noqa: F401  (kept for parity with other repos)
@@ -26,6 +29,11 @@ from psycopg.types.json import Json
 from psycopg_pool import AsyncConnectionPool
 
 logger = logging.getLogger(__name__)
+
+# Truncated to this many characters when a session's first user message
+# becomes its title. Long enough to be recognisable, short enough for a
+# sidebar row.
+_TITLE_MAX_LEN = 80
 
 
 @dataclass
@@ -46,6 +54,16 @@ class TranscriptEntry:
     is_error: bool = False
     input_tokens: int | None = None
     output_tokens: int | None = None
+
+
+@dataclass
+class SessionSummary:
+    """One row for a conversation-history list -- never the full transcript."""
+
+    session_id: str
+    updated_at: datetime
+    message_count: int
+    title: str
 
 
 async def load_session(
@@ -76,7 +94,7 @@ async def load_session(
 
 async def save_session(
     pool: AsyncConnectionPool,
-    project_id: str,
+    project_id: str | None,
     session_id: str,
     *,
     provider: str,
@@ -105,7 +123,7 @@ async def save_session(
 
 async def append_messages(
     pool: AsyncConnectionPool,
-    project_id: str,
+    project_id: str | None,
     session_id: str,
     entries: Sequence[TranscriptEntry],
 ) -> int:
@@ -165,6 +183,98 @@ async def append_messages(
                     ],
                 )
     return len(entries)
+
+
+async def list_sessions(
+    pool: AsyncConnectionPool, project_id: str | None, *, limit: int = 50
+) -> list[SessionSummary]:
+    """Recent conversations for one scope -- a project, or the global chat when
+    `project_id` is None.
+
+    `is not distinct from` rather than `=`: NULL = NULL is NULL in SQL, which
+    would match nothing, and NULL is exactly the value that means "the global
+    chat" here.
+
+    Titled by each session's first user message rather than a stored column --
+    that message is already durable by the time a turn finishes (`_persist`
+    in api/chat.py writes it before the assistant's reply comes back), so
+    there is nothing to keep in sync by adding one. A session with no user
+    message yet falls back to a placeholder.
+    """
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                select
+                    s.session_id,
+                    s.updated_at,
+                    (
+                        select count(*) from project_chat_messages m
+                        where m.session_id = s.session_id
+                    ) as message_count,
+                    (
+                        select m.content from project_chat_messages m
+                        where m.session_id = s.session_id and m.role = 'user'
+                        order by m.seq asc
+                        limit 1
+                    ) as title_source
+                from project_chat_sessions s
+                where s.project_id is not distinct from %s
+                order by s.updated_at desc
+                limit %s
+                """,
+                (project_id, limit),
+            )
+            rows = await cur.fetchall()
+
+    return [
+        SessionSummary(
+            session_id=row["session_id"],
+            updated_at=row["updated_at"],
+            message_count=int(row["message_count"]),
+            title=_derive_title(row["title_source"]),
+        )
+        for row in rows
+    ]
+
+
+def _derive_title(first_user_message: str | None) -> str:
+    if not first_user_message or not first_user_message.strip():
+        return "New conversation"
+    first_line = first_user_message.strip().splitlines()[0]
+    if len(first_line) > _TITLE_MAX_LEN:
+        return first_line[:_TITLE_MAX_LEN].rstrip() + "…"
+    return first_line
+
+
+async def load_transcript_for_session(
+    pool: AsyncConnectionPool, session_id: str, *, limit: int = 500
+) -> list[dict[str, Any]]:
+    """The rendered transcript for exactly one conversation, oldest first.
+
+    `load_transcript` below answers "this project's current chat" -- fine when
+    there is one live session per project. Reopening a PAST conversation needs
+    to address a specific session instead, now that old ones survive "New
+    chat" rather than being overwritten, so this keys off session_id. Same
+    newest-first-then-reverse trick: an ascending order with a LIMIT would keep
+    the oldest end of a long conversation rather than the recent one.
+    """
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                select session_id, seq, role, content, tool_name, tool_call_id,
+                       tool_args, is_error
+                from project_chat_messages
+                where session_id = %s
+                order by seq desc
+                limit %s
+                """,
+                (session_id, limit),
+            )
+            rows = await cur.fetchall()
+
+    return [dict(row) for row in reversed(rows)]
 
 
 async def load_transcript(
