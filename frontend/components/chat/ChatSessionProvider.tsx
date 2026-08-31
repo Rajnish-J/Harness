@@ -11,15 +11,17 @@ import {
   useSyncExternalStore,
 } from "react";
 
-import { resetSession, streamApproval, streamChat } from "@/lib/api";
+import { fetchChatTranscript, resetSession, streamApproval, streamChat } from "@/lib/api";
 import type { ChatPreset } from "@/lib/chat-preset";
 import {
   getServerSessionIdSnapshot,
   getSessionIdSnapshot,
   rotateSessionId,
+  setSessionId as setStoredSessionId,
   subscribeSessionId,
   type SessionScope,
 } from "@/lib/session";
+import { toTranscript } from "@/lib/transcript";
 import type { AgentEvent, TranscriptItem } from "@/lib/types";
 
 let counter = 0;
@@ -40,6 +42,8 @@ type ChatSessionValue = {
   ) => Promise<void>;
   stop: () => void;
   newChat: () => void;
+  /** Reopen a past conversation from the sidebar's history list. */
+  openSession: (sessionId: string) => Promise<void>;
 };
 
 const ChatSessionContext = createContext<ChatSessionValue | null>(null);
@@ -114,6 +118,17 @@ export default function ChatSessionProvider({
             },
           ];
 
+        case "project_proposal":
+          return [
+            ...prev,
+            {
+              kind: "project_proposal",
+              id: event.id,
+              name: event.name,
+              description: event.description,
+            },
+          ];
+
         case "tool_call":
           return [
             ...prev,
@@ -131,7 +146,10 @@ export default function ChatSessionProvider({
           // tool round reads as a single line rather than two. An approved
           // call has no step yet — it has an approval card — so that becomes
           // the step here, and the transcript ends up identical to an
-          // automatic run.
+          // automatic run. A resolved project_proposal deliberately falls
+          // through to `return item` unchanged instead: ProjectProposalCard
+          // already carries its own outcome UI (set optimistically in
+          // resolveApprovals) and should not collapse into a generic step.
           return prev.map((item) => {
             if (item.id !== event.id) return item;
 
@@ -233,7 +251,8 @@ export default function ChatSessionProvider({
       const verdicts = new Map(decisions.map((d) => [d.id, d.approved]));
       setItems((prev) =>
         prev.map((item) =>
-          item.kind === "approval" && verdicts.has(item.id)
+          (item.kind === "approval" || item.kind === "project_proposal") &&
+          verdicts.has(item.id)
             ? {
                 ...item,
                 decision: verdicts.get(item.id) ? "approved" : "denied",
@@ -300,6 +319,22 @@ export default function ChatSessionProvider({
     if (sessionId) void resetSession(sessionId);
   }, [sessionId, scope]);
 
+  const openSession = useCallback(
+    async (targetSessionId: string) => {
+      abortRef.current?.abort();
+      setPending(false);
+      // The store update (below) and this fetch race by design: the id is
+      // adopted regardless of whether the transcript fetch succeeds, same as
+      // `newChat` clearing the transcript before its fire-and-forget reset
+      // lands. An empty repaint on a failed fetch beats being stuck on the
+      // conversation the operator just clicked away from.
+      const messages = await fetchChatTranscript(targetSessionId);
+      setItems(toTranscript(messages));
+      setStoredSessionId(scope, targetSessionId);
+    },
+    [scope],
+  );
+
   const value = useMemo(
     () => ({
       sessionId,
@@ -310,6 +345,7 @@ export default function ChatSessionProvider({
       resolveApprovals,
       stop,
       newChat,
+      openSession,
     }),
     [
       sessionId,
@@ -320,6 +356,7 @@ export default function ChatSessionProvider({
       resolveApprovals,
       stop,
       newChat,
+      openSession,
     ],
   );
 
