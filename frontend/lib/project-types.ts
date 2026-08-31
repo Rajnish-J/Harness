@@ -64,6 +64,37 @@ export type BlankProjectInput = {
 
 export type ProjectInput = GithubProjectInput | BlankProjectInput;
 
+/**
+ * The only fields PATCH /api/projects/{id} accepts.
+ *
+ * Narrower than `Partial<ProjectInput>`, which is a Partial of a *union* and so
+ * happily type-checks `repoUrl` or `kind` — neither of which the route will
+ * apply. The repo coordinates describe what was cloned and `cloneStatus` is
+ * Python's to write, so widening this means the row can disagree with the
+ * checkout on disk.
+ */
+export type ProjectPatch = {
+  name?: string;
+  credentialId?: string | null;
+  defaultBranch?: string;
+};
+
+/** What POST /api/projects/{id}/purge reports after reclaiming a project. */
+export type PurgeResult = {
+  workspace_removed: boolean;
+  container_removed: boolean;
+  message: string;
+};
+
+/**
+ * A project as the list page renders it.
+ *
+ * The file count is not a column on `projects` — it is one grouped query over
+ * `project_files` (`fileCountsByProject`), joined in on the server so the card
+ * and the table row read from the same object rather than each looking it up.
+ */
+export type ProjectListRow = Project & { fileCount: number };
+
 /** Links a Blank Project to a GitHub remote it will be pushed to. */
 export type ConnectGithubInput = {
   repoOwner: string;
