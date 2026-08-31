@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, PlugZap, XCircle } from "lucide-react";
+import { PlugZap } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
@@ -13,6 +13,7 @@ import {
 } from "@/components/registry/fields";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { toast } from "@/components/ui/toast";
 import { credentialsApi } from "@/lib/credential-api";
 import {
   CREDENTIAL_PROVIDERS,
@@ -41,10 +42,6 @@ export default function CredentialEditor({
   const [draft, setDraft] = useState(credential);
   const [secret, setSecret] = useState("");
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{
-    ok: boolean;
-    message: string;
-  } | null>(null);
 
   const dirty = useMemo(
     () => JSON.stringify(draft) !== JSON.stringify(credential) || secret.trim() !== "",
@@ -57,15 +54,18 @@ export default function CredentialEditor({
 
   async function test() {
     setTesting(true);
-    setTestResult(null);
     try {
       const result = await credentialsApi.test(credential.id);
-      setTestResult({ ok: result.ok, message: result.message });
       // The verdict is stored server-side, and a successful test backfills the
       // username, so pull the fresh row rather than guessing at it here.
       router.refresh();
+      if (result.ok) {
+        toast.success({ title: "Connection verified", description: result.message });
+      } else {
+        toast.error({ title: "Connection failed", description: result.message });
+      }
     } catch (err) {
-      setTestResult({ ok: false, message: (err as Error).message });
+      toast.error({ title: "Connection failed", description: (err as Error).message });
     } finally {
       setTesting(false);
     }
@@ -78,6 +78,7 @@ export default function CredentialEditor({
   return (
     <EditorShell
       title={credential.name}
+      backHref="/credentials"
       dirty={dirty}
       actions={
         <Button
@@ -103,31 +104,12 @@ export default function CredentialEditor({
           ...(secret.trim() ? { secret: secret.trim() } : {}),
         });
         setSecret("");
-        setTestResult(null);
       }}
       onDelete={async () => {
         await credentialsApi.remove(credential.id);
         router.push("/credentials");
       }}
     >
-      {testResult && (
-        <div
-          role="status"
-          className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-sm ${
-            testResult.ok
-              ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300"
-              : "border-red-500/30 bg-red-500/5 text-red-700 dark:text-red-300"
-          }`}
-        >
-          {testResult.ok ? (
-            <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
-          ) : (
-            <XCircle className="mt-0.5 size-4 shrink-0" />
-          )}
-          <span>{testResult.message}</span>
-        </div>
-      )}
-
       <TextField label="Name" value={draft.name} onChange={(v) => patch("name", v)} />
 
       <SegmentedField

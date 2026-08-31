@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { toast } from "@/components/ui/toast";
 import type { Credential } from "@/lib/credential-types";
 import { projectsApi } from "@/lib/project-api";
 import type { CloneEvent, RemoteRepo } from "@/lib/project-types";
@@ -24,16 +25,12 @@ import type { CloneEvent, RemoteRepo } from "@/lib/project-types";
 type Step = "choose" | "blank" | "github";
 type Phase = "idle" | "working" | "failed";
 
-/** The terminal-style log both creation paths share once they start working. */
-function ProgressLog({
-  lines,
-  working,
-  error,
-}: {
-  lines: string[];
-  working: boolean;
-  error: string | null;
-}) {
+/**
+ * The terminal-style log both creation paths share once they start working.
+ * The failure itself is reported as a toast — this stays a pure progress
+ * transcript, so the last line still shown is wherever the process got to.
+ */
+function ProgressLog({ lines, working }: { lines: string[]; working: boolean }) {
   return (
     <div className="flex flex-col gap-3 py-2">
       <div className="rounded-lg border bg-muted/30 p-3 font-mono text-xs">
@@ -50,14 +47,6 @@ function ProgressLog({
           </div>
         )}
       </div>
-      {error && (
-        <p
-          role="alert"
-          className="whitespace-pre-wrap rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs text-red-700 dark:text-red-300"
-        >
-          {error}
-        </p>
-      )}
     </div>
   );
 }
@@ -78,7 +67,6 @@ export default function NewProjectDialog({ credentials }: { credentials: Credent
   const [step, setStep] = useState<Step>("choose");
   const [phase, setPhase] = useState<Phase>("idle");
   const [lines, setLines] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -87,7 +75,6 @@ export default function NewProjectDialog({ credentials }: { credentials: Credent
     setStep("choose");
     setPhase("idle");
     setLines([]);
-    setError(null);
     setName("");
     setDescription("");
   }
@@ -105,7 +92,6 @@ export default function NewProjectDialog({ credentials }: { credentials: Credent
     if (!trimmed) return;
 
     setPhase("working");
-    setError(null);
     setLines(["Creating the project…"]);
 
     try {
@@ -121,7 +107,7 @@ export default function NewProjectDialog({ credentials }: { credentials: Credent
       setOpen(false);
       router.push(`/projects/${project.id}/vscode`);
     } catch (err) {
-      setError((err as Error).message);
+      toast.error({ title: "Could not create the project", description: (err as Error).message });
       setPhase("failed");
       router.refresh();
     }
@@ -129,7 +115,6 @@ export default function NewProjectDialog({ credentials }: { credentials: Credent
 
   async function importRepo(repo: RemoteRepo, credentialId: string) {
     setPhase("working");
-    setError(null);
     setLines([`Creating project for ${repo.full_name}…`]);
 
     try {
@@ -155,7 +140,7 @@ export default function NewProjectDialog({ credentials }: { credentials: Credent
       });
 
       if (failed) {
-        setError(failed);
+        toast.error({ title: "Clone failed", description: failed });
         setPhase("failed");
         router.refresh();
         return;
@@ -164,13 +149,28 @@ export default function NewProjectDialog({ credentials }: { credentials: Credent
       setOpen(false);
       router.push(`/projects/${project.id}/vscode`);
     } catch (err) {
-      setError((err as Error).message);
+      toast.error({ title: "Clone failed", description: (err as Error).message });
       setPhase("failed");
       router.refresh();
     }
   }
 
   const showingProgress = phase === "working" || phase === "failed";
+
+  const footer =
+    step === "choose" ? (
+      <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+        Cancel
+      </Button>
+    ) : phase === "failed" ? (
+      <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+        Close
+      </Button>
+    ) : step === "blank" && phase === "idle" ? (
+      <Button type="button" disabled={!name.trim()} onClick={() => void createBlank()}>
+        Create project
+      </Button>
+    ) : null;
 
   return (
     <>
@@ -181,6 +181,22 @@ export default function NewProjectDialog({ credentials }: { credentials: Credent
 
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="sm:max-w-2xl">
+          {/* Back leads the card rather than trailing it: it walks the wizard
+              backwards, which is navigation, and putting it in the footer put
+              it beside "Create project" as though the two were alternatives. */}
+          {step !== "choose" && phase === "idle" && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              className="-mb-2 -ml-1.5 w-fit text-muted-foreground"
+              onClick={() => setStep("choose")}
+            >
+              <ArrowLeft />
+              Back
+            </Button>
+          )}
+
           <DialogHeader>
             <DialogTitle>
               {step === "choose" && "New project"}
@@ -222,7 +238,7 @@ export default function NewProjectDialog({ credentials }: { credentials: Credent
 
           {step === "blank" &&
             (showingProgress ? (
-              <ProgressLog lines={lines} working={phase === "working"} error={error} />
+              <ProgressLog lines={lines} working={phase === "working"} />
             ) : (
               <div className="flex flex-col gap-3 py-2">
                 <div className="flex flex-col gap-1.5">
@@ -254,48 +270,14 @@ export default function NewProjectDialog({ credentials }: { credentials: Credent
 
           {step === "github" &&
             (showingProgress ? (
-              <ProgressLog lines={lines} working={phase === "working"} error={error} />
+              <ProgressLog lines={lines} working={phase === "working"} />
             ) : (
               <GithubRepoPicker credentials={credentials} onPick={importRepo} />
             ))}
 
-          <DialogFooter>
-            {step === "choose" ? (
-              <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-                Cancel
-              </Button>
-            ) : (
-              <>
-                {phase !== "working" && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() =>
-                      phase === "failed" ? onOpenChange(false) : setStep("choose")
-                    }
-                  >
-                    {phase === "failed" ? (
-                      "Close"
-                    ) : (
-                      <>
-                        <ArrowLeft />
-                        Back
-                      </>
-                    )}
-                  </Button>
-                )}
-                {step === "blank" && phase === "idle" && (
-                  <Button
-                    type="button"
-                    disabled={!name.trim()}
-                    onClick={() => void createBlank()}
-                  >
-                    Create project
-                  </Button>
-                )}
-              </>
-            )}
-          </DialogFooter>
+          {/* Nothing to show while a creation is in flight — the log is the
+              whole dialog then, and an empty footer would still take a row. */}
+          {footer && <DialogFooter>{footer}</DialogFooter>}
         </DialogContent>
       </Dialog>
     </>

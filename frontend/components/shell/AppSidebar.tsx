@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import ChatHistoryAccordion from "@/components/shell/ChatHistoryAccordion";
 import HarnessStatus from "@/components/shell/HarnessStatus";
 import NewChatButton from "@/components/shell/NewChatButton";
 import {
@@ -56,6 +57,8 @@ export default function AppSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        <ChatHistoryAccordion />
 
         <SidebarSeparator className="mx-2" />
 

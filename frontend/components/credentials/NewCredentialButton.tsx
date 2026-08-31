@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { toast } from "@/components/ui/toast";
 import { credentialsApi } from "@/lib/credential-api";
 import {
   CREDENTIAL_PROVIDERS,
@@ -39,7 +40,6 @@ export default function NewCredentialButton() {
   const [provider, setProvider] = useState<CredentialProvider>("github");
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   // Reset through the open handler rather than an effect: this is an event, and
   // setState inside useEffect is a lint error in this repo.
@@ -50,7 +50,6 @@ export default function NewCredentialButton() {
       setName("");
       setProvider("github");
       setSecret("");
-      setError(null);
     }
   }
 
@@ -59,16 +58,15 @@ export default function NewCredentialButton() {
     const trimmedName = name.trim();
     const trimmedSecret = secret.trim();
     if (!trimmedName) {
-      setError("Give it a name first.");
+      toast.warning("Give it a name first.");
       return;
     }
     if (!trimmedSecret) {
-      setError("Paste the token — a credential without one is not usable.");
+      toast.warning("Paste the token — a credential without one is not usable.");
       return;
     }
 
     setBusy(true);
-    setError(null);
     try {
       const created = await credentialsApi.create({
         name: trimmedName,
@@ -79,8 +77,9 @@ export default function NewCredentialButton() {
       setSecret("");
       router.push(`/credentials/${created.id}`);
       setOpen(false);
+      toast.success(`Credential "${trimmedName}" created`);
     } catch (err) {
-      setError((err as Error).message);
+      toast.error({ title: "Could not create credential", description: (err as Error).message });
     } finally {
       setBusy(false);
     }
@@ -164,11 +163,6 @@ export default function NewCredentialButton() {
                 </p>
               </div>
 
-              {error && (
-                <p className="text-xs text-destructive" role="alert">
-                  {error}
-                </p>
-              )}
             </div>
 
             <DialogFooter>

@@ -80,6 +80,29 @@ async def get_project(pool: AsyncConnectionPool, project_id: str) -> ProjectRow 
     return _row(record) if record else None
 
 
+async def get_project_any_state(
+    pool: AsyncConnectionPool, project_id: str
+) -> ProjectRow | None:
+    """One project by id, archived or not.
+
+    The only read that deliberately ignores `archived_at`, and it exists for
+    exactly one caller: purging a project's checkout happens *after* the row has
+    been archived, so `get_project` — which every other endpoint wants — would
+    report the project missing at precisely the moment we need to clean up after
+    it. Kept as a separate function rather than a flag on `get_project` so a
+    caller cannot reach an archived project by accident.
+    """
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                f"select {_COLUMNS} from projects where id = %s",  # noqa: S608
+                (project_id,),
+            )
+            record = await cur.fetchone()
+
+    return _row(record) if record else None
+
+
 async def mark_clone_started(pool: AsyncConnectionPool, project_id: str) -> None:
     async with pool.connection() as conn:
         await conn.execute(

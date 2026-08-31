@@ -7,6 +7,8 @@ Reached only from the Projects UI:
 - ``POST /api/projects/{id}/init``        — set up a Blank Project's working tree.
 - ``POST /api/projects/{id}/connect``     — point a Blank Project at a GitHub
   remote and push its history to it.
+- ``POST /api/projects/{id}/purge``       — reclaim a deleted project's container,
+  file index and checkout.
 
 The clone streams SSE for the same reason chat does: it takes tens of seconds,
 and a spinner that cannot say *which* of clone / index / finish is happening is
@@ -33,9 +35,11 @@ from pydantic import BaseModel
 from app.api.sse import SSE_HEADERS
 from app.core.config import Settings, get_settings
 from app.core.secrets import CredentialCryptoError
+from app.db import container_repo
 from app.db.credential_repo import get_enabled_credential
 from app.db.project_repo import (
     get_project,
+    get_project_any_state,
     mark_clone_failed,
     mark_clone_started,
     mark_clone_succeeded,
@@ -43,6 +47,7 @@ from app.db.project_repo import (
 )
 from app.integrations.github import GitHubError, list_repos
 from app.models.events import AgentEvent, sse_comment
+from app.projects.containers import DockerUnavailableError, remove_container
 from app.projects.devcontainer import ensure_devcontainer
 from app.projects.git_ops import (
     GitOperationError,
@@ -362,3 +367,87 @@ async def connect_project(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     finally:
         del token
+
+
+class PurgeResult(BaseModel):
+    workspace_removed: bool = False
+    container_removed: bool = False
+    #: Always populated, including on success — the caller shows it verbatim,
+    #: because "deleted, but Docker was not running" is a different outcome
+    #: from "deleted" and the operator should be told which one happened.
+    message: str = ""
+
+
+@router.post("/projects/{project_id}/purge")
+async def purge_project(
+    project_id: str,
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> PurgeResult:
+    """Reclaim everything an archived project left behind.
+
+    Deleting a project is two calls against two servers, in this order: Next.js
+    archives the row, then this reclaims the container, the file index and the
+    checkout. The order is forced by ownership — only Python can see the disk or
+    the daemon — and by which half is recoverable. An archived row with its files
+    still on disk is exactly the state this codebase shipped with for months; a
+    live row pointing at a checkout that has been deleted underneath it is not a
+    state anything else knows how to handle.
+
+    So this reads through `get_project_any_state`: by the time it runs, the row
+    it is cleaning up after is already invisible to `get_project`.
+
+    A missing Docker daemon is *not* an error here. It is the normal state on a
+    machine without Docker, and refusing to reclaim ~200 MB of checkout because
+    a container that may never have existed cannot be inspected would make the
+    delete button useless on exactly those machines.
+    """
+    pool = _require_pool(request)
+
+    project = await get_project_any_state(pool, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+    notes: list[str] = []
+
+    container_removed = False
+    try:
+        await remove_container(project_id)
+        container_removed = True
+    except DockerUnavailableError:
+        notes.append("Docker was not reachable, so no container was removed.")
+    except Exception:  # noqa: BLE001 - reclaiming disk must not depend on Docker
+        logger.exception("could not remove the container for project %s", project_id)
+        notes.append("The container could not be removed.")
+
+    # The row described a container that is either gone or unreachable; either
+    # way it must not outlive the project it belongs to.
+    await container_repo.forget(pool, project_id)
+
+    # The index describes files that are about to stop existing. Clearing it
+    # first means a failure below leaves an empty tree rather than a tree of
+    # paths that 404.
+    await replace_project_files(pool, project_id, [])
+
+    workspace_removed = False
+    try:
+        remove_project_workspace(settings, project_id)
+        workspace_removed = True
+    except InvalidProjectIdError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except OSError as exc:
+        logger.exception("could not remove the workspace for project %s", project_id)
+        notes.append(f"The files on disk could not be removed: {exc}")
+
+    if workspace_removed and not notes:
+        message = "Project files removed."
+    elif workspace_removed:
+        message = "Project files removed. " + " ".join(notes)
+    else:
+        message = " ".join(notes) or "Nothing could be reclaimed."
+
+    return PurgeResult(
+        workspace_removed=workspace_removed,
+        container_removed=container_removed,
+        message=message,
+    )

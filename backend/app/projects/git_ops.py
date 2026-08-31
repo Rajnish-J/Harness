@@ -203,7 +203,7 @@ async def list_tracked_files(repo: Path) -> list[tuple[str, str]]:
 
 
 # ---------------------------------------------------------------------------
-# Branch, commit, push.
+# Branch, commit, push, pull.
 #
 # The verbs git_tools.py withholds from the model. Reachable only from a route
 # handler, behind a button a person pressed.
@@ -287,6 +287,35 @@ async def push(
             raise GitOperationError(
                 "The remote has commits this branch does not. Pull before "
                 f"pushing.\n\n{result.output}"
+            )
+        raise GitOperationError(result.output)
+    return result
+
+
+async def pull(repo: Path, branch: str, *, token: str | None = None) -> GitResult:
+    """Fast-forward `branch` from origin.
+
+    `--ff-only` rather than a real merge: a merge commit created on someone's
+    behalf, with no way for them to review it first, is worse than just telling
+    them to resolve the divergence themselves.
+    """
+    result = await _git(
+        ["pull", "--ff-only", "origin", branch],
+        cwd=repo,
+        token=token,
+        timeout=CLONE_TIMEOUT_SECONDS,
+    )
+    if not result.ok:
+        lowered = result.output.lower()
+        if "authentication failed" in lowered or "403" in lowered:
+            raise GitOperationError(
+                "GitHub rejected the pull. The token needs `repo` scope and "
+                f"read access to this repository.\n\n{result.output}"
+            )
+        if "not possible to fast-forward" in lowered or "diverged" in lowered:
+            raise GitOperationError(
+                "This branch and origin have diverged, so a fast-forward pull "
+                f"isn't possible. Resolve it locally first.\n\n{result.output}"
             )
         raise GitOperationError(result.output)
     return result

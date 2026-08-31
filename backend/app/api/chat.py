@@ -11,6 +11,7 @@ from app.agent.loop import SYSTEM_PROMPT, run_agent_loop, resume_agent_loop
 from app.agent.prompt import compose_system_prompt
 from app.agent.session import ProviderMismatchError, Session, session_store
 from app.agent.tools.base import Tool
+from app.agent.tools.project_tools import PROPOSE_CREATE_PROJECT_TOOL
 from app.agent.tools.toolsets import UnknownToolError, merge_toolsets
 from app.api.sse import SSE_HEADERS
 from app.agent.exec_context import ExecutionContext
@@ -145,11 +146,16 @@ async def _prepare_turn(
     except ProviderMismatchError as exc:
         raise TurnSetupError(str(exc), "provider_mismatch") from exc
 
+    # Chat mode advertises no tools at all (see below), so there is nothing to
+    # propose creating a project with there either.
+    propose_project_tool = project_id is None and payload.mode != "chat"
+
     system = compose_system_prompt(
         base=SYSTEM_PROMPT,
         agent_name=payload.agent_name,
         agent_prompt=payload.system_prompt,
         skills=payload.skills,
+        no_project_open=propose_project_tool,
         max_chars=turn_settings.max_system_prompt_chars,
     )
 
@@ -169,6 +175,12 @@ async def _prepare_turn(
             tools = merge_toolsets(payload.tool_names, mcp_tools)
         except UnknownToolError as exc:
             raise TurnSetupError(str(exc), "unknown_tool") from exc
+        if propose_project_tool:
+            # Appended locally rather than threaded into merge_toolsets: that
+            # module is also reused by workflow nodes, which have no concept
+            # of a project-scoped chat. [*tools, ...] also guarantees a fresh
+            # list even when merge_toolsets returned the shared ALL_TOOLS.
+            tools = [*tools, PROPOSE_CREATE_PROJECT_TOOL]
 
     return (
         Turn(
@@ -194,17 +206,21 @@ def _setup_failure(exc: TurnSetupError) -> list[AgentEvent]:
 
 
 
-# ------------------------------------------------------- project persistence
+# --------------------------------------------------------------- persistence
 
 
 async def _rehydrate(request: Request, turn: Turn) -> None:
-    """Reload a project chat's history so the agent can continue it.
+    """Reload a chat's history so the agent can continue it.
+
+    Project-scoped or global (`turn.project_id` is None for the chat on `/`) --
+    `project_chat_repo` treats both the same way, keyed by session_id, so
+    there is nothing project-specific left to gate on here.
 
     Only fills an EMPTY in-memory session. A session already in memory is
     ahead of the database (the flush happens after a turn, not during it), so
     overwriting it would rewind the conversation by one turn.
     """
-    if not turn.project_id or turn.session.history:
+    if turn.session.history:
         return
     pool = getattr(request.app.state, "pool", None)
     if pool is None:
@@ -234,9 +250,11 @@ async def _rehydrate(request: Request, turn: Turn) -> None:
 async def _persist(
     request: Request, turn: Turn, entries: list[project_chat_repo.TranscriptEntry]
 ) -> None:
-    """Flush the provider history and the rendered transcript after a turn."""
-    if not turn.project_id:
-        return
+    """Flush the provider history and the rendered transcript after a turn.
+
+    `turn.project_id` is None for the chat on `/` and a real id for a
+    project's -- passed straight through, since both tables now accept NULL.
+    """
     pool = getattr(request.app.state, "pool", None)
     if pool is None:
         return
@@ -253,7 +271,9 @@ async def _persist(
             pool, turn.project_id, turn.session.session_id, entries
         )
     except Exception:  # noqa: BLE001 - the turn already happened
-        logger.exception("could not persist chat for %s", turn.project_id)
+        logger.exception(
+            "could not persist chat for session %s", turn.session.session_id
+        )
 
 
 def _entry_for(event: AgentEvent) -> project_chat_repo.TranscriptEntry | None:
@@ -278,7 +298,8 @@ def _entry_for(event: AgentEvent) -> project_chat_repo.TranscriptEntry | None:
         )
     if kind == "error":
         return project_chat_repo.TranscriptEntry(role="error", content=event.message)
-    # approval_request and done carry no transcript line of their own.
+    # approval_request, project_proposal, and done carry no transcript line of
+    # their own.
     return None
 
 
@@ -376,6 +397,45 @@ async def _approve_stream(
 async def reset_session(payload: ResetRequest) -> dict[str, bool]:
     existed = session_store.reset(payload.session_id)
     return {"ok": True, "existed": existed}
+
+
+# ------------------------------------------------------------------ history
+
+
+@router.get("/chat/sessions")
+async def list_chat_sessions(
+    request: Request, project_id: str | None = None
+) -> dict[str, object]:
+    """Recent conversations for one scope: a project, or the global chat when
+    `project_id` is omitted. Powers the sidebar's history list.
+    """
+    pool = getattr(request.app.state, "pool", None)
+    if pool is None:
+        return {"sessions": []}
+    summaries = await project_chat_repo.list_sessions(pool, project_id)
+    return {
+        "sessions": [
+            {
+                "session_id": summary.session_id,
+                "updated_at": summary.updated_at.isoformat(),
+                "message_count": summary.message_count,
+                "title": summary.title,
+            }
+            for summary in summaries
+        ]
+    }
+
+
+@router.get("/chat/sessions/{session_id}")
+async def get_chat_session(session_id: str, request: Request) -> dict[str, object]:
+    """The rendered transcript for one past conversation, so the sidebar's
+    history list can reopen it.
+    """
+    pool = getattr(request.app.state, "pool", None)
+    if pool is None:
+        return {"messages": []}
+    rows = await project_chat_repo.load_transcript_for_session(pool, session_id)
+    return {"messages": rows}
 
 
 @router.get("/models")

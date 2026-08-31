@@ -26,6 +26,18 @@ export type ApprovalRequestEvent = {
   arguments: Record<string, unknown>;
 };
 
+/**
+ * The model wants to create a new blank project; a human must say yes.
+ * Emitted instead of ApprovalRequestEvent for a propose_create_project call,
+ * in every tool mode — creating a project is a one-way door.
+ */
+export type ProjectProposalEvent = {
+  type: "project_proposal";
+  id: string;
+  name: string;
+  description: string;
+};
+
 export type AssistantMessageEvent = {
   type: "assistant_message";
   text: string;
@@ -53,6 +65,7 @@ export type AgentEvent =
   | ToolCallEvent
   | ToolResultEvent
   | ApprovalRequestEvent
+  | ProjectProposalEvent
   | AssistantMessageEvent
   | ErrorEvent
   | DoneEvent;
@@ -84,6 +97,19 @@ export type TranscriptItem =
       id: string;
       name: string;
       arguments: Record<string, unknown>;
+      decision?: "approved" | "denied";
+    }
+  /**
+   * A proposal to create a new blank project, awaiting a human verdict. Unlike
+   * an approval, "approved" here means the client already created the project
+   * (see ProjectProposalCard) before telling the backend — the card keeps
+   * rendering its own outcome rather than folding into a generic step.
+   */
+  | {
+      kind: "project_proposal";
+      id: string;
+      name: string;
+      description: string;
       decision?: "approved" | "denied";
     };
 

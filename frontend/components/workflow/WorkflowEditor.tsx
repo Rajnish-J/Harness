@@ -20,6 +20,7 @@ import NodePalette from "./NodePalette";
 import RunPanel from "./RunPanel";
 import ValidationBanner from "./ValidationBanner";
 import WorkflowCanvas from "./WorkflowCanvas";
+import { toast } from "@/components/ui/toast";
 import {
   defaultConfigFor,
   fromReactFlow,
@@ -153,16 +154,11 @@ export default function WorkflowEditor({ workflow }: { workflow: Workflow }) {
       if (!result.ok) return;
       await saveWorkflow(workflow.id, { graph });
       setDirty(false);
+      toast.success("Workflow saved");
     } catch (error) {
-      setIssues([
-        {
-          code: "save_failed",
-          severity: "error",
-          message: (error as Error).message,
-          node_id: null,
-          edge_id: null,
-        },
-      ]);
+      // Not pushed into `issues` — that list is graph validation, and a save
+      // failure (network, server) has nothing to do with the graph's shape.
+      toast.error({ title: "Save failed", description: (error as Error).message });
     } finally {
       setSaving(false);
     }

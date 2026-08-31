@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist_Mono, Outfit, Ubuntu } from "next/font/google";
 import { cookies } from "next/headers";
 
 import ChatPresetProvider from "@/components/chat/ChatPresetProvider";
@@ -8,9 +8,24 @@ import AppHeader from "@/components/shell/AppHeader";
 import AppSidebar from "@/components/shell/AppSidebar";
 import ThemeProvider from "@/components/shell/ThemeProvider";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { Toaster } from "@/components/ui/toast";
 import "./globals.css";
 
-const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
+// Ubuntu is not a variable font, so every weight and style we use has to be
+// listed here — anything missing gets synthesised by the browser instead.
+const ubuntu = Ubuntu({
+  variable: "--font-ubuntu",
+  subsets: ["latin"],
+  weight: ["300", "400", "500", "700"],
+  style: ["normal", "italic"],
+  display: "swap",
+});
+// Outfit is variable (100–900), so it needs no `weight`.
+const outfit = Outfit({
+  variable: "--font-outfit",
+  subsets: ["latin"],
+  display: "swap",
+});
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
@@ -30,7 +45,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${ubuntu.variable} ${outfit.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-svh">
         <ThemeProvider>
@@ -48,6 +63,9 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
               </SidebarProvider>
             </ChatSessionProvider>
           </ChatPresetProvider>
+          {/* Inside ThemeProvider so toasts read the same `.dark` class as the
+              rest of the app; outside the shell so nothing can clip them. */}
+          <Toaster />
         </ThemeProvider>
       </body>
     </html>

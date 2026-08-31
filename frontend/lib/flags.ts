@@ -34,6 +34,11 @@ export const flags = {
   // a stale fixture.
   mockTools: on(process.env.NEXT_PUBLIC_MOCK_TOOLS),
   mockChat: ALL || on(process.env.NEXT_PUBLIC_MOCK_CHAT),
+  // The project IDE's chrome — workspace versions, snapshots, ZIP export,
+  // preview/production URLs, container vitals. Unlike the flags above this one
+  // is not "mock instead of the backend": there is no backend for any of it
+  // yet, so the fixtures ARE the feature until each one is built out.
+  mockIde: ALL || on(process.env.NEXT_PUBLIC_MOCK_IDE),
 } as const;
 
 /** True when anything is mocked — drives the header's "Mock data" badge. */
@@ -48,5 +53,6 @@ export function mockedSurfaces(): string[] {
   if (flags.mockMcp) names.push("mcp");
   if (flags.mockTools) names.push("tools");
   if (flags.mockChat) names.push("chat");
+  if (flags.mockIde) names.push("ide");
   return names;
 }

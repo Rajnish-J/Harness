@@ -4,7 +4,7 @@ What is **not** finished across the five milestones of the projects feature
 (credentials → projects → containers → IDE → GitHub actions).
 
 Hand-maintained, unlike [`BRANCHES.md`](./BRANCHES.md) which is generated. Last
-reviewed 2026-08-30, against the code on `feat/project-integration-vs-code`.
+reviewed 2026-08-30, against the code on `feat/project-flow`.
 
 Two categories are kept apart on purpose, because they carry very different risk:
 
@@ -117,14 +117,35 @@ it's really just the GitHub REST calls in `app/integrations/github.py`
 - **The repo picker only ever loads page 1.** `projectsApi.listRemoteRepos`
   accepts a `page`, but `AddProjectDialog` never passes one, so an account with
   more than 50 repositories cannot reach the rest from the UI.
-- **Archiving does not reclaim disk.** Deleting a project is soft
-  (`archivedAt`), which is correct, but the checkout stays in
-  `backend/workspace/projects/<id>/` forever. Nothing calls
-  `remove_project_workspace()` outside the failed-clone path.
-- **No project settings UI.** `updateProject` and `archiveProject` are wired
-  through `frontend/app/api/projects/[id]/route.ts`, but no page calls them —
-  a project cannot be renamed, re-linked to a different credential, or deleted
-  from the interface.
+- **Deleting a project now reclaims disk.** Archiving is still soft
+  (`archivedAt`), which is correct, but the Delete button no longer stops
+  there: it archives the row, then calls `POST /api/projects/{id}/purge`
+  (`backend/app/api/projects.py`), which removes the container, clears
+  `project_files`, and deletes the checkout via `remove_project_workspace()`.
+  The two calls are deliberately in that order and the second is allowed to
+  fail — a missing Docker daemon or a locked file degrades to "the row is gone,
+  the files are still there", which is where this used to stop unconditionally.
+  Verified end to end on a throwaway project with Docker not running.
+- **Project settings now exist, but only the three patchable fields.**
+  `/projects` has Edit and Delete on every project, in both the card grid and
+  the new list view (`components/projects/EditProjectDialog.tsx`,
+  `DeleteProjectDialog.tsx`). Edit covers exactly what `PATCH
+  /api/projects/{id}` accepts — name, linked credential, default branch.
+  `slug` is still frozen at creation (it is the unique key, so the name and the
+  URL can drift apart), `description` is still not patchable, and an
+  already-connected project still cannot be re-pointed at a different remote or
+  disconnected — `connectProjectToGithub` guards on `isNull(repoUrl)`.
+- **The list view is the only table in the app.** `/projects` can render as a
+  TanStack Table v9 data table with sorting, a name filter, column visibility,
+  selection and pagination. Its three helper components are typed against one
+  concrete features object (`components/projects/table/projects-table-features.ts`)
+  rather than being generic over `TFeatures` — v9 decides which methods exist on
+  a `Column`/`Table` from what the table registered, so an unconstrained
+  `TFeatures` does not type-check. A second table would declare its own features
+  object; generalising the helpers before then is not possible.
+- **The layout choice is per-browser, not per-user.** Grid vs list is held in
+  `localStorage` via `hooks/use-stored-preference.ts`. There is no user, so
+  there is nowhere else to put it.
 - **Blob sha tracks the git INDEX, not the working tree.** `git ls-files -s`
   reports the staged sha, so an unstaged edit does not change it. Fine for
   rendering a tree; do not build finer change detection on it without checking

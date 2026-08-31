@@ -57,6 +57,7 @@ export default function AgentEditor({ agent }: { agent: Agent }) {
   return (
     <EditorShell
       title={agent.name}
+      backHref="/agents"
       dirty={dirty}
       actions={<UseInChatButton kind="agent" value={agent.slug} />}
       deleteLabel={`Delete the agent "${agent.name}"? This cannot be undone.`}

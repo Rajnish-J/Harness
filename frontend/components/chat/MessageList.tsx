@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import AgentStepIndicator from "./AgentStepIndicator";
 import ApprovalCard from "./ApprovalCard";
 import MessageBubble from "./MessageBubble";
+import ProjectProposalCard from "./ProjectProposalCard";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { TranscriptItem } from "@/lib/types";
 
@@ -20,13 +21,13 @@ export default function MessageList({
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [items, streaming]);
 
-  // No `flex-1` here on purpose: taking the free space is what used to push the
-  // composer to the bottom edge on an empty chat. As a shrink-0 block it sits
-  // directly above the composer, and ChatWindow's `justify-center` centres the
-  // pair as one group.
+  // `flex-1` so this fills the space above the composer and can center the
+  // greeting within it — the composer (MessageInput, shrink-0) stays pinned to
+  // the bottom edge in both the empty and populated states, rather than the
+  // two being centered together as one group in the middle of the panel.
   if (items.length === 0) {
     return (
-      <div className="flex shrink-0 flex-col items-center gap-1.5 px-6 pb-6 text-center">
+      <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-6 pb-6 text-center">
         <h2 className="text-lg font-semibold">What should the harness work on?</h2>
         <p className="text-sm text-muted-foreground">
           File tools, scoped to a sandboxed workspace.
@@ -44,6 +45,9 @@ export default function MessageList({
           }
           if (item.kind === "approval") {
             return <ApprovalCard key={item.id} item={item} />;
+          }
+          if (item.kind === "project_proposal") {
+            return <ProjectProposalCard key={item.id} item={item} />;
           }
           return <MessageBubble key={item.id} item={item} />;
         })}

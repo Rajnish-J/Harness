@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { toast } from "@/components/ui/toast";
 import { slugify } from "@/lib/registry-types";
 
 /**
@@ -23,8 +24,8 @@ import { slugify } from "@/lib/registry-types";
  * This replaced a window.prompt + window.alert pair. The prompt could not show
  * the slug that was about to be minted, and — the reason it had to go — it had
  * nowhere to put a 409. A duplicate name meant an alert, a dismissed dialog,
- * and retyping from scratch. Here the conflict lands next to the input that
- * caused it and the name is still there to edit.
+ * and retyping from scratch. Now a toast reports the conflict while the dialog
+ * stays open and the name is still there to edit.
  */
 export default function NewRecordButton({
   label,
@@ -46,7 +47,6 @@ export default function NewRecordButton({
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(defaultName);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   // Reset through the open handler rather than an effect: this is an event, and
   // setState inside useEffect is a lint error in this repo.
@@ -55,7 +55,6 @@ export default function NewRecordButton({
     setOpen(next);
     if (next) {
       setName(defaultName);
-      setError(null);
     }
   }
 
@@ -63,18 +62,18 @@ export default function NewRecordButton({
     event.preventDefault();
     const trimmed = name.trim();
     if (!trimmed) {
-      setError("Give it a name first.");
+      toast.warning("Give it a name first.");
       return;
     }
 
     setBusy(true);
-    setError(null);
     try {
       const created = await create(trimmed);
       router.push(hrefFor(created.id));
       setOpen(false);
+      toast.success(`"${trimmed}" created`);
     } catch (err) {
-      setError((err as Error).message);
+      toast.error({ title: "Could not create it", description: (err as Error).message });
     } finally {
       setBusy(false);
     }
@@ -112,11 +111,6 @@ export default function NewRecordButton({
               {showSlug && slug && (
                 <p className="font-mono text-[11px] text-muted-foreground">
                   {hrefFor(slug)}
-                </p>
-              )}
-              {error && (
-                <p className="text-xs text-destructive" role="alert">
-                  {error}
                 </p>
               )}
             </div>

@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import LoadErrorToast from "@/components/shell/LoadErrorToast";
 import PageBody from "@/components/shell/PageBody";
 import NewWorkflowButton from "@/components/workflow/NewWorkflowButton";
 import { describeDbError } from "@/lib/server/db-error";
@@ -20,9 +21,12 @@ export default async function WorkflowsPage() {
   return (
     <PageBody toolbar={<NewWorkflowButton />}>
       {error && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2 text-sm text-red-700 dark:text-red-300">
-          Could not load workflows: {error}
-        </div>
+        <>
+          <LoadErrorToast title="Could not load workflows" description={error} />
+          <div className="rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2 text-sm text-red-700 dark:text-red-300">
+            Could not load workflows: {error}
+          </div>
+        </>
       )}
 
       {!error && workflows.length === 0 && (

@@ -2,7 +2,16 @@ import { presetToBody, type ChatPreset } from "./chat-preset";
 import { flags } from "./flags";
 import { streamMockApproval, streamMockChat } from "./mock/chat";
 import { consumeSSE } from "./sse";
+import type { StoredMessage } from "./project-types";
 import type { AgentEvent, HarnessConfig } from "./types";
+
+/** One row in the sidebar's conversation-history list. */
+export type ChatSessionSummary = {
+  session_id: string;
+  updated_at: string;
+  message_count: number;
+  title: string;
+};
 
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
@@ -130,5 +139,44 @@ export async function resetSession(sessionId: string): Promise<void> {
   } catch {
     // The client-side transcript is cleared regardless; a stale server
     // session is harmless because we rotate to a fresh id anyway.
+  }
+}
+
+/**
+ * Recent conversations for one scope: a project, or the global chat when
+ * `projectId` is omitted. Powers the sidebar's history accordion.
+ *
+ * Never throws: a history list that fails to load should not take the rest of
+ * the sidebar down with it.
+ */
+export async function fetchChatSessions(
+  projectId?: string,
+  signal?: AbortSignal,
+): Promise<ChatSessionSummary[]> {
+  if (flags.mockChat) return [];
+
+  try {
+    const url = new URL(`${API_BASE}/api/chat/sessions`);
+    if (projectId) url.searchParams.set("project_id", projectId);
+    const res = await fetch(url, { signal });
+    if (!res.ok) return [];
+    const body = (await res.json()) as { sessions: ChatSessionSummary[] };
+    return body.sessions ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/** The rendered transcript for one past conversation, so it can be reopened. */
+export async function fetchChatTranscript(sessionId: string): Promise<StoredMessage[]> {
+  if (flags.mockChat) return [];
+
+  try {
+    const res = await fetch(`${API_BASE}/api/chat/sessions/${sessionId}`);
+    if (!res.ok) return [];
+    const body = (await res.json()) as { messages: StoredMessage[] };
+    return body.messages ?? [];
+  } catch {
+    return [];
   }
 }
