@@ -1,4 +1,4 @@
-"""Branch, commit, push, and pull requests.
+"""Branch, commit, push, pull, and pull requests.
 
 Every endpoint here is a destructive or outward-facing action, and none of them
 is reachable by the model. `app/agent/tools/git_tools.py` deliberately gives the
@@ -12,9 +12,12 @@ ever be added to `ALL_TOOLS`.
 
 from __future__ import annotations
 
+import io
 import logging
+import zipfile
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.core.config import Settings, get_settings
@@ -33,6 +36,7 @@ from app.projects.git_ops import (
     create_branch,
     current_branch,
     list_branches,
+    pull,
     push,
     working_tree_dirty,
 )
@@ -206,6 +210,81 @@ async def commit(
             del token
 
     return {"committed": True, "pushed": pushed, "branch": branch, "output": result.output}
+
+
+@router.post("/projects/{project_id}/pull")
+async def pull_branch(
+    project_id: str,
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    """Fast-forward the current branch from origin.
+
+    Refuses on a dirty tree rather than attempting a pull that could conflict
+    with uncommitted work -- the operator commits or discards first.
+    """
+    pool = _require_pool(request)
+    project = await _project(pool, project_id)
+    repo = _repo_path(settings, project_id)
+
+    if await working_tree_dirty(repo):
+        raise HTTPException(
+            status_code=409,
+            detail="You have uncommitted changes. Commit or discard them before pulling.",
+        )
+
+    branch = await current_branch(repo)
+    if not branch:
+        raise HTTPException(status_code=409, detail="No branch is checked out.")
+
+    token = await _token(pool, project, settings)
+    try:
+        result = await pull(repo, branch, token=token)
+    except GitOperationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    finally:
+        del token
+
+    return {"branch": branch, "output": result.output}
+
+
+@router.get("/projects/{project_id}/export.zip")
+async def export_zip(
+    project_id: str,
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> StreamingResponse:
+    """Stream the working tree as a .zip, minus `.git/`.
+
+    Built in memory rather than on disk: nothing here is large enough to
+    justify a temp file, and skipping one sidesteps cleanup entirely.
+    """
+    pool = _require_pool(request)
+    project = await _project(pool, project_id)
+    repo = _repo_path(settings, project_id)
+
+    if not repo.is_dir():
+        raise HTTPException(status_code=409, detail="This project has no files yet.")
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for path in repo.rglob("*"):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(repo)
+            if ".git" in relative.parts:
+                continue
+            archive.write(path, arcname=str(relative))
+    buffer.seek(0)
+
+    # The slug, not `name`: it is already filesystem-safe, so the header needs
+    # no further sanitizing against quotes or control characters.
+    filename = f"{project.slug}.zip"
+    return StreamingResponse(
+        buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/projects/{project_id}/pulls")
