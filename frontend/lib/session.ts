@@ -115,3 +115,20 @@ export function rotateSessionId(scope: SessionScope = null): string {
   for (const listener of listenersFor(key)) listener();
   return created;
 }
+
+/**
+ * Adopt an EXISTING session id — reopening a past conversation from the
+ * history list, as opposed to `rotateSessionId` minting a fresh one for "New
+ * chat". Same body otherwise: same storage write, same scope-local listener
+ * notification.
+ */
+export function setSessionId(scope: SessionScope, id: string): void {
+  const key = storageKey(scope);
+  try {
+    window.localStorage.setItem(key, id);
+  } catch {
+    // Non-persistent session is still a usable session.
+  }
+  cached.set(key, id);
+  for (const listener of listenersFor(key)) listener();
+}
