@@ -147,7 +147,56 @@ A failure may be recorded as pre-existing only if it is *proved* — add a secon
 
 ---
 
-## Phase C — Compose the title and body
+## Phase C — Production-readiness sweep
+
+Every run checks the current `HEAD` against the fixed 20-item checklist tracked in [`docs/PRODUCTION_READINESS.md`](../../../docs/PRODUCTION_READINESS.md) and refreshes that file's `Status`/`Evidence` cells. **This phase can never block anything** — it does not gate Phase F/G, and a `Missing` or `N/A` result is never treated like a failed Phase B check.
+
+All checks read the committed tree directly, never the working directory — cheap, deterministic, and independent of the Phase B worktree's lifecycle:
+
+```bash
+git grep -niI "<pattern>" HEAD -- <path>     # content search, tracked files only
+git ls-files HEAD -- '<glob>'                # existence / path check
+```
+
+`git grep`/`git ls-files` against a tree-ish only searches files tracked at that commit, so `node_modules`, `.next`, `venv`, `__pycache__` are excluded for free — no exclude list to maintain, no build step needed.
+
+**Run all 20 items every time — never scope detection to this PR's diff.** Scoping to the diff would let stale rows go unverified indefinitely (a row would only refresh whenever some future PR happens to touch its paths), which breaks the doc's job as a trustworthy source of truth. The diff (already gathered in Phase A) is only used afterward, to phrase the PR body's "Changed this PR" column honestly — never to decide what gets checked.
+
+1. Read `docs/PRODUCTION_READINESS.md`. If absent, this is a first run: the whole file will be proposed as new content at the end of this phase.
+2. For each of the 20 items below, run its detection commands and classify `Done` / `Partial` / `Missing` / `N/A (deliberate)` per the legend in the doc's header. An `N/A (deliberate)` classification must cite a specific architectural reason (normally the "single user, no auth" cross-cutting note in `docs/PENDING.md`) — never assert it bare.
+3. Diff the freshly computed table against what's currently committed in `docs/PRODUCTION_READINESS.md`.
+   - **No deltas:** nothing to write. Report "swept, no change" and move on.
+   - **Deltas exist:** hold the proposed new file content in memory — **do not write it to disk yet.** It is shown for approval in Phase E and only ever written in Phase F, gated on the same explicit yes as the push. This keeps the working tree exactly as clean as Phase A found it for the entire "present and stop" window.
+4. Never edit `Notes` text a human wrote; only append a short one-line note when a `Status` changes, e.g. `→ Partial→Done in this branch (added ...)`.
+
+### Per-item detection
+
+| # | Item | Detection |
+| - | --- | --- |
+| 1 | Onboarding | `git ls-files HEAD -- '*onboarding*' '*welcome*'`; `git grep -il "onboarding" HEAD -- frontend/app frontend/components` |
+| 2 | Sign up / log in | `git grep -il "signup\|sign-up\|LoginForm\|next-auth\|/api/auth" HEAD -- frontend backend/app` |
+| 3 | Email verification | `git grep -il "verify.?email\|email_verified" HEAD -- frontend backend/app` |
+| 4 | Password reset | `git grep -il "reset.?password\|forgot.?password" HEAD -- frontend backend/app` |
+| 5 | Account deletion | `git grep -n "def purge_project\|DeleteProjectDialog" HEAD -- backend/app/api/projects.py frontend/components/projects`; `git grep -il "class User\b\|users_repo" HEAD -- backend/app/db` (confirms no user-account model exists) |
+| 6 | User permissions | `git grep -n "\brole\b" HEAD -- frontend/components backend/app` (exclude `aria-`/`message.role` hits); `git grep -il "RBAC\|is_admin\|@requires_role" HEAD -- backend/app` |
+| 7 | Empty states | `git ls-files HEAD -- 'frontend/components/registry/EmptyState.tsx'`; `git grep -l "EmptyState" HEAD -- frontend/components frontend/app` |
+| 8 | Loading states | `git ls-files HEAD -- 'frontend/components/ui/skeleton.tsx'`; `git grep -c "Loader2\|isLoading\|isPending" HEAD -- frontend/components frontend/app` |
+| 9 | Error states | `git ls-files HEAD -- 'frontend/app/**/error.tsx' 'frontend/app/**/global-error.tsx' 'frontend/app/**/not-found.tsx'` (expect empty); `git ls-files HEAD -- 'frontend/components/ui/toast.tsx' 'frontend/lib/toast.ts'` |
+| 10 | Network states | `git grep -il "navigator.onLine\|useOnlineStatus" HEAD -- frontend` (expect none); `git ls-files HEAD -- 'frontend/components/shell/HarnessStatus.tsx'` |
+| 11 | Data persistence | `git ls-files HEAD -- 'frontend/db/schema.ts'`; `git ls-files HEAD -- 'frontend/db/migrations/*.sql'`; `git ls-files HEAD -- 'backend/app/db/*_repo.py' 'backend/app/db/pool.py'` |
+| 12 | Payment flow | `git grep -il "stripe\|billing\|subscription\|checkout.session" HEAD -- frontend backend/app` |
+| 13 | Notifications | `git ls-files HEAD -- 'frontend/components/ui/toast.tsx' 'frontend/lib/toast.ts'`; `git grep -il "sendgrid\|nodemailer\|web-push\|apns" HEAD -- frontend backend/app` (expect none) |
+| 14 | Analytics | `git grep -il "posthog\|amplitude\|mixpanel\|segment\|gtag\|plausible" HEAD -- frontend backend/app` |
+| 15 | Crash reporting | `git grep -il "sentry\|bugsnag\|@sentry" HEAD -- frontend backend/app` |
+| 16 | Privacy setup | `git grep -il "privacy.?policy\|gdpr\|consent\|cookie.?banner" HEAD -- frontend docs` |
+| 17 | Accessibility | `git grep -n "jsx-a11y\|core-web-vitals" HEAD -- frontend/eslint.config.mjs`; `git grep -c "aria-" HEAD -- frontend/components frontend/app`; `git grep -il "axe-core\|jest-axe" HEAD -- frontend/package.json` (expect none) |
+| 18 | Responsiveness | `git grep -clE "\b(sm\|md\|lg\|xl\|2xl):" HEAD -- frontend/components frontend/app`; `git ls-files HEAD -- 'frontend/hooks/use-mobile.ts'` |
+| 19 | User flows | `git ls-files HEAD -- '**/*playwright*' '**/*cypress*' 'e2e/**'` (expect empty); check `frontend/package.json` `scripts` for a test entry; `git ls-files HEAD -- 'backend/tests/*.py'` |
+| 20 | Beta testers | `git ls-files HEAD -- 'frontend/lib/flags.ts'`; `git grep -c "NEXT_PUBLIC_MOCK" HEAD -- frontend/lib/flags.ts`; `git grep -il "waitlist\|beta.?program\|invite.?code" HEAD -- frontend backend/app` (expect none) |
+
+---
+
+## Phase D — Compose the title and body
 
 ### Title
 
@@ -192,6 +241,35 @@ in the local tree.
 | Types | `npx tsc --noEmit` | pass — 0 errors |
 | Backend tests | `python -m pytest -q` | pass — N passed in Ts |
 
+## Production readiness
+
+Swept against this branch's `HEAD` (`git grep`/`git ls-files`, no build
+required) — informational only, never blocks this PR. Full evidence and
+notes: `docs/PRODUCTION_READINESS.md`.
+
+| # | Item | Status | Changed this PR |
+| - | --- | --- | --- |
+| 1 | Onboarding | <Status> | |
+| 2 | Sign up / log in | <Status> | |
+| 3 | Email verification | <Status> | |
+| 4 | Password reset | <Status> | |
+| 5 | Account deletion | <Status> | |
+| 6 | User permissions | <Status> | |
+| 7 | Empty states | <Status> | |
+| 8 | Loading states | <Status> | |
+| 9 | Error states | <Status> | |
+| 10 | Network states | <Status> | |
+| 11 | Data persistence | <Status> | |
+| 12 | Payment flow | <Status> | |
+| 13 | Notifications | <Status> | |
+| 14 | Analytics | <Status> | |
+| 15 | Crash reporting | <Status> | |
+| 16 | Privacy setup | <Status> | |
+| 17 | Accessibility | <Status> | |
+| 18 | Responsiveness | <Status> | |
+| 19 | User flows | <Status> | |
+| 20 | Beta testers | <Status> | |
+
 ## Notes
 
 - <honest caveats: stale docs, missing scripts, deprecated deps, tooling gaps>
@@ -203,22 +281,33 @@ Merge with **Squash and merge** — this branch's N commits land on `main` as on
 
 ---
 
-## Phase D — Present the plan, then STOP
+## Phase E — Present the plan, then STOP
 
-Print the proposed title, the full body, and the file list grouped by area. Note anything the author must decide: pre-existing failures, skipped checks, secrets found, stale docs worth fixing first.
+Print the proposed title, the full body, and the file list grouped by area. If Phase C found deltas, also show the `docs/PRODUCTION_READINESS.md` diff (old row → new row, per changed item) alongside it. Note anything the author must decide: pre-existing failures, skipped checks, secrets found, stale docs worth fixing first.
 
 Then **stop and wait.** Do not push. Do not create the PR. The author may rewrite the title or body — apply their edits and re-present.
 
 ---
 
-## Phase E — Push, only with permission
+## Phase F — Push, only with permission
 
 ```bash
 git status -sb
 git log --oneline origin/main..HEAD
 ```
 
-Show that, then **ask for explicit permission to push.** Approval granted in an earlier run does not carry over. On a clear yes — a branch with no upstream needs `-u`:
+Show that, then **ask for explicit permission to push.** Approval granted in an earlier run does not carry over. On a clear yes:
+
+If Phase C found deltas in `docs/PRODUCTION_READINESS.md`, write the proposed content to disk and commit it first, in its own small commit, following this repo's existing `docs(scope): subject` convention:
+
+```bash
+git add docs/PRODUCTION_READINESS.md
+git commit -m "docs(readiness): refresh checklist (N changed)"
+```
+
+If Phase C found no deltas, skip this — no empty commit, no doc touch.
+
+Then push — a branch with no upstream needs `-u`:
 
 ```bash
 git push -u origin <current-branch>
@@ -244,7 +333,7 @@ git push -u origin <current-branch>
 
 ---
 
-## Phase F — Create the PR, print the URL, stop
+## Phase G — Create the PR, print the URL, stop
 
 ```bash
 gh pr create --base main --head <current-branch> \
@@ -277,3 +366,5 @@ Never:
 - stage, commit, copy, `source`, or echo `backend/.env`, or put a real API key or `DATABASE_URL` anywhere
 - edit source, weaken a lint rule, or add `@ts-expect-error` to make a check pass
 - invent verification numbers — every cell in the table comes from output seen in this run
+- treat a `Missing` or `N/A` production-readiness result as a failed check — Phase C is informational and never blocks Phase F/G
+- write or commit `docs/PRODUCTION_READINESS.md` outside Phase F, or as a silent side effect of Phase C — it only ever happens together with explicit push permission
