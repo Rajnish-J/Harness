@@ -8,12 +8,13 @@
 Every branch in [`Rajnish-J/Harness`](https://github.com/Rajnish-J/Harness) — what it was for, when it
 started, and when it landed. The base branch is `main`.
 
-_Last updated 2026-08-30 (UTC) · 6 merged · 0 open · 0 closed unmerged · 0 without a PR_
+_Last updated 2026-08-31 (UTC) · 7 merged · 0 open · 0 closed unmerged · 0 without a PR_
 
 ## Merged branches
 
 | Branch | PR | Purpose | Created | Merged | Into | Changes |
 | --- | --- | --- | --- | --- | --- | --- |
+| `feat/project-flow` | [#7](https://github.com/Rajnish-J/Harness/pull/7) | Extends the projects feature that landed on main via #6 (credentials, projects, per-project Docker containers, an in-app IDE, and GitHub push/PR/merge) with ri… | 2026-08-30 | 2026-08-31 | `main` | 119 files, +11958 / −699 |
 | `feat/project-integration-vs-code` | [#6](https://github.com/Rajnish-J/Harness/pull/6) | Adds the whole "projects" feature to the harness — credentials, cloned/blank projects, a Docker container per project, an in-app IDE, and GitHub push/PR/merge… | 2026-08-29 | 2026-08-30 | `main` | 99 files, +16661 / −779 |
 | `feat/developer-tools-toolkit` | [#5](https://github.com/Rajnish-J/Harness/pull/5) | Expands the agent's tool surface (search, shell execution, git) with a live /tools UI, and layers workflow-editor and chat improvements on top: per-node durati… | 2026-08-27 | 2026-08-29 | `main` | 63 files, +4048 / −572 |
 | `feat/tool-modes-model-picker-and-theming` | [#4](https://github.com/Rajnish-J/Harness/pull/4) | Adds three things the chat composer on main cannot express today: a manual tool mode that holds every tool call for a human verdict before it runs, a model pic… | 2026-08-26 | 2026-08-26 | `main` | 71 files, +3530 / −550 |
@@ -32,6 +33,14 @@ _None — every branch on the remote has a pull request._
 ---
 
 ## Details
+
+### `feat/project-flow` → `main` ([#7](https://github.com/Rajnish-J/Harness/pull/7))
+
+**Merged** 2026-08-31 · created 2026-08-30 · by @Rajnish-J · 30 commits · 119 files, +11958 / −699 · branch still on the remote
+
+**feat: add the projects feature — credentials, registry tables, and IDE**
+
+Extends the projects feature that landed on main via #6 (credentials, projects, per-project Docker containers, an in-app IDE, and GitHub push/PR/merge) with richer list views, env-var management, a reworked IDE toolbar, persistent/reopenable chat history, and an agent-driven project-creation flow. This branch was cut from main's current tip (b067220), so there's no drift to reconcile.
 
 ### `feat/project-integration-vs-code` → `main` ([#6](https://github.com/Rajnish-J/Harness/pull/6))
 
