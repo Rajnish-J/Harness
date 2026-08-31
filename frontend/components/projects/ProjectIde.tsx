@@ -1,20 +1,35 @@
 "use client";
 
-import { ArrowLeft, MessageSquare, PanelLeft } from "lucide-react";
+import { ArrowLeft, ChevronDown, MessageSquare, PanelLeft } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import ChatPresetProvider from "@/components/chat/ChatPresetProvider";
 import ChatSessionProvider from "@/components/chat/ChatSessionProvider";
 import ChatWindow from "@/components/chat/ChatWindow";
-import ConnectGithubDialog from "@/components/projects/ConnectGithubDialog";
-import ContainerStatusBadge from "@/components/projects/ContainerStatusBadge";
+import DeleteProjectDialog from "@/components/projects/DeleteProjectDialog";
+import EditProjectDialog from "@/components/projects/EditProjectDialog";
 import FileTree from "@/components/projects/FileTree";
 import GitHubActionBar from "@/components/projects/GitHubActionBar";
+import ProjectActionsMenu from "@/components/projects/ProjectActionsMenu";
+import ConnectRepositoryDialog from "@/components/projects/ide/ConnectRepositoryDialog";
+import ContainerMenu from "@/components/projects/ide/ContainerMenu";
+import RepositoryMenu from "@/components/projects/ide/RepositoryMenu";
+import ShareMenu from "@/components/projects/ide/ShareMenu";
+import VersionHistoryMenu from "@/components/projects/ide/VersionHistoryMenu";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Credential } from "@/lib/credential-types";
-import type { Project } from "@/lib/project-types";
+import { flags } from "@/lib/flags";
+import {
+  mockDeployments,
+  mockShare,
+  mockVersions,
+  mockVitals,
+} from "@/lib/mock/ide";
+import type { Project, ProjectListRow } from "@/lib/project-types";
 import { scopeForProject } from "@/lib/session";
 import type { TranscriptItem } from "@/lib/types";
 
@@ -55,9 +70,31 @@ export default function ProjectIde({
   initialMessages: TranscriptItem[];
   credentials: Credential[];
 }) {
+  const router = useRouter();
   const [chatOpen, setChatOpen] = useState(true);
   const [treeOpen, setTreeOpen] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
+  const [connectOpen, setConnectOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  // Fixtures, computed once per project id. `flags.mockIde` is on by default
+  // because none of this has an endpoint yet — see lib/mock/ide.ts. When one
+  // arrives, this block becomes the fetch and the rest of the toolbar does not
+  // change.
+  const versions = flags.mockIde ? mockVersions(project.id) : [];
+  const vitals = mockVitals(project.id, flags.mockIde);
+  const deployments = flags.mockIde
+    ? mockDeployments(project.id)
+    : { previewUrl: null, productionUrl: null, previewLive: false };
+  const share = mockShare(project.id);
+
+  // ProjectActionsMenu/EditProjectDialog/DeleteProjectDialog are shared with
+  // the /projects list page, which is why they take a ProjectListRow rather
+  // than the bare Project this page has. Neither dialog reads fileCount for
+  // anything but a cosmetic "including N files" hint on delete, so 0 here
+  // just omits that hint rather than lying about a real count.
+  const listRow: ProjectListRow = { ...project, fileCount: 0 };
 
   return (
     <div className="flex h-full min-h-0 flex-col font-sans">
@@ -69,7 +106,22 @@ export default function ProjectIde({
           </Link>
         </Button>
 
-        <span className="truncate text-sm font-semibold">{project.name}</span>
+        <ProjectActionsMenu
+          project={listRow}
+          onEdit={() => setEditing(true)}
+          onDelete={() => setDeleting(true)}
+          trigger={
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1 px-2 -ml-2"
+            >
+              <span className="truncate text-sm font-semibold">{project.name}</span>
+              <ChevronDown className="size-3 text-muted-foreground" />
+            </Button>
+          }
+        />
 
         {project.repoUrl ? (
           <>
@@ -85,34 +137,106 @@ export default function ProjectIde({
               Blank project — not linked to a remote
             </span>
             <span className="mx-1 h-4 w-px bg-border" />
-            <ConnectGithubDialog projectId={project.id} credentials={credentials} />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-[11px]"
+              onClick={() => setConnectOpen(true)}
+            >
+              Connect repository
+            </Button>
           </>
         )}
 
-        <span className="ml-auto flex items-center gap-2">
-          <ContainerStatusBadge projectId={project.id} />
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 px-2"
-            onClick={() => setTreeOpen((v) => !v)}
-            title="Toggle the file tree"
-          >
-            <PanelLeft className="size-3.5" />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 px-2"
-            onClick={() => setChatOpen((v) => !v)}
-            title="Toggle the chat"
-          >
-            <MessageSquare className="size-3.5" />
-          </Button>
+        <span className="ml-auto flex items-center gap-1.5">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2"
+                onClick={() => setTreeOpen((v) => !v)}
+              >
+                <PanelLeft className="size-3.5" />
+                <span className="sr-only">Toggle the file tree</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {treeOpen ? "Hide file tree" : "Show file tree"}
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2"
+                onClick={() => setChatOpen((v) => !v)}
+              >
+                <MessageSquare className="size-3.5" />
+                <span className="sr-only">Toggle the chat</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{chatOpen ? "Hide chat" : "Show chat"}</TooltipContent>
+          </Tooltip>
+
+          <VersionHistoryMenu versions={versions} />
+
+          <span className="mx-0.5 h-4 w-px bg-border" />
+
+          <ContainerMenu projectId={project.id} vitals={vitals} />
+
+          <RepositoryMenu
+            project={project}
+            deployments={deployments}
+            onConnect={() => setConnectOpen(true)}
+            onViewPullRequest={() => {
+              if (project.repoUrl) {
+                window.open(`${project.repoUrl.replace(/\.git$/, "")}/pulls`, "_blank", "noopener");
+              }
+            }}
+          />
+
+          <ShareMenu
+            projectId={project.id}
+            projectName={project.name}
+            share={share}
+            previewUrl={deployments.previewUrl}
+          />
         </span>
       </div>
+
+      {/* Mounted only while open, so each open re-reads the repository list
+          and starts from clean form state. */}
+      {connectOpen && (
+        <ConnectRepositoryDialog
+          project={project}
+          credentials={credentials}
+          open
+          onOpenChange={setConnectOpen}
+        />
+      )}
+
+      {editing && (
+        <EditProjectDialog
+          project={listRow}
+          credentials={credentials}
+          onOpenChange={setEditing}
+        />
+      )}
+
+      {deleting && (
+        <DeleteProjectDialog
+          projects={[listRow]}
+          onOpenChange={setDeleting}
+          // The project this page is for no longer exists once this lands —
+          // staying on /projects/{id}/vscode would be a dead page.
+          onDeleted={() => router.push("/projects")}
+        />
+      )}
 
       <div className="flex min-h-0 flex-1">
         {chatOpen && (
