@@ -59,6 +59,13 @@
       "breakpoints": true
     },
     {
+      "idx": 8,
+      "version": "7",
+      "when": 1788083646262,
+      "tag": "0008_colossal_gorgon",
+      "breakpoints": true
+    },
+    {
       "idx": 9,
       "version": "7",
       "when": 1788101341855,

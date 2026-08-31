@@ -518,9 +518,10 @@ export const projectChatSessions = pgTable(
   "project_chat_sessions",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    projectId: uuid("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+    /** Null for the global chat on `/` — it has no project to belong to. */
+    projectId: uuid("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
     /** The id the browser holds in localStorage. */
     sessionId: text("session_id").notNull(),
     /** Anthropic and OpenAI histories are not interchangeable, and replaying
@@ -542,9 +543,10 @@ export const projectChatMessages = pgTable(
   "project_chat_messages",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    projectId: uuid("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+    /** Null for the global chat on `/` — it has no project to belong to. */
+    projectId: uuid("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
     sessionId: text("session_id").notNull(),
     /** Order within the session. Not a timestamp: two events inside one turn
      *  can share a millisecond, and the transcript order must be exact. */
