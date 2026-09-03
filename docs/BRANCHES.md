@@ -8,12 +8,13 @@
 Every branch in [`Rajnish-J/Harness`](https://github.com/Rajnish-J/Harness) — what it was for, when it
 started, and when it landed. The base branch is `main`.
 
-_Last updated 2026-09-03 (UTC) · 8 merged · 0 open · 0 closed unmerged · 0 without a PR_
+_Last updated 2026-09-03 (UTC) · 9 merged · 0 open · 0 closed unmerged · 0 without a PR_
 
 ## Merged branches
 
 | Branch | PR | Purpose | Created | Merged | Into | Changes |
 | --- | --- | --- | --- | --- | --- | --- |
+| `feat/model-credentials-and-provider-keys` | [#9](https://github.com/Rajnish-J/Harness/pull/9) | Adds a Models tab to the existing Credentials page where LLM provider API keys are registered and encrypted at rest, and makes those keys — not LLM_PROVIDER —… | 2026-09-03 | 2026-09-03 | `main` | 43 files, +5573 / −290 |
 | `feat/cross-session-memory` | [#8](https://github.com/Rajnish-J/Harness/pull/8) | Gives the harness a memory that survives a chat session, and a settings page to see how the running instance is configured. main currently has the project flow… | 2026-09-03 | 2026-09-03 | `main` | 49 files, +6496 / −81 |
 | `feat/project-flow` | [#7](https://github.com/Rajnish-J/Harness/pull/7) | Extends the projects feature that landed on main via #6 (credentials, projects, per-project Docker containers, an in-app IDE, and GitHub push/PR/merge) with ri… | 2026-08-30 | 2026-08-31 | `main` | 119 files, +11958 / −699 |
 | `feat/project-integration-vs-code` | [#6](https://github.com/Rajnish-J/Harness/pull/6) | Adds the whole "projects" feature to the harness — credentials, cloned/blank projects, a Docker container per project, an in-app IDE, and GitHub push/PR/merge… | 2026-08-29 | 2026-08-30 | `main` | 99 files, +16661 / −779 |
@@ -34,6 +35,14 @@ _None — every branch on the remote has a pull request._
 ---
 
 ## Details
+
+### `feat/model-credentials-and-provider-keys` → `main` ([#9](https://github.com/Rajnish-J/Harness/pull/9))
+
+**Merged** 2026-09-03 · created 2026-09-03 · by @Rajnish-J · 10 commits · 43 files, +5573 / −290 · branch still on the remote
+
+**feat: register LLM provider keys and drive the chat picker from them**
+
+Adds a Models tab to the existing Credentials page where LLM provider API keys are registered and encrypted at rest, and makes those keys — not LLM_PROVIDER — the source of truth for which models the chat offers. On main a single env var plus one key decides everything, so exactly one provider is ever live, every other model is permanently greyed out, Groq is unsupported, and a rejected or expired key is invisible until a message fails.
 
 ### `feat/cross-session-memory` → `main` ([#8](https://github.com/Rajnish-J/Harness/pull/8))
 
