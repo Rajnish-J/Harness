@@ -238,6 +238,62 @@ async def list_sessions(
     ]
 
 
+async def list_sessions_by_ids(
+    pool: AsyncConnectionPool, session_ids: Sequence[str]
+) -> list[SessionSummary]:
+    """Look up specific conversations by id, for showing where something came from.
+
+    `list_sessions` answers "what conversations exist in this scope"; this
+    answers "what were THESE conversations", which is what a memory's
+    `session_id` provenance needs — only the handful of sessions that actually
+    produced a memory get resolved, rather than every session in every project.
+
+    Ids with no row are simply absent from the result rather than raising: a
+    session can be hard-deleted by `clear_session` while a memory keeps its id,
+    so a dangling reference is expected, not exceptional.
+
+    `= any(%s)` with a list parameter rather than a built IN list — the same
+    rule the rest of the repo layer follows for a set of values.
+    """
+    if not session_ids:
+        return []
+
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                select
+                    s.session_id,
+                    s.updated_at,
+                    (
+                        select count(*) from project_chat_messages m
+                        where m.session_id = s.session_id
+                    ) as message_count,
+                    (
+                        select m.content from project_chat_messages m
+                        where m.session_id = s.session_id and m.role = 'user'
+                        order by m.seq asc
+                        limit 1
+                    ) as title_source
+                from project_chat_sessions s
+                where s.session_id = any(%s)
+                order by s.updated_at desc
+                """,
+                (list(session_ids),),
+            )
+            rows = await cur.fetchall()
+
+    return [
+        SessionSummary(
+            session_id=row["session_id"],
+            updated_at=row["updated_at"],
+            message_count=int(row["message_count"]),
+            title=_derive_title(row["title_source"]),
+        )
+        for row in rows
+    ]
+
+
 def _derive_title(first_user_message: str | None) -> str:
     if not first_user_message or not first_user_message.strip():
         return "New conversation"
