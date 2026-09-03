@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from psycopg_pool import AsyncConnectionPool
 
-from app.agent.llm.catalog import PRICING_AS_OF, configured_model, models_for
-from app.agent.llm.factory import get_llm_client
+from app.agent.llm.catalog import PRICING_AS_OF, default_model, models_for
+from app.agent.llm.resolver import NoCredentialError, client_for_turn, load_credentials
 from app.agent.loop import SYSTEM_PROMPT, run_agent_loop, resume_agent_loop
 from app.agent.prompt import compose_system_prompt
 from app.agent.session import ProviderMismatchError, Session, session_store
@@ -17,6 +17,7 @@ from app.agent.tools.toolsets import UnknownToolError, merge_toolsets
 from app.api.sse import SSE_HEADERS
 from app.agent.exec_context import ExecutionContext
 from app.core.config import Settings, get_settings
+from app.core.secrets import CredentialCryptoError
 from app.db import memory_repo, project_chat_repo
 from app.projects.execution import resolve_executor
 from app.projects.workspaces import InvalidProjectIdError, settings_for_project
@@ -98,8 +99,8 @@ async def _prepare_turn(
     request: Request,
     payload: TurnPreset,
     settings: Settings,
-) -> tuple[Turn, list[str]]:
-    """Resolve a preset into a runnable turn, plus any non-fatal notices.
+) -> tuple[Turn, list[tuple[str, str]]]:
+    """Resolve a preset into a runnable turn, plus any non-fatal (message, code) notices.
 
     Shared by both routes so a resumed turn is built exactly like the turn that
     paused — a drift here would mean approving a call from one toolset and
@@ -108,14 +109,13 @@ async def _prepare_turn(
     # Per-turn overrides. model_copy skips validators, which is what makes this
     # cheap enough to do per request; same trick app/workflow/nodes/agent_node.py
     # uses for a node's iteration cap.
+    #
+    # The model is NOT one of them any more. It used to be written back into
+    # settings so the factory would pick it up, which only worked because there
+    # was exactly one provider; now the model decides which provider and which
+    # registered key the turn uses, so it is resolved directly instead — see
+    # app/agent/llm/resolver.py.
     overrides: dict[str, object] = {}
-    if payload.model:
-        key = (
-            "anthropic_model"
-            if settings.llm_provider == "anthropic"
-            else "openai_model"
-        )
-        overrides[key] = payload.model
     if payload.max_iterations:
         overrides["max_agent_iterations"] = payload.max_iterations
     turn_settings = settings.model_copy(update=overrides) if overrides else settings
@@ -138,26 +138,48 @@ async def _prepare_turn(
         executor = resolved_exec.executor
         execution_note = resolved_exec.reason
 
+    # Resolved from the requested model rather than from LLM_PROVIDER: the id
+    # decides the provider, the provider decides which registered key to spend.
+    # (message, code) pairs rather than bare strings: these are emitted as SSE
+    # error events, and labelling a provider switch "mcp_unavailable" — which is
+    # what a single hardcoded code did — would be a lie to the client.
+    setup_notices: list[tuple[str, str]] = []
+    pool = getattr(request.app.state, "pool", None)
     try:
-        # Built from turn_settings, not settings: the model name is baked into
-        # the client's constructor, so this is the only seam for overriding it.
-        llm_client = get_llm_client(turn_settings)
+        llm_client, _resolved_model = await client_for_turn(
+            pool, turn_settings, payload.model
+        )
+    except NoCredentialError as exc:
+        # An operator problem with a specific fix, and the message names it.
+        raise TurnSetupError(str(exc), "no_credential") from exc
+    except CredentialCryptoError as exc:
+        raise TurnSetupError(str(exc), "credential_crypto") from exc
     except Exception as exc:  # noqa: BLE001 - misconfiguration, report to the UI
         logger.exception("Failed to build LLM client")
         raise TurnSetupError(f"LLM provider misconfigured: {exc}", "config") from exc
 
     try:
         session = session_store.get_or_create(payload.session_id, llm_client.provider)
-    except ProviderMismatchError as exc:
-        raise TurnSetupError(str(exc), "provider_mismatch") from exc
+    except ProviderMismatchError:
+        # Not fatal any more. The picker lists every provider that has a key, so
+        # switching mid-conversation is an ordinary action; the history cannot
+        # follow, so it is dropped and the user is told rather than blocked.
+        session = session_store.switch_provider(payload.session_id, llm_client.provider)
+        setup_notices.append(
+            (
+                f"Switched to {llm_client.provider}. Providers store conversation "
+                "history in incompatible shapes, so this chat starts fresh.",
+                "provider_switched",
+            )
+        )
 
     # Chat mode advertises no tools at all (see below), so there is nothing to
     # propose creating a project with there either.
     propose_project_tool = project_id is None and payload.mode != "chat"
 
     # Same optional-pool discipline as _rehydrate/_persist below: memory is
-    # inert, never fatal, when DATABASE_URL is unset.
-    pool = getattr(request.app.state, "pool", None)
+    # inert, never fatal, when DATABASE_URL is unset. `pool` was already
+    # resolved above, for the credential lookup.
     memories: list[memory_repo.MemoryRow] = []
     if pool is not None:
         try:
@@ -180,13 +202,14 @@ async def _prepare_turn(
         # An empty list, not None: None means "the full registry". Nothing is
         # advertised and nothing can be dispatched.
         tools = []
-        notices: list[str] = []
+        notices: list[tuple[str, str]] = []
     else:
         # MCP is resolved non-fatally: an unreachable server degrades the turn
         # to the built-in tools rather than failing it.
-        mcp_tools, notices = await resolve_mcp_tools(
+        mcp_tools, mcp_notices = await resolve_mcp_tools(
             request.app, turn_settings, payload.mcp_server_ids
         )
+        notices = [(notice, "mcp_unavailable") for notice in mcp_notices]
         try:
             tools = merge_toolsets(payload.tool_names, mcp_tools)
         except UnknownToolError as exc:
@@ -211,7 +234,9 @@ async def _prepare_turn(
             execution_note=execution_note,
             pool=pool,
         ),
-        notices,
+        # Setup notices first: "this chat starts fresh" changes how the reply
+        # above it should be read, so it belongs before any MCP grumbling.
+        setup_notices + notices,
     )
 
 
@@ -339,8 +364,8 @@ async def _chat_stream(
             yield event.to_sse()
         return
 
-    for notice in notices:
-        yield ErrorEvent(message=notice, code="mcp_unavailable").to_sse()
+    for message, code in notices:
+        yield ErrorEvent(message=message, code=code).to_sse()
 
     await _rehydrate(request, turn)
 
@@ -383,8 +408,8 @@ async def _approve_stream(
             yield event.to_sse()
         return
 
-    for notice in notices:
-        yield ErrorEvent(message=notice, code="mcp_unavailable").to_sse()
+    for message, code in notices:
+        yield ErrorEvent(message=message, code=code).to_sse()
 
     decisions = {decision.id: decision.approved for decision in payload.decisions}
 
@@ -460,13 +485,26 @@ async def get_chat_session(session_id: str, request: Request) -> dict[str, objec
 
 
 @router.get("/models")
-async def models(settings: Settings = Depends(get_settings)) -> dict[str, object]:
-    """The model picker's catalog. Display metadata only, no secrets."""
+async def models(
+    request: Request, settings: Settings = Depends(get_settings)
+) -> dict[str, object]:
+    """The model picker's catalog. Display metadata and health, never a key.
+
+    Every field here is derived from a credential's *metadata* — whether it
+    exists, whether it is enabled, and what its last test said. The ciphertext is
+    never read on this path and the plaintext never leaves app/agent/llm/resolver.py.
+    """
+    pool = getattr(request.app.state, "pool", None)
+    credentials = await load_credentials(pool, settings)
+
     return {
         "provider": settings.llm_provider,
-        "default": configured_model(settings),
+        "default": default_model(settings, credentials),
         "pricing_as_of": PRICING_AS_OF,
-        "models": [model.model_dump() for model in models_for(settings)],
+        "models": [
+            model.model_dump(mode="json")
+            for model in models_for(settings, credentials)
+        ],
     }
 
 

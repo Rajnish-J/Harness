@@ -11,6 +11,7 @@ from app.api import (
     health,
     mcp as mcp_api,
     memory as memory_api,
+    model_credentials,
     project_files,
     project_git,
     projects,
@@ -84,6 +85,7 @@ app.include_router(chat.router)
 app.include_router(mcp_api.router)
 app.include_router(workflows.router)
 app.include_router(credentials.router)
+app.include_router(model_credentials.router)
 app.include_router(projects.router)
 app.include_router(containers.router)
 app.include_router(project_files.router)
