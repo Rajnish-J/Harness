@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
@@ -17,13 +17,19 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    llm_provider: Literal["anthropic", "openai"] = "anthropic"
+    # The provider a turn falls back to when no model credential in the
+    # database covers the requested model. Registered keys take precedence
+    # over everything below -- see app/agent/llm/resolver.py.
+    llm_provider: Literal["anthropic", "openai", "groq"] = "anthropic"
 
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-opus-5"
 
     openai_api_key: str | None = None
     openai_model: str | None = None
+
+    groq_api_key: str | None = None
+    groq_model: str | None = None
 
     workspace_root: Path = BACKEND_ROOT / "workspace"
     max_agent_iterations: int = 8
@@ -113,25 +119,33 @@ class Settings(BaseSettings):
         # not whatever cwd uvicorn happened to start in.
         return value if value.is_absolute() else (BACKEND_ROOT / value).resolve()
 
-    @model_validator(mode="after")
-    def _require_provider_credentials(self) -> "Settings":
-        if self.llm_provider == "anthropic" and not self.anthropic_api_key:
-            raise ValueError(
-                "LLM_PROVIDER=anthropic requires ANTHROPIC_API_KEY to be set."
-            )
-        if self.llm_provider == "openai":
-            if not self.openai_api_key:
-                raise ValueError(
-                    "LLM_PROVIDER=openai requires OPENAI_API_KEY to be set."
-                )
-            if not self.openai_model:
-                # No default: model naming drifts, and a stale hardcoded id
-                # fails at request time with a confusing 404.
-                raise ValueError(
-                    "LLM_PROVIDER=openai requires OPENAI_MODEL to be set "
-                    "(e.g. OPENAI_MODEL=gpt-4o)."
-                )
-        return self
+    def env_model_for(self, provider: str) -> str | None:
+        """The model id this environment names for a provider, if any.
+
+        Anthropic has a default because its ids are stable enough to pin one.
+        The other two do not: model naming drifts fastest at the cheap end, and
+        a stale hardcoded id fails at request time with a confusing 404 rather
+        than at startup with a fixable message.
+        """
+        return {
+            "anthropic": self.anthropic_model,
+            "openai": self.openai_model,
+            "groq": self.groq_model,
+        }.get(provider)
+
+    def env_key_for(self, provider: str) -> str | None:
+        """The API key this environment holds for a provider, if any.
+
+        This is the FALLBACK source. A key registered on the Credentials page
+        wins, which is what lets an operator add a provider without touching
+        `.env` or restarting the process -- `get_settings()` is lru_cached, so
+        an env-only design could never pick up a new key live.
+        """
+        return {
+            "anthropic": self.anthropic_api_key,
+            "openai": self.openai_api_key,
+            "groq": self.groq_api_key,
+        }.get(provider)
 
 
 @lru_cache

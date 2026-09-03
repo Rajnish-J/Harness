@@ -24,7 +24,23 @@ from pydantic import BaseModel, Field
 
 # Permissive enough for every provider's ids, strict enough that the value can
 # be dropped into a client constructor without further escaping.
-MODEL_ID_PATTERN = r"^[A-Za-z0-9._:\-]{1,100}$"
+#
+# `/` is in the set because Groq namespaces most of its catalog by the model's
+# originating org -- `openai/gpt-oss-120b`, `meta-llama/llama-4-scout-17b-16e-instruct`,
+# `qwen/qwen3-32b`. Without it every one of those ids 422s before the request
+# reaches a provider client. It stays safe for the same reason the rest of the
+# set does: the value is only ever passed as a JSON field to an SDK, never
+# interpolated into a path or a shell command. `/` is a SEPARATOR here, not a
+# free character: it must join two non-empty segments, and `..` is refused
+# outright, so an id can never be mistaken for a relative path.
+#: One dot- or colon-joined chunk. Separators must JOIN two non-empty runs, so
+#: `..`, a leading `.` and a trailing `.` are all unrepresentable.
+_MODEL_ID_SEGMENT = r"[A-Za-z0-9_:\-]+(?:\.[A-Za-z0-9_:\-]+)*"
+MODEL_ID_PATTERN = rf"^{_MODEL_ID_SEGMENT}(?:/{_MODEL_ID_SEGMENT})*$"
+#: Enforced with `max_length` beside the pattern rather than inside it: pydantic
+#: v2 compiles patterns with the Rust `regex` crate, which has no look-around, so
+#: a `(?=.{1,100}$)` bound cannot be expressed here.
+MODEL_ID_MAX_LENGTH = 100
 
 
 class SkillPayload(BaseModel):
@@ -71,7 +87,9 @@ class TurnPreset(BaseModel):
     #: None means the full registry; a list narrows both schemas and dispatch.
     tool_names: list[str] | None = Field(default=None, max_length=200)
     mcp_server_ids: list[str] = Field(default_factory=list, max_length=20)
-    model: str | None = Field(default=None, pattern=MODEL_ID_PATTERN)
+    model: str | None = Field(
+        default=None, pattern=MODEL_ID_PATTERN, max_length=MODEL_ID_MAX_LENGTH
+    )
     max_iterations: int | None = Field(default=None, ge=1, le=50)
     mode: ToolMode = "agent"
 
