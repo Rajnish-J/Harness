@@ -78,6 +78,13 @@
       "when": 1788322372512,
       "tag": "0010_lucky_katie_power",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1788444918210,
+      "tag": "0011_next_blade",
+      "breakpoints": true
     }
   ]
 }
