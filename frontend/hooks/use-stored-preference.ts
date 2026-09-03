@@ -98,3 +98,27 @@ export function useStoredPreference<T extends string>(
 
   return [value, set];
 }
+
+/**
+ * Forget every stored preference — the reset on the settings page.
+ *
+ * Clearing localStorage is the easy half. The module-level `cached` map is the
+ * one that matters: useSyncExternalStore reads its snapshot from there, so
+ * without dropping it and notifying, every mounted control would keep showing
+ * the value that no longer exists until a reload.
+ */
+export function clearStoredPreferences(): void {
+  try {
+    const stale = Object.keys(window.localStorage).filter((key) =>
+      key.startsWith(PREFIX),
+    );
+    for (const key of stale) window.localStorage.removeItem(key);
+  } catch {
+    // Site data blocked. There was nothing persisted to forget.
+  }
+
+  cached.clear();
+  for (const set of listeners.values()) {
+    for (const listener of set) listener();
+  }
+}

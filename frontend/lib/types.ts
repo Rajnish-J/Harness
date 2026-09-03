@@ -113,9 +113,61 @@ export type TranscriptItem =
       decision?: "approved" | "denied";
     };
 
+/**
+ * `GET /api/config`. The first five fields are the original contract and are
+ * always present; HarnessStatus reads them too.
+ *
+ * Everything below is optional because it is: a harness running an older build
+ * of the Python side answers without these groups, and the settings page shows
+ * an em-dash rather than crashing. Secrets appear only as "is it configured".
+ */
 export type HarnessConfig = {
   provider: string;
   model: string;
   max_iterations: number;
   workspace_root: string;
+  /** The harness's own MCP mock switch, distinct from NEXT_PUBLIC_MOCK_MCP. */
+  mock_mcp: boolean;
+
+  /** Whether each secret is set — never its value. */
+  secrets?: {
+    llm_api_key: boolean;
+    database_url: boolean;
+    credentials_encryption_key: boolean;
+  };
+  limits?: {
+    max_file_bytes: number;
+    command_timeout_seconds: number;
+    max_command_output_bytes: number;
+    max_system_prompt_chars: number;
+  };
+  /** null means the matching tool refuses rather than guessing a framework. */
+  commands?: {
+    test: string | null;
+    lint: string | null;
+    build: string | null;
+  };
+  workflows?: {
+    max_nodes: number;
+    max_supersteps: number;
+    max_node_output_chars: number;
+    max_interpolated_chars: number;
+  };
+  mcp?: {
+    attach_all_enabled: boolean;
+    connect_timeout: number;
+    list_timeout: number;
+    tool_timeout: number;
+    idle_timeout: number;
+    retry_cooldown: number;
+  };
+  containers?: {
+    default_image: string;
+    port: number;
+  };
+  database?: {
+    pool_min: number;
+    pool_max: number;
+  };
+  cors_origins?: string[];
 };

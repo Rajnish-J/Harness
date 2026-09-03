@@ -115,6 +115,38 @@ export async function fetchConfig(
       model: "claude-opus-5",
       max_iterations: 8,
       workspace_root: "./workspace (mock)",
+      mock_mcp: true,
+      // The defaults from backend/app/core/config.py, so the settings page is
+      // populated rather than half em-dashes in the mode it is usually run in.
+      secrets: {
+        llm_api_key: true,
+        database_url: true,
+        credentials_encryption_key: true,
+      },
+      limits: {
+        max_file_bytes: 200_000,
+        command_timeout_seconds: 30,
+        max_command_output_bytes: 200_000,
+        max_system_prompt_chars: 120_000,
+      },
+      commands: { test: null, lint: null, build: null },
+      workflows: {
+        max_nodes: 50,
+        max_supersteps: 50,
+        max_node_output_chars: 20_000,
+        max_interpolated_chars: 8_000,
+      },
+      mcp: {
+        attach_all_enabled: false,
+        connect_timeout: 20,
+        list_timeout: 15,
+        tool_timeout: 60,
+        idle_timeout: 300,
+        retry_cooldown: 30,
+      },
+      containers: { default_image: "node:22-bookworm-slim", port: 3000 },
+      database: { pool_min: 1, pool_max: 5 },
+      cors_origins: ["http://localhost:3000"],
     };
   }
 
@@ -122,6 +154,33 @@ export async function fetchConfig(
     const res = await fetch(`${API_BASE}/api/config`, { signal });
     if (!res.ok) return null;
     return (await res.json()) as HarnessConfig;
+  } catch {
+    return null;
+  }
+}
+
+/** What `/healthz` reports: the harness is up, and whether it found Postgres. */
+export type HarnessHealth = {
+  status: string;
+  db: "ok" | "down" | "unconfigured";
+};
+
+/**
+ * Never rendered anywhere before the settings page existed, which is why a
+ * missing DATABASE_URL only showed up as workflows 503-ing.
+ *
+ * Never throws, for the same reason as fetchConfig: an unreachable harness is
+ * a state the page renders, not an error it propagates.
+ */
+export async function fetchHealth(
+  signal?: AbortSignal,
+): Promise<HarnessHealth | null> {
+  if (flags.mockChat) return { status: "ok", db: "ok" };
+
+  try {
+    const res = await fetch(`${API_BASE}/healthz`, { signal });
+    if (!res.ok) return null;
+    return (await res.json()) as HarnessHealth;
   } catch {
     return null;
   }
