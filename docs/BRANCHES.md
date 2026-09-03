@@ -8,12 +8,13 @@
 Every branch in [`Rajnish-J/Harness`](https://github.com/Rajnish-J/Harness) — what it was for, when it
 started, and when it landed. The base branch is `main`.
 
-_Last updated 2026-08-31 (UTC) · 7 merged · 0 open · 0 closed unmerged · 0 without a PR_
+_Last updated 2026-09-03 (UTC) · 8 merged · 0 open · 0 closed unmerged · 0 without a PR_
 
 ## Merged branches
 
 | Branch | PR | Purpose | Created | Merged | Into | Changes |
 | --- | --- | --- | --- | --- | --- | --- |
+| `feat/cross-session-memory` | [#8](https://github.com/Rajnish-J/Harness/pull/8) | Gives the harness a memory that survives a chat session, and a settings page to see how the running instance is configured. main currently has the project flow… | 2026-09-03 | 2026-09-03 | `main` | 49 files, +6496 / −81 |
 | `feat/project-flow` | [#7](https://github.com/Rajnish-J/Harness/pull/7) | Extends the projects feature that landed on main via #6 (credentials, projects, per-project Docker containers, an in-app IDE, and GitHub push/PR/merge) with ri… | 2026-08-30 | 2026-08-31 | `main` | 119 files, +11958 / −699 |
 | `feat/project-integration-vs-code` | [#6](https://github.com/Rajnish-J/Harness/pull/6) | Adds the whole "projects" feature to the harness — credentials, cloned/blank projects, a Docker container per project, an in-app IDE, and GitHub push/PR/merge… | 2026-08-29 | 2026-08-30 | `main` | 99 files, +16661 / −779 |
 | `feat/developer-tools-toolkit` | [#5](https://github.com/Rajnish-J/Harness/pull/5) | Expands the agent's tool surface (search, shell execution, git) with a live /tools UI, and layers workflow-editor and chat improvements on top: per-node durati… | 2026-08-27 | 2026-08-29 | `main` | 63 files, +4048 / −572 |
@@ -33,6 +34,14 @@ _None — every branch on the remote has a pull request._
 ---
 
 ## Details
+
+### `feat/cross-session-memory` → `main` ([#8](https://github.com/Rajnish-J/Harness/pull/8))
+
+**Merged** 2026-09-03 · created 2026-09-03 · by @Rajnish-J · 10 commits · 49 files, +6496 / −81 · branch still on the remote
+
+**feat: add cross-session memory and a tabbed settings page**
+
+Gives the harness a memory that survives a chat session, and a settings page to see how the running instance is configured. main currently has the project flow work merged in #7; neither of these surfaces existed there.
 
 ### `feat/project-flow` → `main` ([#7](https://github.com/Rajnish-J/Harness/pull/7))
 
