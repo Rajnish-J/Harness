@@ -7,7 +7,7 @@ import MockBadge from "@/components/shell/MockBadge";
 import ThemeToggle from "@/components/shell/ThemeToggle";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { findNavItem } from "@/lib/nav";
+import { findNavGroup, findNavItem } from "@/lib/nav";
 
 /**
  * The one header for the whole app. Replaces the three near-identical inline
@@ -17,6 +17,9 @@ import { findNavItem } from "@/lib/nav";
 export default function AppHeader() {
   const pathname = usePathname();
   const section = findNavItem(pathname);
+  const group = findNavGroup(pathname);
+  // Dropped when it would only repeat the page name ("Settings > Settings").
+  const crumb = group && group.label !== section?.label ? group.label : null;
 
   return (
     <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
@@ -24,6 +27,12 @@ export default function AppHeader() {
       <Separator orientation="vertical" className="mr-2 !h-4" />
       <div className="min-w-0">
         <h1 className="truncate text-sm font-semibold tracking-tight">
+          {crumb && (
+            <span className="font-normal text-muted-foreground">
+              {crumb}
+              <span className="px-1.5">&rsaquo;</span>
+            </span>
+          )}
           {section?.label ?? "Harness"}
         </h1>
         {section && (

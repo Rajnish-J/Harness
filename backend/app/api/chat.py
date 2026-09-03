@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
+from psycopg_pool import AsyncConnectionPool
 
 from app.agent.llm.catalog import PRICING_AS_OF, configured_model, models_for
 from app.agent.llm.factory import get_llm_client
@@ -16,7 +17,7 @@ from app.agent.tools.toolsets import UnknownToolError, merge_toolsets
 from app.api.sse import SSE_HEADERS
 from app.agent.exec_context import ExecutionContext
 from app.core.config import Settings, get_settings
-from app.db import project_chat_repo
+from app.db import memory_repo, project_chat_repo
 from app.projects.execution import resolve_executor
 from app.projects.workspaces import InvalidProjectIdError, settings_for_project
 from app.mcp import resolve_mcp_tools
@@ -78,6 +79,10 @@ class Turn:
     project_id: str | None = None
     #: Where commands will run, surfaced so the operator is never surprised.
     execution_note: str | None = None
+    #: None when DATABASE_URL is unset. Carried on the turn because the loop
+    #: needs it at tool-dispatch time, for `remember`; _rehydrate and _persist
+    #: read app.state themselves, since they are handed the request anyway.
+    pool: AsyncConnectionPool | None = None
 
 
 class TurnSetupError(Exception):
@@ -150,11 +155,22 @@ async def _prepare_turn(
     # propose creating a project with there either.
     propose_project_tool = project_id is None and payload.mode != "chat"
 
+    # Same optional-pool discipline as _rehydrate/_persist below: memory is
+    # inert, never fatal, when DATABASE_URL is unset.
+    pool = getattr(request.app.state, "pool", None)
+    memories: list[memory_repo.MemoryRow] = []
+    if pool is not None:
+        try:
+            memories = await memory_repo.list_active(pool, project_id)
+        except Exception:  # noqa: BLE001 - a chat must not die because memory did
+            logger.exception("could not load memory for project %s", project_id)
+
     system = compose_system_prompt(
         base=SYSTEM_PROMPT,
         agent_name=payload.agent_name,
         agent_prompt=payload.system_prompt,
         skills=payload.skills,
+        memories=memories,
         no_project_open=propose_project_tool,
         max_chars=turn_settings.max_system_prompt_chars,
     )
@@ -193,6 +209,7 @@ async def _prepare_turn(
             executor=executor,
             project_id=project_id,
             execution_note=execution_note,
+            pool=pool,
         ),
         notices,
     )
@@ -341,6 +358,8 @@ async def _chat_stream(
         system=turn.system,
         require_approval=turn.require_approval,
         executor=turn.executor,
+        pool=turn.pool,
+        project_id=turn.project_id,
     ):
         entry = _entry_for(event)
         if entry is not None:
@@ -381,6 +400,8 @@ async def _approve_stream(
         system=turn.system,
         require_approval=turn.require_approval,
         executor=turn.executor,
+        pool=turn.pool,
+        project_id=turn.project_id,
     ):
         entry = _entry_for(event)
         if entry is not None:
@@ -451,7 +472,17 @@ async def models(settings: Settings = Depends(get_settings)) -> dict[str, object
 
 @router.get("/config")
 async def config(settings: Settings = Depends(get_settings)) -> dict[str, object]:
-    """What the UI needs to know about the running harness. No secrets."""
+    """What the UI needs to know about the running harness.
+
+    No secret ever leaves this endpoint. The three that matter are reported as
+    booleans under "secrets" — whether each is *configured*, never its value —
+    because "workflows are 503-ing" and "DATABASE_URL is unset" are the same
+    fact, and the settings page could not state it before.
+
+    Grouped rather than flat: the frontend renders one panel per key, and a
+    flat thirty-key blob would leave that mapping implicit. The first five keys
+    are unchanged and must stay that way — HarnessStatus reads them too.
+    """
     return {
         "provider": settings.llm_provider,
         "model": (
@@ -462,4 +493,45 @@ async def config(settings: Settings = Depends(get_settings)) -> dict[str, object
         "max_iterations": settings.max_agent_iterations,
         "workspace_root": str(settings.workspace_root),
         "mock_mcp": settings.mock_mcp,
+        "secrets": {
+            "llm_api_key": bool(settings.anthropic_api_key or settings.openai_api_key),
+            "database_url": bool(settings.database_url),
+            "credentials_encryption_key": bool(settings.credentials_encryption_key),
+        },
+        "limits": {
+            "max_file_bytes": settings.max_file_bytes,
+            "command_timeout_seconds": settings.command_timeout_seconds,
+            "max_command_output_bytes": settings.max_command_output_bytes,
+            "max_system_prompt_chars": settings.max_system_prompt_chars,
+        },
+        # None stays None. The UI renders "not set", which is the honest answer:
+        # run_tests refuses rather than guessing a framework.
+        "commands": {
+            "test": settings.test_command,
+            "lint": settings.lint_command,
+            "build": settings.build_command,
+        },
+        "workflows": {
+            "max_nodes": settings.max_workflow_nodes,
+            "max_supersteps": settings.max_workflow_supersteps,
+            "max_node_output_chars": settings.max_node_output_chars,
+            "max_interpolated_chars": settings.max_interpolated_chars,
+        },
+        "mcp": {
+            "attach_all_enabled": settings.mcp_attach_all_enabled,
+            "connect_timeout": settings.mcp_connect_timeout,
+            "list_timeout": settings.mcp_list_timeout,
+            "tool_timeout": settings.mcp_tool_timeout,
+            "idle_timeout": settings.mcp_idle_timeout,
+            "retry_cooldown": settings.mcp_retry_cooldown,
+        },
+        "containers": {
+            "default_image": settings.default_project_image,
+            "port": settings.project_container_port,
+        },
+        "database": {
+            "pool_min": settings.db_pool_min,
+            "pool_max": settings.db_pool_max,
+        },
+        "cors_origins": settings.cors_origins,
     }

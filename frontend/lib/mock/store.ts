@@ -12,13 +12,19 @@
  * process restarts. It is a development fixture, not persistence.
  */
 
+import type { Memory } from "@/lib/memory-api";
 import type { Agent, McpServer, Skill } from "@/lib/registry-types";
+import { MOCK_MEMORIES } from "./memory";
 import { MOCK_AGENTS, MOCK_MCP_SERVERS, MOCK_SKILLS } from "./registry";
 
 type Stores = {
   agents: Map<string, Agent>;
   skills: Map<string, Skill>;
   mcp: Map<string, McpServer>;
+  /** Unlike the three above, this one is written from the BROWSER — memory is
+   *  fetched client-side from the Python harness rather than through a Next
+   *  route — so it lives in the tab's realm and resets on a full reload. */
+  memory: Map<string, Memory>;
 };
 
 const globalForMock = globalThis as unknown as { __harnessMock?: Stores };
@@ -30,6 +36,7 @@ function seed(): Stores {
     agents: new Map(MOCK_AGENTS.map((a) => [a.id, { ...a }])),
     skills: new Map(MOCK_SKILLS.map((s) => [s.id, { ...s }])),
     mcp: new Map(MOCK_MCP_SERVERS.map((m) => [m.id, { ...m }])),
+    memory: new Map(MOCK_MEMORIES.map((m) => [m.id, { ...m }])),
   };
 }
 

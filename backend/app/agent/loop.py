@@ -2,6 +2,8 @@ import inspect
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 
+from psycopg_pool import AsyncConnectionPool
+
 from app.agent.llm.base import LLMClient, ToolCallRequest, ToolResult
 from app.agent.session import Session
 from app.agent.exec_context import ExecutionContext
@@ -54,6 +56,8 @@ async def run_agent_loop(
     system: str | None = None,
     require_approval: bool = False,
     executor: ExecutionContext | None = None,
+    pool: AsyncConnectionPool | None = None,
+    project_id: str | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Drive one decide -> act -> observe -> repeat turn to completion.
 
@@ -75,6 +79,12 @@ async def run_agent_loop(
 
     `require_approval` parks the turn at the first tool call instead of running
     it: see `_drive`. The turn is finished by `resume_agent_loop`.
+
+    `pool` and `project_id` are only read by the `remember` tool (see
+    `_dispatch_tool`) so it can write a memory row scoped to this turn; every
+    other tool absorbs them via `**_ignored`. `None` for either disables the
+    tool's write silently, the same "degrade, don't fail" contract the rest of
+    the app follows when `DATABASE_URL` is unset.
     """
     session.history.append(llm_client.user_message(user_message))
 
@@ -87,6 +97,8 @@ async def run_agent_loop(
         system=system,
         require_approval=require_approval,
         executor=executor,
+        pool=pool,
+        project_id=project_id,
     ):
         yield event
 
@@ -102,6 +114,8 @@ async def resume_agent_loop(
     system: str | None = None,
     require_approval: bool = True,
     executor: ExecutionContext | None = None,
+    pool: AsyncConnectionPool | None = None,
+    project_id: str | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Finish a manual-mode turn that parked on `session.pending`.
 
@@ -136,7 +150,15 @@ async def resume_agent_loop(
     results: list[tuple[ToolCallRequest, ToolResult]] = []
     for call in pending:
         if decisions.get(call.id, False):
-            result = await _dispatch_tool(call, settings, tools_by_name, executor)
+            result = await _dispatch_tool(
+                call,
+                settings,
+                tools_by_name,
+                executor,
+                pool=pool,
+                project_id=project_id,
+                session_id=session.session_id,
+            )
         else:
             result = ToolResult(content=DENIED_MESSAGE, is_error=True)
         results.append((call, result))
@@ -157,6 +179,8 @@ async def resume_agent_loop(
         require_approval=require_approval,
         resolved=results,
         executor=executor,
+        pool=pool,
+        project_id=project_id,
     ):
         yield event
 
@@ -172,6 +196,8 @@ async def _drive(
     require_approval: bool,
     resolved: list[tuple[ToolCallRequest, ToolResult]] | None = None,
     executor: ExecutionContext | None = None,
+    pool: AsyncConnectionPool | None = None,
+    project_id: str | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """The decide -> act -> observe iteration itself.
 
@@ -285,7 +311,15 @@ async def _drive(
                 yield ToolCallEvent(
                     id=call.id, name=call.name, arguments=call.arguments
                 )
-                result = await _dispatch_tool(call, settings, tools_by_name, executor)
+                result = await _dispatch_tool(
+                    call,
+                    settings,
+                    tools_by_name,
+                    executor,
+                    pool=pool,
+                    project_id=project_id,
+                    session_id=session.session_id,
+                )
                 results.append((call, result))
                 yield ToolResultEvent(
                     id=call.id,
@@ -317,6 +351,10 @@ async def _dispatch_tool(
     settings: Settings,
     tools_by_name: dict[str, Tool],
     executor: ExecutionContext | None = None,
+    *,
+    pool: AsyncConnectionPool | None = None,
+    project_id: str | None = None,
+    session_id: str | None = None,
 ) -> ToolResult:
     """Run one tool call, turning every failure into a result the model can read."""
     if call.parse_error:
@@ -349,6 +387,11 @@ async def _dispatch_tool(
             # **_ignored. None means the host, which is the pre-container
             # behaviour and stays the default for a chat with no project.
             executor=executor,
+            # Only the `remember` tool reads these three; every other tool
+            # absorbs them via **_ignored, same as executor above.
+            pool=pool,
+            project_id=project_id,
+            session_id=session_id,
         )
         if inspect.isawaitable(output):
             output = await output

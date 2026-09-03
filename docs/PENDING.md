@@ -1,10 +1,11 @@
 # Pending work
 
 What is **not** finished across the five milestones of the projects feature
-(credentials → projects → containers → IDE → GitHub actions).
+(credentials → projects → containers → IDE → GitHub actions), plus the
+cross-session memory feature that landed after them.
 
 Hand-maintained, unlike [`BRANCHES.md`](./BRANCHES.md) which is generated. Last
-reviewed 2026-08-30, against the code on `feat/project-flow`.
+reviewed 2026-09-02, against the code on `feat/cross-session-memory`.
 
 Two categories are kept apart on purpose, because they carry very different risk:
 
@@ -23,6 +24,7 @@ Two categories are kept apart on purpose, because they carry very different risk
 | M3 Docker runtime | **Never executed** | Docker Desktop is installed but its engine won't start — WSL2's "Virtual Machine Platform" feature isn't enabled yet |
 | M4 Project IDE | Working end to end | Read/edit only — no create, delete or rename |
 | M5 GitHub actions | **Never executed** | No push, PR or merge has run against a real repo — blocked on a GitHub credential being added through the app |
+| Memory (cross-session) | Working, but no model has used it | Read and write paths verified against real Postgres; no LLM has ever *chosen* to call `remember` — this environment has no API key |
 
 ---
 
@@ -64,6 +66,26 @@ both of which surface as explicit messages rather than crashes:
 Everything else keeps working without a daemon: files come off the host mount,
 so the tree, the editor and git are unaffected, and commands fall back to the
 host with a stated reason.
+
+### A model actually choosing to call `remember` (Memory)
+
+The memory feature's own machinery is exercised: `remember()` was called
+directly against the real database, a second session read the row back, and
+the composed `<memories>` block was inspected — see the Memory section below.
+What has *never* happened is the part that matters in practice: an LLM
+reading the tool description and deciding, unprompted, that something is
+worth remembering. This environment's `ANTHROPIC_API_KEY` is a placeholder,
+so no turn has ever reached a model.
+
+The two likely first surprises, both cheap to check once a key exists:
+
+1. **It is called too often** — the model remembers things that are merely
+   true of the current task. The tool description pushes against this
+   ("Do not use it for facts already obvious from the code"), but only a real
+   run shows whether that is enough.
+2. **It is never called at all** — the description sits at the end of a long
+   tool list and gets ignored. If so, the lever is the system prompt in
+   `app/agent/loop.py`, which currently says nothing about memory.
 
 ### The GitHub write path (M5)
 
@@ -225,6 +247,72 @@ Beyond "never executed" above:
 
 ---
 
+## Memory (cross-session)
+
+Two tiers in one table (`memory_entries`): a row with `project_id is null`
+reaches every conversation, a project-scoped row reaches only that project's.
+`_prepare_turn` re-reads both on every request and composes them into the
+system prompt, so a memory written in one session lands in another session's
+next turn with nothing typed into it. The agent writes via the `remember`
+tool; a human writes via `/memory`.
+
+Two pages: `/memory` edits them, `/memory-insights` explains them — grouping
+by project and by originating conversation, and rendering the exact
+`<memories>` block a turn in a given scope receives (composed through the real
+`compose_system_prompt`, so the preview cannot drift from the prompt).
+
+- **No session-level compaction.** This feature is about memory *between*
+  sessions; nothing shrinks a single session's own history, which is still
+  sent to the provider in full and unbounded every call
+  (`app/agent/loop.py`). A long conversation still ends in a provider error
+  rather than a summarisation.
+- **No deduplication.** Re-using a slug edits that memory, which is the
+  intended way to revise one — but two near-identical memories under
+  different slugs both persist, and nothing notices. Curating them is manual,
+  through `/memory`.
+- **Nothing prunes or ages memory out.** Rows live until archived by hand. A
+  memory that was true in April is still in the prompt in September.
+- **Archived rows are only recoverable in SQL.** Delete soft-deletes
+  (`archived_at`), but there is no archived view and no un-archive in the UI —
+  and `/memory-insights` does not close this: `archived_at` is never selected
+  by the repo layer at all, so putting it on screen means touching `_COLUMNS`,
+  `MemoryRow`, `_row`, `MemoryOut` and the TS type.
+- **The overview is a full scan.** `GET /api/memory/overview` returns every
+  active memory in every scope with no pagination, on the theory that memory
+  small enough to fit in a prompt is small enough to list. A harness that
+  outgrows that gets a slow page before it gets a wrong one.
+- **Session titles are derived, and can go missing.** `/memory-insights`
+  groups by the conversation a memory came from, resolved through
+  `list_sessions_by_ids`. `clear_session` hard-deletes chat rows while the
+  memory keeps the id, so those land under "Conversation no longer exists" —
+  correct, but it means provenance degrades over time.
+- **The global chat has no narrower tier.** With no project open, a
+  `scope="project"` remember becomes a global row, because global vs project
+  are the only two scopes. Something scratch-only said in the top-level chat
+  can therefore reach every project.
+- **The prompt budget is shared.** Memories are truncated by the same
+  `max_system_prompt_chars` (120,000) ceiling as skills, and they are composed
+  last — so a large enough skill set could, in principle, truncate memory
+  away. Nothing warns when that happens.
+- **Workflow nodes cannot write memory.** `remember` is in `ALL_TOOLS`, so a
+  workflow node with no tool allowlist advertises it — but
+  `app/workflow/nodes/agent_node.py` calls `run_agent_loop` without a `pool`,
+  so calling it there returns "not available in this context" and the model
+  moves on. Deciding what scope a workflow's memory would even have (runs are
+  not project-scoped) is the open question, not the plumbing.
+- **Mock mode covers memory, but not the projects it groups by.**
+  `NEXT_PUBLIC_MOCK_MEMORY` (and `MOCK_ALL`) serve both memory pages from
+  `frontend/lib/mock/memory.ts`, with create/edit/delete persisting in the
+  tab's `mockStore()` until reload. `projectsApi` still has no mock branch, so
+  `/memory-insights` seeds its project *names* from the same fixture file —
+  meaning in mock mode the project list shown there is the fixtures', not
+  Postgres's, even if Postgres is up.
+- **The mock `<memories>` block is hand-kept in step with `prompt.py`.**
+  `renderMemoryBlock` in the fixtures reimplements `_memory_block`'s shape and
+  its `(kind, slug)` ordering. The real preview endpoint composes through
+  `compose_system_prompt` and cannot drift; the mock one can, and only a
+  reader would notice.
+
 ## Cross-cutting
 
 - **Single user, no auth.** CORS runs with `allow_credentials=False` and there
@@ -236,10 +324,16 @@ Beyond "never executed" above:
 - **The README does not mention any of this.** It still describes Milestone 1 of
   the original harness — no projects, no credentials, no containers.
 - **No integration tests for Docker or GitHub.** Both need real credentials and
-  a real daemon. The pure logic is covered (254 backend tests); the I/O is not.
-- **`NEXT_PUBLIC_MOCK_ALL=true` is set in `frontend/.env`,** and the credentials
-  and projects pages deliberately have no mock branch — they always hit
-  Postgres. Worth knowing when the rest of the app is showing fixtures.
+  a real daemon. The pure logic is covered (296 backend tests); the I/O is not.
+- **Every `NEXT_PUBLIC_MOCK_*` flag is currently `true` in `frontend/.env`,**
+  so the whole app serves fixtures and the header shows "All mock". Two things
+  that costs you: `MOCK_TOOLS` is the one flag `MOCK_ALL` deliberately does
+  *not* imply, so turning it on really does stop `/tools` and the composer's
+  tool picker from reflecting the live Python registry; and the credentials
+  and projects pages have no mock branch at all, so they still hit Postgres
+  and will error while everything around them renders. Flip them back in
+  `frontend/.env` — and restart `next dev`, since these are inlined at build
+  time.
 
 ---
 
