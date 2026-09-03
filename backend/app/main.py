@@ -10,6 +10,7 @@ from app.api import (
     credentials,
     health,
     mcp as mcp_api,
+    memory as memory_api,
     project_files,
     project_git,
     projects,
@@ -87,3 +88,4 @@ app.include_router(projects.router)
 app.include_router(containers.router)
 app.include_router(project_files.router)
 app.include_router(project_git.router)
+app.include_router(memory_api.router)
