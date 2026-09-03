@@ -2,14 +2,19 @@
  * The model picker's catalog, served by the Python harness.
  *
  * Fetched rather than hardcoded because only the harness knows which provider
- * is configured, and therefore which models are actually selectable. Failures
- * return an empty catalog for the same reason fetchTools does: the composer
- * must still render when Python is down.
+ * keys are registered, and therefore which models are actually selectable.
+ * Failures return an empty catalog for the same reason fetchTools does: the
+ * composer must still render when Python is down.
+ *
+ * There is deliberately NO mock branch here, unlike streamChat beside it. A
+ * fixture catalog used to stand in under NEXT_PUBLIC_MOCK_CHAT, and it actively
+ * lied: it hardcoded four Anthropic models as available regardless of whether
+ * any key existed, which is the exact question this endpoint now answers. Mock
+ * chat still fakes the message stream; which models you may pick is always the
+ * truth.
  */
 
 import { API_BASE } from "./api";
-import { flags } from "./flags";
-import { MOCK_MODEL_CATALOG } from "./mock/models";
 
 export type ModelInfo = {
   id: string;
@@ -20,9 +25,21 @@ export type ModelInfo = {
   /** null where the harness has no price it is confident enough to show. */
   input_per_mtok: number | null;
   output_per_mtok: number | null;
-  /** False for models belonging to a provider this deployment is not running. */
+  /** False when no key is registered for this model's provider. */
   available: boolean;
   default: boolean;
+  /** Where the key behind this model came from; null when there is none. */
+  credential_source: "db" | "env" | null;
+  /**
+   * The verdict from that key's last test. `unknown` means registered but never
+   * tested — not a failure. This is what lets the composer show an expired key
+   * before a message is sent rather than after.
+   */
+  status: "ok" | "unknown" | "rejected" | "missing";
+  /** The provider's own words on the last failure. */
+  status_message: string | null;
+  /** ISO timestamp of that test, or null. */
+  checked_at: string | null;
 };
 
 export type ModelCatalog = {
@@ -40,8 +57,6 @@ export const EMPTY_CATALOG: ModelCatalog = {
 };
 
 export async function fetchModels(signal?: AbortSignal): Promise<ModelCatalog> {
-  if (flags.mockChat) return MOCK_MODEL_CATALOG;
-
   try {
     const res = await fetch(`${API_BASE}/api/models`, { signal });
     if (!res.ok) return EMPTY_CATALOG;
@@ -61,4 +76,25 @@ export function formatContext(tokens: number | null): string | null {
   if (!tokens) return null;
   if (tokens >= 1_000_000) return `${tokens / 1_000_000}M`;
   return `${Math.round(tokens / 1000)}K`;
+}
+
+/** Grouped by provider, preserving the catalog's own order within each group. */
+export function groupByProvider(models: ModelInfo[]): [string, ModelInfo[]][] {
+  const groups = new Map<string, ModelInfo[]>();
+  for (const model of models) {
+    const bucket = groups.get(model.provider);
+    if (bucket) bucket.push(model);
+    else groups.set(model.provider, [model]);
+  }
+  return [...groups.entries()];
+}
+
+/** The short badge a model row carries, or null when there is nothing to say. */
+export function statusBadge(
+  model: ModelInfo,
+): { label: string; tone: "ok" | "warn" | "error" } | null {
+  if (!model.available) return { label: "no key", tone: "warn" };
+  if (model.status === "rejected") return { label: "key failed", tone: "error" };
+  if (model.status === "unknown") return { label: "untested", tone: "warn" };
+  return null;
 }

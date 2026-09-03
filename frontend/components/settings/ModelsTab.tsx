@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import SectionHeader from "@/components/registry/SectionHeader";
 import { Panel, PanelEmpty } from "@/components/settings/SettingsPanel";
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +14,11 @@ import { cn } from "@/lib/utils";
  * the first: default is what the catalog nominates, running is what
  * /api/config reports. They agree until someone overrides ANTHROPIC_MODEL, and
  * that is exactly when you are looking at this page.
+ *
+ * Read-only, like the rest of settings. What decides availability here is
+ * editable, but it lives on the Credentials page — a model is selectable when
+ * its provider has a registered key, so the badges below report that state
+ * rather than offering to change it.
  */
 export default function ModelsTab({
   catalog,
@@ -27,7 +34,7 @@ export default function ModelsTab({
       <section className="flex flex-col gap-4">
         <SectionHeader
           title="Catalog"
-          hint="Models belonging to a provider this deployment is not running are listed but unavailable."
+          hint="A model is selectable when its provider has a registered API key. Models without one are listed but unavailable."
         />
         <Panel>
           {catalog.models.length === 0 ? (
@@ -56,8 +63,15 @@ export default function ModelsTab({
                       <Badge variant="default">running</Badge>
                     )}
                     {model.default && <Badge variant="secondary">default</Badge>}
-                    {!model.available && (
-                      <Badge variant="outline">other provider</Badge>
+                    {!model.available ? (
+                      <Badge variant="outline">no key</Badge>
+                    ) : model.status === "rejected" ? (
+                      <Badge variant="outline">key failed</Badge>
+                    ) : model.status === "unknown" ? (
+                      <Badge variant="outline">untested</Badge>
+                    ) : null}
+                    {model.credential_source === "env" && (
+                      <Badge variant="outline">from .env</Badge>
                     )}
                     <span className="font-mono text-[11px] text-muted-foreground">
                       {model.id}
@@ -73,14 +87,25 @@ export default function ModelsTab({
                       {model.description}
                     </p>
                   )}
+                  {model.status === "rejected" && model.status_message && (
+                    <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+                      {model.status_message}
+                    </p>
+                  )}
                 </div>
               ))}
-              {catalog.pricing_as_of && (
-                <p className="px-4 py-2 text-[11px] text-muted-foreground">
-                  Prices per million tokens, hand-maintained as of{" "}
-                  {catalog.pricing_as_of}.
-                </p>
-              )}
+              <p className="px-4 py-2 text-[11px] text-muted-foreground">
+                Register or replace a provider key under{" "}
+                <Link
+                  href="/credentials"
+                  className="underline underline-offset-2"
+                >
+                  Credentials → Models
+                </Link>
+                .
+                {catalog.pricing_as_of &&
+                  ` Prices per million tokens, hand-maintained as of ${catalog.pricing_as_of}.`}
+              </p>
             </>
           )}
         </Panel>
