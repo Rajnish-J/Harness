@@ -423,14 +423,31 @@ def _classify_llm_error(exc: Exception) -> tuple[str, str]:
     name = type(exc).__name__
     status = getattr(exc, "status_code", None)
 
+    # These messages name the fix, and the fix moved: provider keys are
+    # registered on the Credentials page now, with .env only as a fallback.
     if name == "AuthenticationError":
-        return ("LLM API key was rejected. Check your .env.", "auth")
+        return (
+            "The provider rejected this API key. Re-test or replace it under "
+            "Credentials → Models.",
+            "auth",
+        )
     if name == "PermissionDeniedError":
-        return ("LLM API key lacks permission for this model.", "permission")
+        return (
+            "This API key lacks permission for this model. Check the key's "
+            "scopes under Credentials → Models.",
+            "permission",
+        )
     if name == "NotFoundError":
-        return ("Model not found — check ANTHROPIC_MODEL / OPENAI_MODEL.", "not_found")
+        return (
+            "The provider does not have this model. Pick another in the model "
+            "picker, or correct the id on the credential.",
+            "not_found",
+        )
     if name == "RateLimitError":
-        return ("Rate limited by the LLM provider. Try again shortly.", "rate_limited")
+        return (
+            "Rate limited by the provider, or out of quota. Try again shortly.",
+            "rate_limited",
+        )
     if name == "BadRequestError":
         return (f"The provider rejected the request: {exc}", "bad_request")
     if name in ("APIConnectionError", "APITimeoutError"):

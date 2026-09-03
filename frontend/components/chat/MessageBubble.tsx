@@ -1,6 +1,19 @@
 import type { TranscriptItem } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 type Bubble = Extract<TranscriptItem, { kind: "user" | "assistant" | "error" }>;
+
+/**
+ * Codes that ride the `error` event but are not failures.
+ *
+ * The SSE contract has one channel for "something the user should read", so a
+ * degraded-but-fine turn and a dead turn arrive identically. Rendering both in
+ * alarm red trained the eye to ignore the colour: `mcp_unavailable` means the
+ * turn ran without one server's tools, and `provider_switched` means the model
+ * picker did exactly what was asked of it. Neither is a failure and neither
+ * should look like one.
+ */
+const NOTICE_CODES = new Set(["mcp_unavailable", "provider_switched"]);
 
 export default function MessageBubble({ item }: { item: Bubble }) {
   if (item.kind === "user") {
@@ -14,8 +27,16 @@ export default function MessageBubble({ item }: { item: Bubble }) {
   }
 
   if (item.kind === "error") {
+    const notice = NOTICE_CODES.has(item.code ?? "");
     return (
-      <div className="rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2 text-sm text-red-700 dark:text-red-300">
+      <div
+        className={cn(
+          "rounded-lg border px-3 py-2 text-sm",
+          notice
+            ? "border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-300"
+            : "border-red-500/30 bg-red-500/5 text-red-700 dark:text-red-300",
+        )}
+      >
         <span className="font-mono text-xs opacity-70">[{item.code}]</span>{" "}
         {item.message}
       </div>

@@ -1,19 +1,23 @@
 "use client";
 
-import { Braces, KeyRound } from "lucide-react";
+import { Boxes, Braces, KeyRound } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
 import CredentialCard from "@/components/credentials/CredentialCard";
 import DeleteCredentialDialog from "@/components/credentials/DeleteCredentialDialog";
 import DeleteEnvVarDialog from "@/components/credentials/DeleteEnvVarDialog";
+import DeleteModelCredentialDialog from "@/components/credentials/DeleteModelCredentialDialog";
 import EditEnvVarDialog from "@/components/credentials/EditEnvVarDialog";
 import EnvVarCard from "@/components/credentials/EnvVarCard";
+import ModelCredentialCard from "@/components/credentials/ModelCredentialCard";
 import NewCredentialButton from "@/components/credentials/NewCredentialButton";
+import NewModelCredentialDialog from "@/components/credentials/NewModelCredentialDialog";
 import NewEnvVarDialog, {
   type ProjectOption,
 } from "@/components/credentials/NewEnvVarDialog";
 import CredentialsTable from "@/components/credentials/table/CredentialsTable";
 import EnvVarsTable from "@/components/credentials/table/EnvVarsTable";
+import ModelCredentialsTable from "@/components/credentials/table/ModelCredentialsTable";
 import EmptyState from "@/components/registry/EmptyState";
 import SectionHeader from "@/components/registry/SectionHeader";
 import ViewSwitch, {
@@ -31,14 +35,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useStoredPreference } from "@/hooks/use-stored-preference";
 import type { Credential } from "@/lib/credential-types";
 import type { EnvVarListRow } from "@/lib/env-var-types";
+import type { ModelCredential } from "@/lib/model-credential-types";
 
-const SCOPES = ["personal", "project"] as const;
+const SCOPES = ["personal", "project", "models"] as const;
 type Scope = (typeof SCOPES)[number];
 
 const ALL_PROJECTS = "__all__";
 
 /**
- * The Credentials page body: two tabs over two different kinds of secret.
+ * The Credentials page body: three tabs over three different kinds of secret.
  *
  * They are tabs rather than two sections on one page because they answer
  * different questions and are managed at different times. A personal credential
@@ -52,6 +57,14 @@ const ALL_PROJECTS = "__all__";
  * for comparing DATABASE_URL across three projects, and which you want depends
  * on which tab you are in.
  *
+ * The third tab, Models, holds the LLM provider keys the chat spends. It is
+ * here rather than on the settings page because it is a secret with the same
+ * lifecycle as the two beside it — pasted once, encrypted, tested, replaced when
+ * it expires — and settings is read-only by design. What makes it different is
+ * where the consequence shows up: registering a key here is what puts a
+ * provider's models in the composer's picker, and a key that fails its test is
+ * what puts a warning on them.
+ *
  * Every dialog is mounted once here rather than once per row — the same reason
  * ProjectsExplorer does it. With a hundred variables that is a hundred fewer
  * Radix portals, and it is what lets the table's bulk delete reuse the
@@ -60,11 +73,13 @@ const ALL_PROJECTS = "__all__";
 export default function CredentialsExplorer({
   credentials,
   envVars,
+  modelCredentials,
   projects,
   error,
 }: {
   credentials: Credential[];
   envVars: EnvVarListRow[];
+  modelCredentials: ModelCredential[];
   projects: ProjectOption[];
   error: string | null;
 }) {
@@ -83,6 +98,11 @@ export default function CredentialsExplorer({
     "list",
     VIEW_MODES,
   );
+  const [modelView, setModelView] = useStoredPreference<ViewMode>(
+    "model_credentials_view",
+    "grid",
+    VIEW_MODES,
+  );
 
   const [projectFilter, setProjectFilter] = useState<string>(ALL_PROJECTS);
   const [deletingCredentials, setDeletingCredentials] = useState<
@@ -92,6 +112,9 @@ export default function CredentialsExplorer({
   const [deletingEnvVars, setDeletingEnvVars] = useState<EnvVarListRow[] | null>(
     null,
   );
+  const [deletingModelCredentials, setDeletingModelCredentials] = useState<
+    ModelCredential[] | null
+  >(null);
 
   // Stable identities: the column factories are memoised on these, and a fresh
   // function each render would rebuild every column on every keystroke in the
@@ -107,6 +130,17 @@ export default function CredentialsExplorer({
   const onDeleteEnvVars = useCallback(
     (rows: EnvVarListRow[]) => setDeletingEnvVars(rows),
     [],
+  );
+  const onDeleteModelCredentials = useCallback(
+    (rows: ModelCredential[]) => setDeletingModelCredentials(rows),
+    [],
+  );
+
+  /** Providers that already have a key. The table is UNIQUE on provider, so the
+   *  Add dialog greys these out rather than letting the operator earn a 409. */
+  const takenProviders = useMemo(
+    () => modelCredentials.map((row) => row.provider),
+    [modelCredentials],
   );
 
   const visibleEnvVars = useMemo(
@@ -176,6 +210,13 @@ export default function CredentialsExplorer({
                 {envVars.length}
               </span>
             </TabsTrigger>
+            <TabsTrigger value="models">
+              <Boxes />
+              Models
+              <span className="ml-1 text-xs text-muted-foreground tabular-nums">
+                {modelCredentials.length}
+              </span>
+            </TabsTrigger>
           </TabsList>
 
           <div className="flex items-center gap-2">
@@ -185,6 +226,13 @@ export default function CredentialsExplorer({
                   <ViewSwitch value={personalView} onChange={setPersonalView} />
                 )}
                 <NewCredentialButton />
+              </>
+            ) : scope === "models" ? (
+              <>
+                {modelCredentials.length > 0 && (
+                  <ViewSwitch value={modelView} onChange={setModelView} />
+                )}
+                <NewModelCredentialDialog takenProviders={takenProviders} />
               </>
             ) : (
               <>
@@ -288,6 +336,33 @@ export default function CredentialsExplorer({
             />
           )}
         </TabsContent>
+
+        <TabsContent value="models" className="pt-4">
+          {modelCredentials.length === 0 ? (
+            <EmptyState
+              icon={Boxes}
+              title="No provider keys yet"
+              description="Register an API key to make a provider's models selectable in the chat. Until then the model picker has nothing to offer."
+              action={<NewModelCredentialDialog takenProviders={takenProviders} />}
+            />
+          ) : modelView === "grid" ? (
+            <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {modelCredentials.map((credential) => (
+                <li key={credential.id}>
+                  <ModelCredentialCard
+                    credential={credential}
+                    onDelete={(row) => onDeleteModelCredentials([row])}
+                  />
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <ModelCredentialsTable
+              rows={modelCredentials}
+              onDelete={onDeleteModelCredentials}
+            />
+          )}
+        </TabsContent>
       </Tabs>
 
       {/* Keyed and conditionally mounted so each dialog seeds its fields from
@@ -319,6 +394,16 @@ export default function CredentialsExplorer({
           envVars={deletingEnvVars}
           onOpenChange={(open) => {
             if (!open) setDeletingEnvVars(null);
+          }}
+        />
+      )}
+
+      {deletingModelCredentials && deletingModelCredentials.length > 0 && (
+        <DeleteModelCredentialDialog
+          key={deletingModelCredentials.map((row) => row.id).join(",")}
+          credentials={deletingModelCredentials}
+          onOpenChange={(open) => {
+            if (!open) setDeletingModelCredentials(null);
           }}
         />
       )}

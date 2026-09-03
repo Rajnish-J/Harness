@@ -279,6 +279,70 @@ export const credentials = pgTable(
 export type CredentialRow = typeof credentials.$inferSelect;
 
 // ---------------------------------------------------------------------------
+// Model credentials: the LLM provider API keys the chat actually spends.
+//
+// A separate table from `credentials` above, deliberately. That one is a vault
+// of git-forge PATs and is referenced by `projects.credential_id` — putting a
+// Groq key in it would let a project be "cloned" with an LLM key. Same reason
+// `project_env_vars` is its own table rather than a JSON column on `projects`.
+//
+// The secret uses the SAME envelope and the same key as `credentials`: see
+// lib/server/crypto.ts and backend/app/core/secrets.py. Next.js encrypts on
+// write, Python decrypts at the moment it builds a provider client. The
+// plaintext is never sent back to the browser by any endpoint — `lastFour`
+// exists so the UI can identify a key without one.
+//
+// UNIQUE on `provider`, which is the load-bearing constraint: it is what lets a
+// bare model id resolve to a provider and a provider to exactly one key, so the
+// chat wire contract stays `{ model: "llama-3.3-70b-versatile" }` with no
+// credential id riding along.
+// ---------------------------------------------------------------------------
+
+export const modelProvider = pgEnum("model_provider", [
+  "anthropic",
+  "openai",
+  "groq",
+]);
+
+export const modelCredentials = pgTable(
+  "model_credentials",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    provider: modelProvider("provider").notNull(),
+    /** Operator-facing name. Null falls back to the provider label in the UI. */
+    label: text("label"),
+    /** `v1.<base64url nonce>.<base64url ciphertext||tag>`. Never leaves the server. */
+    secretCiphertext: text("secret_ciphertext").notNull(),
+    /** Last 4 characters, so the list renders `••••4f2a` without decrypting. */
+    lastFour: text("last_four").notNull(),
+    /** Endpoint override for a proxy or a self-hosted gateway. Null uses the
+     *  SDK default, which is what every hosted provider wants. */
+    baseUrl: text("base_url"),
+    /** Model ids this key can reach that the curated catalog does not list — a
+     *  preview id, a fine-tune, anything newer than catalog.py. Free-form
+     *  strings and NOT validated against the provider. */
+    extraModels: jsonb("extra_models")
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    enabled: boolean("enabled").notNull().default(true),
+    /** What the provider itself reported on the last successful test. Display
+     *  only — the picker is driven by the catalog, not by this. */
+    validatedModels: jsonb("validated_models")
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    lastValidatedAt: timestamp("last_validated_at", { withTimezone: true }),
+    lastValidationError: text("last_validation_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique("model_credentials_provider_uq").on(t.provider)],
+);
+
+export type ModelCredentialRow = typeof modelCredentials.$inferSelect;
+
+// ---------------------------------------------------------------------------
 // Projects: working trees the agent can work inside — either cloned from
 // GitHub or started blank.
 //
