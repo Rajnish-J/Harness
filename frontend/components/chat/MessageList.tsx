@@ -21,13 +21,13 @@ export default function MessageList({
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [items, streaming]);
 
-  // `flex-1` so this fills the space above the composer and can center the
-  // greeting within it — the composer (MessageInput, shrink-0) stays pinned to
-  // the bottom edge in both the empty and populated states, rather than the
-  // two being centered together as one group in the middle of the panel.
+  // Content-sized, NOT flex-1: the greeting has to hug the composer so
+  // ChatWindow's `justify-center` can center the pair as one group. Making this
+  // fill instead would eat all the free space, leaving nothing to distribute
+  // and stranding the composer at the bottom edge with a gap above it.
   if (items.length === 0) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-6 pb-6 text-center">
+      <div className="flex shrink-0 flex-col items-center justify-center gap-1.5 px-6 pb-6 text-center">
         <h2 className="text-lg font-semibold">What should the harness work on?</h2>
         <p className="text-sm text-muted-foreground">
           File tools, scoped to a sandboxed workspace.
