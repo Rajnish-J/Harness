@@ -32,6 +32,7 @@ export default defineConfig({
     "project_containers",
     "project_chat_sessions",
     "project_chat_messages",
+    "memory_entries",
   ],
   verbose: true,
   strict: true,

@@ -71,6 +71,13 @@
       "when": 1788101341855,
       "tag": "0009_flippant_tana_nile",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788322372512,
+      "tag": "0010_lucky_katie_power",
+      "breakpoints": true
     }
   ]
 }

@@ -21,6 +21,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 
@@ -570,3 +571,66 @@ export const projectChatMessages = pgTable(
 
 export type ProjectChatSessionRow = typeof projectChatSessions.$inferSelect;
 export type ProjectChatMessageRow = typeof projectChatMessages.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Memory: durable facts that outlive a single chat session.
+//
+// Python-owned, like project chat above -- the agent writes a row via a tool
+// call mid-turn, and the admin page's edits go through the same backend
+// rather than a Next.js route. Next.js only defines the DDL here.
+//
+// project_id follows the same "null means global" convention as
+// project_chat_sessions: a null-scoped row is composed into every chat and
+// every project's system prompt; a project-scoped row only into that one
+// project's. `kind` mirrors this harness's own memory taxonomy
+// (user/feedback/project/reference), renamed where a name would collide with
+// a column already on this table -- "user" -> "preference", "project" ->
+// "fact".
+// ---------------------------------------------------------------------------
+
+export const memoryKind = pgEnum("memory_kind", [
+  "preference",
+  "feedback",
+  "fact",
+  "reference",
+]);
+
+export const memoryEntries = pgTable(
+  "memory_entries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** Null = applies globally, to every project and the global chat. */
+    projectId: uuid("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    kind: memoryKind("kind").notNull(),
+    /** Stable identity for upsert-by-slug and for [[wiki-link]]-style refs. */
+    slug: text("slug").notNull(),
+    title: text("title").notNull(),
+    /** Markdown body: the fact/rule itself, plus why and how to apply it. */
+    content: text("content").notNull(),
+    source: text("source").notNull().default("agent"),
+    /** Which session produced this, for provenance -- never used to scope reads. */
+    sessionId: text("session_id"),
+    /** Soft delete, same discipline as projects.archivedAt. */
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // Two partial unique indexes instead of one plain unique(project_id, slug):
+    // Postgres treats NULL as distinct from NULL in an ordinary unique
+    // constraint, so a plain one would silently allow duplicate slugs across
+    // global rows. A unique INDEX can carry a WHERE clause; a unique
+    // CONSTRAINT cannot -- which is why this uses uniqueIndex, not unique().
+    uniqueIndex("memory_entries_global_slug_uq")
+      .on(t.slug)
+      .where(sql`${t.projectId} is null`),
+    uniqueIndex("memory_entries_project_slug_uq")
+      .on(t.projectId, t.slug)
+      .where(sql`${t.projectId} is not null`),
+    index("memory_entries_project_archived_idx").on(t.projectId, t.archivedAt),
+  ],
+);
+
+export type MemoryEntryRow = typeof memoryEntries.$inferSelect;
