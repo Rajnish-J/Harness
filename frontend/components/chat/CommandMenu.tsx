@@ -18,12 +18,13 @@ import { useState } from "react";
 
 import { useChatPreset } from "@/components/chat/ChatPresetProvider";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { isPresetEmpty } from "@/lib/chat-preset";
@@ -150,7 +151,7 @@ export default function CommandMenu() {
   const attached = !isPresetEmpty(preset);
 
   return (
-    <Popover
+    <Dialog
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
@@ -170,7 +171,7 @@ export default function CommandMenu() {
         "something is attached" dot stays at full strength.
       */}
       <span className="relative inline-flex shrink-0">
-        <PopoverTrigger asChild>
+        <DialogTrigger asChild>
           <Button
             type="button"
             variant="ghost"
@@ -189,7 +190,7 @@ export default function CommandMenu() {
               /
             </span>
           </Button>
-        </PopoverTrigger>
+        </DialogTrigger>
 
         {(attached || narrowed) && (
           <span
@@ -199,26 +200,10 @@ export default function CommandMenu() {
         )}
       </span>
 
-      <PopoverContent
-        align="start"
-        side="bottom"
-        // Bigger than the row's other two menus (8px): Radix measures this
-        // from the trigger BUTTON, which sits ~10px above the composer's own
-        // bottom edge (the row's bottom padding) — so an 8px offset here
-        // actually lands the panel flush against, or slightly under, the
-        // composer's border rather than clear of it.
-        sideOffset={22}
-        // Never flips above the composer: the panel opening in a different
-        // place depending on how far the transcript has scrolled is worse than
-        // it opening low, and the row's other two menus behave the same way.
-        avoidCollisions={false}
-        // Keeps a gap below the panel instead of letting it butt up against
-        // the viewport edge (which, this low in the page, is effectively the
-        // composer) — Radix folds this into the available-height variable
-        // below even though collisions themselves are never avoided.
-        collisionPadding={{ top: 16, bottom: 16 }}
-        className="flex h-[min(24rem,var(--radix-popover-content-available-height,24rem))] w-[40rem] max-w-[92vw] flex-col overflow-hidden p-0"
-      >
+      <DialogContent className="flex h-[36rem] w-[60rem] max-w-[92vw] flex-col overflow-hidden p-0">
+        <DialogTitle className="sr-only">
+          Agents, skills, tools and MCP servers
+        </DialogTitle>
         <div className="relative shrink-0 border-b">
           <Search className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -226,7 +211,7 @@ export default function CommandMenu() {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search agents, skills, tools and servers…"
-            className="h-10 rounded-none border-0 pl-9 shadow-none focus-visible:ring-0"
+            className="h-10 rounded-none border-0 pr-10 pl-9 shadow-none focus-visible:ring-0"
           />
         </div>
 
@@ -315,8 +300,7 @@ export default function CommandMenu() {
                   <Heading
                     icon={Sparkles}
                     label="Skills"
-                    count={preset.skills.length}
-                    hint="attached"
+                    count={skills.length}
                     href="/skills"
                   />
 
@@ -385,8 +369,7 @@ export default function CommandMenu() {
                   <Heading
                     icon={Plug}
                     label="MCP servers"
-                    count={preset.mcpServers.length}
-                    hint="attached"
+                    count={servers.length}
                     href="/mcp"
                   />
 
@@ -471,8 +454,8 @@ export default function CommandMenu() {
             )}
           </span>
         </footer>
-      </PopoverContent>
-    </Popover>
+      </DialogContent>
+    </Dialog>
   );
 }
 
