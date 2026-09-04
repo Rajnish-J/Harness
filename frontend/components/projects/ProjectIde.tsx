@@ -193,11 +193,6 @@ export default function ProjectIde({
             project={project}
             deployments={deployments}
             onConnect={() => setConnectOpen(true)}
-            onViewPullRequest={() => {
-              if (project.repoUrl) {
-                window.open(`${project.repoUrl.replace(/\.git$/, "")}/pulls`, "_blank", "noopener");
-              }
-            }}
           />
 
           <ShareMenu

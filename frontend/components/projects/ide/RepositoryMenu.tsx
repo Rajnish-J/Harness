@@ -1,6 +1,6 @@
 "use client";
 
-import { GitPullRequest, Globe, Link2, MonitorPlay, MoreVertical, RotateCcw } from "lucide-react";
+import { Globe, Link2, MonitorPlay, MoreVertical, RotateCcw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -20,22 +20,22 @@ import { cn } from "@/lib/utils";
 /**
  * Where this project is connected, and where it is published.
  *
- * Deliberately short: five items, no section labels. Saving to the database
+ * Deliberately short: four items, no section labels. Saving to the database
  * and the container password already have a home in ShareMenu — duplicating
- * them here was clutter, not helpfulness. The header states the negative case
- * ("No repository connected") somewhere the eye will actually land, rather
- * than leaving the absence to be inferred.
+ * them here was clutter, not helpfulness. "View pull request" left for the same
+ * reason: the Git menu owns every pull-request verb, so this menu is about the
+ * connection and the deployments, not the work in flight. The header states the
+ * negative case ("No repository connected") somewhere the eye will actually
+ * land, rather than leaving the absence to be inferred.
  */
 export default function RepositoryMenu({
   project,
   deployments,
   onConnect,
-  onViewPullRequest,
 }: {
   project: Project;
   deployments: DeploymentTargets;
   onConnect: () => void;
-  onViewPullRequest: () => void;
 }) {
   const connected = Boolean(project.repoUrl);
 
@@ -65,10 +65,6 @@ export default function RepositoryMenu({
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
 
-        <DropdownMenuItem disabled={!connected} onSelect={onViewPullRequest}>
-          <GitPullRequest />
-          View pull request
-        </DropdownMenuItem>
         <DropdownMenuItem onSelect={onConnect}>
           <Link2 />
           {connected ? "Change repository" : "Connect repository"}
