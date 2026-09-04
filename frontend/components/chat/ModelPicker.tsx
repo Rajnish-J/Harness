@@ -2,7 +2,7 @@
 
 import { Check, ChevronDown, Cpu } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useChatPreset } from "@/components/chat/ChatPresetProvider";
 import { Button } from "@/components/ui/button";
@@ -47,11 +47,36 @@ export default function ModelPicker() {
   const [hovered, setHovered] = useState<string | null>(null);
   const { preset, catalog, setModel } = useChatPreset();
 
-  const models = catalog.models.models;
-  const activeId = preset.model ?? preset.agent?.model ?? catalog.models.default;
+  // Only models whose provider has a key registered in Credentials → Models.
+  // `credential_source` is the distinction that matters: "db" is a key someone
+  // actually registered, "env" is a backend/.env fallback that is a placeholder
+  // in every checkout, and listing those made four Anthropic models look ready
+  // to use when the first turn would have failed on a fake key.
+  const models = catalog.models.models.filter(
+    (model) => model.credential_source === "db",
+  );
+  const reported = catalog.models.models.length;
+  // The harness's own default can be a model we just filtered out — it reads
+  // LLM_PROVIDER from backend/.env, which points at Anthropic in a fresh
+  // checkout. Fall back to the first model with a real key so the trigger never
+  // names a model the list does not offer.
+  const preferredId = preset.model ?? preset.agent?.model ?? catalog.models.default;
+  const usable = preferredId !== null && models.some((m) => m.id === preferredId);
+  const fallbackId = models[0]?.id ?? null;
+  const activeId = usable ? preferredId : fallbackId;
   const active = models.find((model) => model.id === activeId);
   const detail = models.find((model) => model.id === hovered) ?? active ?? models[0];
   const groups = groupByProvider(models);
+
+  // Pin that fallback into the preset, because the displayed model and the one
+  // the turn runs on are two different values: presetToBody only sends `model`
+  // when preset.model is set, so leaving it null would send nothing and let the
+  // backend fall back to its own default — the very model we filtered out.
+  useEffect(() => {
+    if (!usable && fallbackId !== null && preset.model !== fallbackId) {
+      setModel(fallbackId);
+    }
+  }, [usable, fallbackId, preset.model, setModel]);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -71,27 +96,35 @@ export default function ModelPicker() {
 
       <PopoverContent
         align="start"
-        side="bottom"
+        side="top"
         sideOffset={8}
-        avoidCollisions={false}
-        className="w-[34rem] max-w-[90vw] p-0"
+        // Opens upward, and flips only if the top runs out of room. The trigger
+        // lives in the composer at the foot of the page, so a downward panel
+        // ran off the bottom of the screen — into the Windows taskbar. The
+        // padding keeps a margin from either viewport edge on the flip.
+        collisionPadding={{ top: 16, bottom: 16 }}
+        className="w-[51rem] max-w-[90vw] p-0"
       >
         {models.length === 0 ? (
           <p className="px-3 py-6 text-center text-[11px] text-muted-foreground">
-            The harness reported no models. Check that it is running.
+            {reported === 0
+              ? "The harness reported no models. Check that it is running."
+              : "No provider keys registered yet."}{" "}
+            <Link href="/credentials" className="underline underline-offset-2">
+              Add one
+            </Link>
+            .
           </p>
         ) : (
-          // One flex row, no header above it. The popover opens downward from a
-          // trigger that already sits at the bottom of the viewport and cannot
-          // flip (avoidCollisions={false}), so anything added above the list
-          // pushes the panel further off the bottom edge. The "no key" guidance
-          // lives in the detail pane on the right instead, which is free height.
+          // One flex row, no header above it: the "no key" guidance lives in the
+          // detail pane on the right, which is free height, rather than in a
+          // banner that would push the list further up the viewport.
           <div className="flex">
             <ScrollArea
               className="max-h-72 w-44 shrink-0 border-r"
               onMouseLeave={() => setHovered(null)}
             >
-              <ul className="p-1.5">
+              <ul className="flex flex-col gap-1 p-1.5">
                 {groups.map(([provider, rows]) => (
                   <li key={provider}>
                     {/* Grouped because availability is now a per-PROVIDER
@@ -100,25 +133,36 @@ export default function ModelPicker() {
                     <p className="px-2 pt-2 pb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                       {provider}
                     </p>
-                    <ul>
+                    <ul className="flex flex-col gap-0.5">
                       {rows.map((model) => {
                         const badge = statusBadge(model);
                         return (
                           <li key={model.id}>
+                            {/* Not the `disabled` attribute: a disabled button
+                                fires no pointer events, so an unavailable model
+                                could never show the detail pane explaining WHY
+                                it is unavailable. Inert-by-handler instead. */}
                             <button
                               type="button"
-                              disabled={!model.available}
+                              aria-disabled={!model.available}
                               onMouseEnter={() => setHovered(model.id)}
                               onFocus={() => setHovered(model.id)}
                               onClick={() => {
-                                // Selecting the configured default clears the
+                                if (!model.available) return;
+                                // Selecting the harness's own default clears the
                                 // override rather than pinning it, so the turn
                                 // keeps following the harness if its
-                                // configuration changes.
-                                setModel(model.default ? null : model.id);
+                                // configuration changes. Only safe while that
+                                // default is a model we actually list: clearing
+                                // to null otherwise hands the turn back to the
+                                // filtered-out .env default.
+                                setModel(model.default && usable ? null : model.id);
                                 setOpen(false);
                               }}
-                              className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-45"
+                              className={cn(
+                                "flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent",
+                                !model.available && "cursor-default opacity-45",
+                              )}
                             >
                               <span className="truncate">{model.label}</span>
                               {badge && (
