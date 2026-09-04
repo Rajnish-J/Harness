@@ -67,6 +67,8 @@ type ChatPresetValue = {
   clearAttachments: () => void;
   /** Applies ?agent= / ?skill= / ?mcp= from a "Use in chat" link. */
   applyFromQuery: (params: URLSearchParams) => Promise<boolean>;
+  /** Re-pulls the model list — call after a provider key is saved or tested. */
+  refetchModels: () => Promise<void>;
 };
 
 const ChatPresetContext = createContext<ChatPresetValue | null>(null);
@@ -143,6 +145,21 @@ export default function ChatPresetProvider({
 
     return () => controller.abort();
   }, [inherited]);
+
+  // Called after a provider key is saved or tested. The initial load above only
+  // runs once on mount, so without this the picker would only ever see a freshly
+  // registered key after a full page reload. Delegates to the parent when
+  // nested, for the same reason the mount effect above skips itself: a nested
+  // instance's displayed catalog is `inherited`, not its own state, so fetching
+  // into `ownCatalog` here would update nothing visible.
+  const refetchModels = useCallback(async () => {
+    if (parent) {
+      await parent.refetchModels();
+      return;
+    }
+    const models = await fetchModels();
+    setCatalog((prev) => ({ ...prev, models }));
+  }, [parent]);
 
   // MCP tools are discovered separately, and only for servers the composer has
   // actually attached: discovery costs a round trip to each server, so doing it
@@ -359,6 +376,7 @@ export default function ChatPresetProvider({
       setModel,
       clearAttachments,
       applyFromQuery,
+      refetchModels,
     }),
     [
       preset,
@@ -374,6 +392,7 @@ export default function ChatPresetProvider({
       setModel,
       clearAttachments,
       applyFromQuery,
+      refetchModels,
     ],
   );
 
