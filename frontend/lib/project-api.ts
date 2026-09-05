@@ -19,6 +19,8 @@ import type {
   Project,
   ProjectInput,
   ProjectPatch,
+  AdoptWorkspaceResult,
+  ProjectTemplate,
   PullRequest,
   PurgeResult,
   RemoteRepo,
@@ -133,10 +135,51 @@ export const projectsApi = {
    * Unlike `clone`, this never touches the network, so it answers once rather
    * than streaming.
    */
-  init: async (id: string): Promise<{ branch: string | null; file_count: number }> =>
+  init: async (
+    id: string,
+    template?: string,
+  ): Promise<{
+    branch: string | null;
+    file_count: number;
+    template: string;
+  }> =>
     json(
-      await fetch(`${API_BASE}/api/projects/${id}/init`, { method: "POST" }),
+      await fetch(`${API_BASE}/api/projects/${id}/init`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ template: template ?? null }),
+      }),
     ),
+
+  /**
+   * Bring a global chat's scratch files into this project, and commit them.
+   *
+   * Paired with `attachChatSession` in lib/api.ts: this moves the bytes, that
+   * moves the conversation. Called first, because if the attach then fails the
+   * files are at least visible in the project rather than the reverse.
+   */
+  adoptWorkspace: async (
+    id: string,
+    input: { paths: string[] },
+  ): Promise<AdoptWorkspaceResult> =>
+    json(
+      await fetch(`${API_BASE}/api/projects/${id}/adopt-workspace`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      }),
+    ),
+
+  /**
+   * The starter scaffolds `init` can write.
+   *
+   * Static on the harness side -- a code-level registry, no database -- so this
+   * is safe to call eagerly and cheap to call twice.
+   */
+  listTemplates: async (): Promise<{
+    default: string;
+    templates: ProjectTemplate[];
+  }> => json(await fetch(`${API_BASE}/api/projects/templates`)),
 
   /**
    * Link a Blank Project to a GitHub remote it hasn't been connected to yet.

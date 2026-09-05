@@ -36,6 +36,22 @@ export type ProjectProposalEvent = {
   id: string;
   name: string;
   description: string;
+  /** The scaffold the model suggested; "" when it picked none. Optional so an
+   *  older backend that does not send it still typechecks. */
+  template?: string;
+};
+
+/**
+ * The model wants to file this conversation under a project that already
+ * exists. The sibling of ProjectProposalEvent, which creates a new one.
+ */
+export type AttachProposalEvent = {
+  type: "attach_proposal";
+  id: string;
+  project_id: string;
+  /** Resolved server-side, so the card never shows a bare uuid. */
+  project_name: string;
+  reason?: string;
 };
 
 export type AssistantMessageEvent = {
@@ -66,6 +82,7 @@ export type AgentEvent =
   | ToolResultEvent
   | ApprovalRequestEvent
   | ProjectProposalEvent
+  | AttachProposalEvent
   | AssistantMessageEvent
   | ErrorEvent
   | DoneEvent;
@@ -110,6 +127,16 @@ export type TranscriptItem =
       id: string;
       name: string;
       description: string;
+      template?: string;
+      decision?: "approved" | "denied";
+    }
+  /** An offer to move this conversation into an existing project. */
+  | {
+      kind: "attach_proposal";
+      id: string;
+      projectId: string;
+      projectName: string;
+      reason?: string;
       decision?: "approved" | "denied";
     };
 
