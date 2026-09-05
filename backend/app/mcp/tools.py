@@ -18,6 +18,10 @@ NAME_RE = re.compile(r"[^a-zA-Z0-9_-]")
 MAX_NAME_LEN = 128
 
 #: Injected into every tool.run(...) by the agent loop; meaningless to MCP.
+#: Must mirror every kwarg _dispatch_tool passes in app/agent/loop.py, not just
+#: the ones a given tool cares about -- otherwise the loop's own objects (e.g.
+#: an AsyncConnectionPool) leak into the MCP call's arguments and pydantic
+#: fails to serialize them onto the wire.
 LOOP_INJECTED_KWARGS = (
     "workspace_root",
     "max_file_bytes",
@@ -26,6 +30,10 @@ LOOP_INJECTED_KWARGS = (
     "test_command",
     "lint_command",
     "build_command",
+    "executor",
+    "pool",
+    "project_id",
+    "session_id",
 )
 
 

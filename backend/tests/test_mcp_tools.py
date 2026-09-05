@@ -96,6 +96,30 @@ async def test_run_strips_the_kwargs_the_loop_injects():
 
 
 @pytest.mark.asyncio
+async def test_run_strips_every_kwarg_dispatch_tool_injects():
+    """Regression: _dispatch_tool also injects executor/pool/project_id/session_id.
+
+    LOOP_INJECTED_KWARGS used to list only the workspace/command settings, so
+    these four rode straight through into the MCP wire call. pool in particular
+    is an AsyncConnectionPool, which pydantic cannot serialize -- every MCP tool
+    call failed with PydanticSerializationError until this list matched
+    _dispatch_tool's actual kwargs (app/agent/loop.py).
+    """
+    caller = FakeCaller(FakeResult(content=[FakeBlock(text="ok")]))
+    tool = make_tool("github", caller, FakeMcpTool(name="get_me"))
+
+    out = await tool.run(
+        executor=object(),
+        pool=object(),
+        project_id="proj-1",
+        session_id="sess-1",
+    )
+
+    assert out == "ok"
+    assert caller.calls == [("get_me", {})]
+
+
+@pytest.mark.asyncio
 async def test_is_error_becomes_a_recoverable_tool_error():
     caller = FakeCaller(FakeResult(content=[FakeBlock(text="boom")], isError=True))
     tool = make_tool("github", caller, FakeMcpTool(name="search"))
