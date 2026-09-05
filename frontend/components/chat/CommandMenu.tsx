@@ -200,7 +200,7 @@ export default function CommandMenu() {
         )}
       </span>
 
-      <DialogContent className="flex h-[36rem] w-[60rem] max-w-[92vw] flex-col overflow-hidden p-0">
+      <DialogContent className="flex h-[36rem] w-[60rem] max-w-[92vw] flex-col overflow-hidden p-0 sm:max-w-[92vw]">
         <DialogTitle className="sr-only">
           Agents, skills, tools and MCP servers
         </DialogTitle>
