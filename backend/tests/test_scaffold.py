@@ -16,6 +16,7 @@ from app.projects.scaffold import apply_template
 from app.projects.templates import (
     TEMPLATES,
     TEMPLATES_BY_ID,
+    TEMPLATES_DIR,
     DEFAULT_TEMPLATE_ID,
     UnknownTemplateError,
     get_template,
@@ -37,8 +38,6 @@ def scaffold(tmp_path, template_id, *, name="Demo App", slug="demo-app"):
 
 
 def test_every_template_has_a_source_directory():
-    from app.projects.templates import TEMPLATES_DIR
-
     for template in TEMPLATES:
         assert (TEMPLATES_DIR / template.source).is_dir(), template.id
 
@@ -174,6 +173,31 @@ def test_written_files_use_lf_endings(tmp_path, template):
     destination, written = scaffold(tmp_path, template.id)
     for relative in written:
         assert b"\r\n" not in (destination / relative).read_bytes(), relative
+
+
+def test_a_crlf_source_file_is_still_written_as_lf(tmp_path):
+    """The regression this whole file exists to prevent, reproduced directly.
+
+    git's core.autocrlf=true -- the default on many Windows setups, and
+    unopposed here since this repo has no .gitattributes -- rewrites a
+    checked-out template's LF to CRLF on disk. The extensionless
+    dot_gitignore fell through the old suffix-based text/binary check into a
+    byte-exact shutil.copyfile, so on a real Windows clone every scaffolded
+    project's .gitignore silently carried CRLF. This tree's own copy of the
+    template never showed it: it was written directly by hand, never
+    checked out, so it stayed LF and the bug was invisible until a fresh
+    worktree checkout exposed it.
+    """
+    source = TEMPLATES_DIR / "blank" / "dot_gitignore"
+    original = source.read_bytes()
+    assert b"\r\n" not in original, "fixture assumes the committed source is LF"
+
+    source.write_bytes(original.replace(b"\n", b"\r\n"))
+    try:
+        destination, _ = scaffold(tmp_path, "blank")
+        assert b"\r\n" not in (destination / ".gitignore").read_bytes()
+    finally:
+        source.write_bytes(original)
 
 
 # --- the integration that matters ---------------------------------------

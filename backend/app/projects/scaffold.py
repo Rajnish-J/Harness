@@ -20,7 +20,9 @@ from app.core.workspace import resolve_safe_path
 from app.projects.templates import TEMPLATES_DIR, Template
 
 #: Files whose bodies get {{project_name}} / {{project_slug}} substituted.
-#: Everything else is copied byte-for-byte, so a future binary asset is safe.
+#: A strict subset of _TEXT_SUFFIXES: every template file today is one of
+#: these, but not every text file need be a substitution target (a future
+#: template could ship a plain text asset with literal {{ }} in it).
 _RENDERABLE_SUFFIXES = frozenset(
     {
         ".md",
@@ -36,6 +38,21 @@ _RENDERABLE_SUFFIXES = frozenset(
         ".yml",
     }
 )
+
+#: Extensions copied byte-for-byte, with no read_text/write_text at all --
+#: the true "not text" set. Everything else, INCLUDING an extensionless file
+#: like the dotfiles below, goes through the text path so it gets the
+#: newline="" normalization.
+#:
+#: The bug this replaced: `dot_gitignore` has no suffix, so it never matched
+#: _RENDERABLE_SUFFIXES and fell through to shutil.copyfile -- a byte-exact
+#: copy of whatever is on disk. On a Windows checkout with core.autocrlf=true
+#: (the default many contributors have, with no .gitattributes here to
+#: override it) that byte-exact copy is CRLF, so every scaffolded project's
+#: .gitignore silently carried CRLF -- the noisy-first-diff outcome the
+#: newline="" rule exists to prevent, reached anyway because a suffix check
+#: was doing duty as a text/binary check.
+_BINARY_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".ico", ".woff", ".woff2"})
 
 #: How a template ships a dotfile. See the module docstring.
 #:
@@ -122,13 +139,17 @@ def apply_template(
 
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
-            if source.suffix in _RENDERABLE_SUFFIXES:
-                body = source.read_text(encoding="utf-8")
-                # newline="" keeps LF on Windows, matching devcontainer.py; a
-                # template that wrote CRLF would make the first diff all noise.
-                target.write_text(render(body), encoding="utf-8", newline="")
-            else:
+            if source.suffix in _BINARY_SUFFIXES:
                 shutil.copyfile(source, target)
+            else:
+                # Read as text and rewritten with newline="" even when this
+                # file gets no {{ }} substitution: this is what keeps LF on
+                # Windows (matching devcontainer.py) instead of passing
+                # through whatever core.autocrlf did to it on checkout.
+                body = source.read_text(encoding="utf-8")
+                if source.suffix in _RENDERABLE_SUFFIXES:
+                    body = render(body)
+                target.write_text(body, encoding="utf-8", newline="")
         except OSError as exc:
             raise ScaffoldError(f"Could not write {relative_target}: {exc}") from exc
 
