@@ -44,6 +44,22 @@ class ProjectRow:
     current_branch: str | None
 
 
+@dataclass
+class ProjectSummary:
+    """A project as a *picker* needs it: enough to name one, nothing more.
+
+    Deliberately not ProjectRow. That shape carries credential_id and repo_url
+    because the execution paths need them, and the one caller of this is a tool
+    whose output is stringified into a model's prompt -- so it gets its own
+    narrow select list rather than a wide row that happens to be handy.
+    """
+
+    id: UUID
+    name: str
+    slug: str
+    updated_at: datetime
+
+
 _COLUMNS = """
     id, name, slug, provider, repo_owner, repo_name, repo_url,
     default_branch, credential_id, clone_status, current_branch
@@ -101,6 +117,41 @@ async def get_project_any_state(
             record = await cur.fetchone()
 
     return _row(record) if record else None
+
+
+async def list_projects(
+    pool: AsyncConnectionPool, *, limit: int = 50
+) -> list[ProjectSummary]:
+    """Live projects, most recently touched first.
+
+    Next.js owns `projects` and lists it for the UI; this exists for the agent,
+    which needs candidate ids before it can offer to file a conversation under
+    one. A read, so the ownership boundary in this module's header does not
+    move.
+
+    `archived_at is null` matters more than it looks: attach_session_to_project
+    does not check that its target exists, so surfacing an archived project here
+    would let a conversation be filed under one nothing can open again.
+    """
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select id, name, slug, updated_at from projects "
+                "where archived_at is null "
+                "order by updated_at desc limit %s",
+                (limit,),
+            )
+            records = await cur.fetchall()
+
+    return [
+        ProjectSummary(
+            id=record["id"],
+            name=record["name"],
+            slug=record["slug"],
+            updated_at=record["updated_at"],
+        )
+        for record in records
+    ]
 
 
 async def mark_clone_started(pool: AsyncConnectionPool, project_id: str) -> None:

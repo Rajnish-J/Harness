@@ -153,3 +153,27 @@ def test_memory_truncation_is_bounded_and_marked():
 
     assert len(composed) <= 2_000
     assert composed.endswith("[skill content truncated]")
+
+
+def test_the_global_block_names_both_project_tools():
+    """The model cannot use a tool it is never told about."""
+    composed = compose_system_prompt(base=SYSTEM_PROMPT, no_project_open=True)
+
+    assert "propose_create_project" in composed
+    assert "list_projects" in composed
+    assert "propose_attach_project" in composed
+    # The instruction that keeps it from inventing an id it never saw.
+    assert "never invent an id" in composed.lower()
+
+
+def test_a_bare_compose_is_still_byte_identical_to_the_base():
+    """Both project blocks stay gated; neither leaks into a bare compose.
+
+    Workflow nodes and the memory preview compose with no project flags at all,
+    and this is what pins that they still get the untouched base prompt.
+    """
+    composed = compose_system_prompt(base=SYSTEM_PROMPT)
+
+    assert composed == SYSTEM_PROMPT.strip()
+    assert "list_projects" not in composed
+    assert "propose_attach_project" not in composed
