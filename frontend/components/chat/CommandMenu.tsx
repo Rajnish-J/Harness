@@ -379,6 +379,13 @@ export default function CommandMenu() {
                     href="/mcp"
                   />
 
+                  {toolsOff && preset.mcpServers.length > 0 && (
+                    <p className="px-2 py-1 text-[11px] text-muted-foreground">
+                      Chat mode does not use tools — attached servers are
+                      ignored until you switch to Agent or Manual.
+                    </p>
+                  )}
+
                   {servers.map((server) => {
                     const on = preset.mcpServers.some((s) => s.id === server.id);
                     // Tool counts only exist once a server is attached, since
@@ -386,6 +393,21 @@ export default function CommandMenu() {
                     const discovered = allGroups.find(
                       (group) => serverNameFromGroup(group.name) === server.name,
                     );
+                    // Notices name the server as `MCP server 'name' unavailable: ...`
+                    // (see resolve_mcp_tools in the backend) — matched by name
+                    // since a failed connect never gets a discovered tool group.
+                    const failure = catalog.mcpNotices.find((notice) =>
+                      notice.includes(`'${server.name}'`),
+                    );
+                    const badge = !on
+                      ? null
+                      : discovered
+                        ? `${discovered.enabled}/${discovered.tools.length} tools`
+                        : failure
+                          ? "failed"
+                          : catalog.mcpToolsLoading
+                            ? "connecting…"
+                            : "failed";
                     return (
                       <Row
                         key={server.id}
@@ -393,13 +415,9 @@ export default function CommandMenu() {
                         title={server.name}
                         meta={server.transport}
                         description={server.description}
-                        badge={
-                          on
-                            ? discovered
-                              ? `${discovered.enabled}/${discovered.tools.length} tools`
-                              : "connecting…"
-                            : null
-                        }
+                        badge={badge}
+                        badgeTone={badge === "failed" ? "error" : "neutral"}
+                        badgeTitle={failure}
                         selected={on}
                         onSelect={() => toggleMcp(server)}
                       />
@@ -509,6 +527,8 @@ function Row({
   meta,
   description,
   badge,
+  badgeTitle,
+  badgeTone = "neutral",
   disabled,
   selected,
   onSelect,
@@ -518,6 +538,9 @@ function Row({
   meta?: string | null;
   description?: string | null;
   badge?: string | null;
+  /** Shown as a native tooltip — the full failure reason doesn't fit inline. */
+  badgeTitle?: string;
+  badgeTone?: "neutral" | "error";
   disabled?: boolean;
   selected: boolean;
   onSelect: () => void;
@@ -541,7 +564,15 @@ function Row({
             </span>
           )}
           {badge && (
-            <span className="shrink-0 rounded bg-muted px-1 text-[10px] text-muted-foreground">
+            <span
+              title={badgeTitle}
+              className={cn(
+                "shrink-0 rounded px-1 text-[10px]",
+                badgeTone === "error"
+                  ? "bg-red-500/15 text-red-600 dark:text-red-400"
+                  : "bg-muted text-muted-foreground",
+              )}
+            >
               {badge}
             </span>
           )}

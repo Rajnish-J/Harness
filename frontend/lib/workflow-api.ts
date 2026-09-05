@@ -143,6 +143,40 @@ export async function fetchMcpTools(
   }
 }
 
+export type McpTestResult = {
+  ok: boolean;
+  error: string | null;
+  toolCount: number;
+};
+
+/**
+ * Connect to one MCP server right now, bypassing the failure cooldown.
+ *
+ * Unlike fetchMcpTools above, failures here are not swallowed: a user pressing
+ * "Test connection" wants to see exactly why it failed, not a silent empty
+ * result. mockMcp reports a fixed pass — there is no real server to dial.
+ */
+export async function testMcpServer(serverId: string): Promise<McpTestResult> {
+  if (flags.mockMcp) return { ok: true, error: null, toolCount: 0 };
+
+  const res = await fetch(`${API_BASE}/api/mcp/${serverId}/test`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(
+      (body as { detail?: string }).detail ?? `Request failed: ${res.status}`,
+    );
+  }
+
+  const data = (await res.json()) as {
+    ok: boolean;
+    error: string | null;
+    tool_count: number;
+  };
+  return { ok: data.ok, error: data.error, toolCount: data.tool_count };
+}
+
 // --------------------------------------------------------------------- CRUD
 
 async function json<T>(res: Response): Promise<T> {
