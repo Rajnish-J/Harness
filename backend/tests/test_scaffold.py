@@ -184,15 +184,20 @@ def test_a_crlf_source_file_is_still_written_as_lf(tmp_path):
     dot_gitignore fell through the old suffix-based text/binary check into a
     byte-exact shutil.copyfile, so on a real Windows clone every scaffolded
     project's .gitignore silently carried CRLF. This tree's own copy of the
-    template never showed it: it was written directly by hand, never
-    checked out, so it stayed LF and the bug was invisible until a fresh
-    worktree checkout exposed it.
+    template never showed it when written directly by hand, and it never
+    reliably shows it after a checkout either -- whether THIS checkout
+    already converted the source is exactly the fact under test, so the
+    fixture forces CRLF unconditionally rather than asserting a starting
+    state that autocrlf, not this test, controls.
     """
     source = TEMPLATES_DIR / "blank" / "dot_gitignore"
     original = source.read_bytes()
-    assert b"\r\n" not in original, "fixture assumes the committed source is LF"
+    # Normalize to LF first so the CRLF that follows is never doubled up,
+    # regardless of whether this checkout already converted the source.
+    forced_crlf = original.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+    assert b"\r\n" in forced_crlf
 
-    source.write_bytes(original.replace(b"\n", b"\r\n"))
+    source.write_bytes(forced_crlf)
     try:
         destination, _ = scaffold(tmp_path, "blank")
         assert b"\r\n" not in (destination / ".gitignore").read_bytes()
