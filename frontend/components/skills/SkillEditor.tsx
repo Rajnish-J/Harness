@@ -18,7 +18,8 @@ import { fetchTools, type ToolInfo } from "@/lib/workflow-api";
 export default function SkillEditor({ skill }: { skill: Skill }) {
   const router = useRouter();
   const [draft, setDraft] = useState(skill);
-  const [tools, setTools] = useState<ToolInfo[]>([]);
+  // null while in flight; see the CheckboxList `loading` prop.
+  const [tools, setTools] = useState<ToolInfo[] | null>(null);
 
   // The tool registry lives in Python, so it is fetched rather than joined.
   // fetchTools already swallows its own errors and returns [].
@@ -89,7 +90,7 @@ export default function SkillEditor({ skill }: { skill: Skill }) {
       <CheckboxList
         label="Allowed tools"
         hint="Leave empty to inherit whatever the calling agent already has."
-        options={tools.map((tool) => ({
+        options={(tools ?? []).map((tool) => ({
           value: tool.name,
           label: tool.name,
           description: tool.description,
@@ -97,6 +98,7 @@ export default function SkillEditor({ skill }: { skill: Skill }) {
         selected={draft.allowedTools}
         onChange={(v) => patch("allowedTools", v)}
         emptyMessage="No tools reported. Is the Python harness running?"
+        loading={tools === null}
       />
 
       <ToggleField

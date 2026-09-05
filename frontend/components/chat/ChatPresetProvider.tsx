@@ -40,6 +40,13 @@ export type Catalog = {
   /** Servers that failed to answer discovery, shown next to the ones that did. */
   mcpNotices: string[];
   loading: boolean;
+  /** A discovery round trip to the attached MCP servers is in flight.
+   *
+   *  Separate from `loading`, which covers only the initial catalog fetch and is
+   *  false by the time a server is attached. Without this the composer cannot
+   *  tell "this server has no tools" from "we have not asked yet", and says the
+   *  harness is down during an ordinary wait. */
+  mcpToolsLoading: boolean;
 };
 
 const EMPTY_CATALOG: Catalog = {
@@ -50,6 +57,7 @@ const EMPTY_CATALOG: Catalog = {
   models: EMPTY_MODELS,
   mcpNotices: [],
   loading: true,
+  mcpToolsLoading: false,
 };
 
 type ChatPresetValue = {
@@ -170,6 +178,21 @@ export default function ChatPresetProvider({
     const controller = new AbortController();
     const ids = attachedIds ? attachedIds.split(",") : [];
 
+    // Raised in a promise callback rather than in the effect body: a bare
+    // setState here trips react-hooks/set-state-in-effect. Promise.resolve()
+    // defers it by a microtask, which satisfies the rule and still lands before
+    // the fetch can resolve. Detaching the last server clears the flag the same
+    // way, since with nothing to discover the fetch below never raises it.
+    const discovering = ids.length > 0;
+    Promise.resolve().then(() => {
+      if (controller.signal.aborted) return;
+      setCatalog((prev) =>
+        prev.mcpToolsLoading === discovering
+          ? prev
+          : { ...prev, mcpToolsLoading: discovering },
+      );
+    });
+
     fetchMcpTools(ids, controller.signal)
       .then(({ tools, notices }) => {
         if (controller.signal.aborted) return;
@@ -180,6 +203,7 @@ export default function ChatPresetProvider({
             ...tools,
           ],
           mcpNotices: notices,
+          mcpToolsLoading: false,
         }));
       })
       .catch(() => {

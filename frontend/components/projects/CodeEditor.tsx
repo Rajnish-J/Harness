@@ -1,11 +1,12 @@
 "use client";
 
 import Editor from "@monaco-editor/react";
-import { Loader2, Save } from "lucide-react";
+import { Save } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import { projectFilesApi } from "@/lib/project-api";
 
@@ -145,10 +146,14 @@ export default function CodeEditor({
   }
 
   if (!file) {
+    // Lines of varying width rather than a spinner: what is arriving is a file,
+    // and the shape says so while the header keeps naming which one.
     return (
-      <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="size-4 animate-spin" />
-        Opening {path}…
+      <div className="flex h-full flex-col gap-2 p-4">
+        <Skeleton className="h-4 w-64" />
+        {[10, 7, 9, 5, 8, 6, 9, 4].map((w, i) => (
+          <Skeleton key={i} className="h-3" style={{ width: `${w * 10}%` }} />
+        ))}
       </div>
     );
   }

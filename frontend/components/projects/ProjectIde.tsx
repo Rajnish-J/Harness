@@ -27,6 +27,7 @@ import ShareMenu from "@/components/projects/ide/ShareMenu";
 import VersionHistoryMenu from "@/components/projects/ide/VersionHistoryMenu";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { Credential } from "@/lib/credential-types";
 import { flags } from "@/lib/flags";
 import {
@@ -48,8 +49,10 @@ import type { TranscriptItem } from "@/lib/types";
 const CodeEditor = dynamic(() => import("@/components/projects/CodeEditor"), {
   ssr: false,
   loading: () => (
-    <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-      Loading editor…
+    <div className="flex h-full flex-col gap-2 p-4">
+      {[10, 7, 9, 5, 8, 6, 9, 4].map((w, i) => (
+        <Skeleton key={i} className="h-3" style={{ width: `${w * 10}%` }} />
+      ))}
     </div>
   ),
 });

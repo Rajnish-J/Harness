@@ -7,9 +7,14 @@ import { useEffect, useMemo, useState } from "react";
 import EmptyState from "@/components/registry/EmptyState";
 import ResourceCard from "@/components/registry/ResourceCard";
 import SectionHeader from "@/components/registry/SectionHeader";
+import {
+  SkeletonCardGrid,
+  SkeletonSectionHeader,
+} from "@/components/registry/Skeletons";
 import ToolGroupDialog from "@/components/tools/ToolGroupDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { mcpApi } from "@/lib/registry-api";
 import type { McpServerSummary } from "@/lib/registry-types";
 import {
@@ -18,7 +23,11 @@ import {
   toolGroupName,
   type ToolGroup,
 } from "@/lib/tool-groups";
-import { fetchTools, type ToolInfo } from "@/lib/workflow-api";
+import {
+  fetchMcpTools,
+  fetchTools,
+  type ToolInfo,
+} from "@/lib/workflow-api";
 
 /**
  * Read-only view of the harness's tool registry, one card per group.
@@ -50,7 +59,13 @@ function groupNameFor(server: { name: string }): string {
 
 export default function ToolsBrowser() {
   const [tools, setTools] = useState<ToolInfo[] | null>(null);
-  const [servers, setServers] = useState<McpServerSummary[]>([]);
+  const [servers, setServers] = useState<McpServerSummary[] | null>(null);
+  // null until discovery answers, which is what separates "still asking" from
+  // "asked, and this server offers nothing".
+  const [discovered, setDiscovered] = useState<{
+    tools: ToolInfo[];
+    notices: string[];
+  } | null>(null);
   const [query, setQuery] = useState("");
   const [openGroup, setOpenGroup] = useState<string | null>(null);
 
@@ -64,18 +79,48 @@ export default function ToolsBrowser() {
     return () => controller.abort();
   }, []);
 
+  // Discovery is a second round trip, made per enabled server, and it is the
+  // only way this page can know a server's tools: GET /api/workflows/tools
+  // returns the built-in registry alone and never contains an mcp__* tool, so
+  // counting them out of `tools` would report zero for every server forever.
+  const enabledIds = (servers ?? [])
+    .filter((server) => server.enabled)
+    .map((server) => server.id)
+    .join(",");
+
+  useEffect(() => {
+    if (servers === null) return;
+    const controller = new AbortController();
+    const ids = enabledIds ? enabledIds.split(",") : [];
+
+    fetchMcpTools(ids, controller.signal)
+      .then(({ tools: found, notices }) => {
+        if (controller.signal.aborted) return;
+        setDiscovered({ tools: found, notices });
+      })
+      .catch(() => {
+        // fetchMcpTools swallows its own failures; this only catches an abort.
+      });
+
+    return () => controller.abort();
+  }, [enabledIds, servers]);
+
   const groups = useMemo(() => {
     if (!tools) return [];
+    // Built-ins from the harness plus whatever discovery turned up, grouped
+    // together: `Tool.group` already namespaces MCP tools as `MCP · {server}`,
+    // so the split below still separates them.
+    const all = [...tools, ...(discovered?.tools ?? [])];
     const needle = query.trim().toLowerCase();
     const matching = needle
-      ? tools.filter(
+      ? all.filter(
           (tool) =>
             tool.name.toLowerCase().includes(needle) ||
             tool.description.toLowerCase().includes(needle),
         )
-      : tools;
+      : all;
     return groupTools(matching);
-  }, [tools, query]);
+  }, [tools, discovered, query]);
 
   const builtin = groups.filter((g) => !g.name.startsWith(MCP_GROUP_PREFIX));
 
@@ -86,7 +131,7 @@ export default function ToolsBrowser() {
     const byGroup = new Map(groups.map((group) => [group.name, group]));
     const needle = query.trim().toLowerCase();
 
-    return servers
+    return (servers ?? [])
       .map((server) => ({
         server,
         tools: byGroup.get(groupNameFor(server))?.tools ?? [],
@@ -100,16 +145,33 @@ export default function ToolsBrowser() {
       );
   }, [servers, groups, query]);
 
+  // Discovery has not answered yet, so no server can be called toolless.
+  const discovering = discovered === null;
+
   // The dialog reads from the unfiltered set: narrowing the grid should not
   // hide tools inside a group the operator then opens.
   const openTools = useMemo(
-    () => (tools ?? []).filter((tool) => toolGroupName(tool) === openGroup),
-    [tools, openGroup],
+    () =>
+      [...(tools ?? []), ...(discovered?.tools ?? [])].filter(
+        (tool) => toolGroupName(tool) === openGroup,
+      ),
+    [tools, discovered, openGroup],
   );
 
-  if (tools === null) {
+  // Both fetches must land before the page can tell "nothing here" from "not
+  // asked yet". They resolve independently, and whichever wins the race would
+  // otherwise render its half's empty state as if it were the answer.
+  if (tools === null || servers === null) {
     return (
-      <p className="py-16 text-center text-sm text-muted-foreground">Loading tools…</p>
+      <div className="flex flex-col gap-8">
+        <Skeleton className="h-9 w-full" />
+        {[0, 1].map((section) => (
+          <section key={section} className="flex flex-col gap-4">
+            <SkeletonSectionHeader />
+            <SkeletonCardGrid count={3} />
+          </section>
+        ))}
+      </div>
     );
   }
 
@@ -172,6 +234,17 @@ export default function ToolsBrowser() {
             }
           />
         ) : (
+          <>
+          {/* Why a server came back with nothing. Amber, and above the grid,
+              matching how the composer reports the same notices. */}
+          {(discovered?.notices ?? []).map((notice) => (
+            <p
+              key={notice}
+              className="text-xs text-amber-600 dark:text-amber-400"
+            >
+              {notice}
+            </p>
+          ))}
           <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {mcpServers.map(({ server, tools: found }) => (
               <li key={server.id}>
@@ -181,7 +254,7 @@ export default function ToolsBrowser() {
                   title={server.name}
                   kind={server.transport}
                   meta={server.description ?? server.url ?? server.command}
-                  status={serverStatus(server, found.length)}
+                  status={serverStatus(server, found.length, discovering)}
                   action={
                     <Button
                       variant="outline"
@@ -199,6 +272,7 @@ export default function ToolsBrowser() {
               </li>
             ))}
           </ul>
+          </>
         )}
       </section>
 
@@ -214,14 +288,23 @@ export default function ToolsBrowser() {
   );
 }
 
-/** What the card's dot says about a server the agent may or may not be able to use. */
+/**
+ * What the card's dot says about a server the agent may or may not be able to use.
+ *
+ * `discovering` matters because tool discovery is a live round trip to the
+ * server itself. Without it a server that simply has not answered yet is shown
+ * as "No tools discovered" — the same wording as a genuinely broken one, on the
+ * page someone opens precisely to find out which they have.
+ */
 function serverStatus(
   server: McpServerSummary,
   toolCount: number,
+  discovering: boolean,
 ): { tone: "ok" | "warn" | "idle"; label: string } {
   if (!server.enabled) return { tone: "idle", label: "Disabled" };
-  if (toolCount === 0) return { tone: "warn", label: "No tools discovered" };
-  return { tone: "ok", label: "Connected" };
+  if (toolCount > 0) return { tone: "ok", label: "Connected" };
+  if (discovering) return { tone: "idle", label: "Connecting…" };
+  return { tone: "warn", label: "No tools discovered" };
 }
 
 /** The built-in section's grid. MCP renders its own cards, one per server. */

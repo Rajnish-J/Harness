@@ -12,6 +12,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   formatContext,
   formatPrice,
@@ -105,7 +106,18 @@ export default function ModelPicker() {
         collisionPadding={{ top: 16, bottom: 16 }}
         className="w-[51rem] max-w-[90vw] p-0"
       >
-        {models.length === 0 ? (
+        {catalog.loading ? (
+          // Distinct from "no models": the catalog fetch is still in flight, and
+          // the empty branch below accuses the harness of being down. Someone
+          // opening this picker on a cold page load was told to go check a
+          // backend that was working fine.
+          <div className="flex flex-col gap-1.5 p-3">
+            <Skeleton className="h-4 w-24" />
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
+          </div>
+        ) : models.length === 0 ? (
           <p className="px-3 py-6 text-center text-[11px] text-muted-foreground">
             {reported === 0
               ? "The harness reported no models. Check that it is running."

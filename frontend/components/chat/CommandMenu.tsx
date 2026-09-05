@@ -238,7 +238,13 @@ export default function CommandMenu() {
                   <Icon className="size-3.5 shrink-0 opacity-70" />
                   <span className="min-w-0 flex-1 truncate">{entry.label}</span>
                   <span className="font-mono text-[10px] text-muted-foreground">
-                    {catalog.loading ? "…" : counts[entry.id]}
+                    {/* Tools are also unsettled while MCP discovery runs: the
+                        count would tick down and back up as mcp__* tools are
+                        swapped out and in. */}
+                    {catalog.loading ||
+                    (entry.id === "tools" && catalog.mcpToolsLoading)
+                      ? "…"
+                      : counts[entry.id]}
                   </span>
                 </button>
               );
@@ -421,7 +427,12 @@ export default function CommandMenu() {
                   )}
                   {show("tools") && groups.length === 0 && (
                     <p className="px-2 py-1.5 text-[11px] text-muted-foreground">
-                      No tools reported. Check that the Python harness is running.
+                      {/* Discovery empties the tool list while it runs, and
+                          telling someone to go check a healthy backend is worse
+                          than saying nothing. */}
+                      {catalog.mcpToolsLoading
+                        ? "Discovering tools…"
+                        : "No tools reported. Check that the Python harness is running."}
                     </p>
                   )}
                   {show("mcp") && servers.length === 0 && (

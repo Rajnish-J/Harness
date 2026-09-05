@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import { credentialsApi } from "@/lib/credential-api";
 import type { Credential, CredentialTestResult } from "@/lib/credential-types";
@@ -217,6 +218,19 @@ export default function CatalogWizard({
                 <ExternalLink className="size-3" />
               </a>
             </div>
+
+            {credentials === null && (
+              // Until the list arrives neither branch below can render, so
+              // without this the dialog shows the token box above and nothing
+              // at all beneath it, then pops a whole block into place.
+              <div className="flex flex-col gap-2">
+                <Skeleton className="h-3 w-24" />
+                <div className="flex flex-wrap gap-2">
+                  <Skeleton className="h-8 w-32" />
+                  <Skeleton className="h-8 w-24" />
+                </div>
+              </div>
+            )}
 
             {!creating && credentials && credentials.length > 0 && (
               <div className="flex flex-col gap-2">
