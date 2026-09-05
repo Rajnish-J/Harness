@@ -9,6 +9,8 @@ import asyncio
 import logging
 import shutil
 import sys
+from dataclasses import dataclass
+from typing import Any
 
 from mcp import StdioServerParameters
 from mcp.client import Transport
@@ -26,9 +28,61 @@ from app.db.registry_repo import McpServerRow
 
 logger = logging.getLogger(__name__)
 
+#: Statuses with an obvious next step for whoever configured the server.
+_STATUS_HINTS = {
+    401: "the linked credential was rejected — check the token on the Credentials page",
+    403: "the linked credential was rejected — check the token on the Credentials page",
+    404: "check the server URL",
+}
+
+#: How much of an error response body is worth keeping. Bodies from a broken
+#: server can be arbitrarily large; a notice does not need more than a line.
+_MAX_BODY_CHARS = 200
+
 
 class McpConfigError(Exception):
     """A server row cannot be turned into a usable connection."""
+
+
+@dataclass
+class HttpFailure:
+    """The last 4xx/5xx response an httpx client saw, if any.
+
+    `Client(target)` swallows the response into a nested ExceptionGroup that
+    only stringifies to "unhandled errors in a TaskGroup" (see
+    app.mcp.manager.describe_exception). An event hook is the only point where
+    the actual status and body are still in scope, so this is where they are
+    captured for the runner to read after the connect fails.
+    """
+
+    status_code: int
+    body: str = ""
+
+    def describe(self) -> str:
+        hint = _STATUS_HINTS.get(self.status_code)
+        body = f" — {self.body}" if self.body else ""
+        suffix = f" ({hint})" if hint else ""
+        return f"HTTP {self.status_code}{body}{suffix}"
+
+
+def _record_failures(holder: HttpFailure | None) -> Any:
+    """An httpx `event_hooks["response"]` callback that fills `holder` on error.
+
+    Async because create_mcp_http_client builds an AsyncClient; a sync hook on
+    an async client is never awaited and silently never runs.
+    """
+
+    async def on_response(response: Any) -> None:
+        if holder is None or response.status_code < 400:
+            return
+        try:
+            body = (await response.aread()).decode("utf-8", errors="replace")
+        except Exception:  # noqa: BLE001 - the status code alone is still useful
+            body = ""
+        holder.status_code = response.status_code
+        holder.body = body.strip()[:_MAX_BODY_CHARS]
+
+    return on_response
 
 
 def resolve_command(command: str) -> str:
@@ -92,7 +146,12 @@ def stdio_params(server: McpServerRow) -> StdioServerParameters:
     )
 
 
-def remote_transport(server: McpServerRow, headers: dict[str, str]) -> Transport:
+def remote_transport(
+    server: McpServerRow,
+    headers: dict[str, str],
+    *,
+    failure: HttpFailure | None = None,
+) -> Transport:
     """A configured transport for sse/http, so headers actually reach the wire.
 
     `Client` accepts a bare URL string, but it has no `headers` argument: a URL
@@ -101,6 +160,10 @@ def remote_transport(server: McpServerRow, headers: dict[str, str]) -> Transport
     and then silently dropped. Building the transport here is the SDK's own
     answer — the two functions take headers by different routes, so both are
     spelled out rather than hidden behind a shared helper.
+
+    `failure`, when given, is filled in by an httpx response hook on any 4xx/5xx
+    — the only point where the real HTTP detail is still in scope before the
+    SDK buries it in an ExceptionGroup. See app.mcp.manager.describe_exception.
     """
     if not server.url:
         raise McpConfigError(
@@ -108,21 +171,30 @@ def remote_transport(server: McpServerRow, headers: dict[str, str]) -> Transport
         )
 
     if server.transport == "sse":
-        # sse_client takes headers directly.
+        # sse_client takes headers directly, and has no hook for a holder.
         return sse_client(server.url, headers=headers or None)
 
     # streamable_http_client has no headers argument; per its docstring the way
     # to set them is to hand it a pre-configured client.
-    return streamable_http_client(
-        server.url,
-        http_client=create_mcp_http_client(headers=headers or None),
-    )
+    http_client = create_mcp_http_client(headers=headers or None)
+    # create_mcp_http_client takes no event_hooks kwarg (mcp 2.1.1); the SDK
+    # shape canary in test_mcp_tools.py would fail loudly if that changed.
+    # event_hooks is a plain mutable dict on the real client, so appending
+    # after construction is the supported way in. Guarded with getattr rather
+    # than assumed: tests substitute a bare sentinel for create_mcp_http_client
+    # to check what streamable_http_client was called with, and that sentinel
+    # has no event_hooks -- only a real httpx.AsyncClient does.
+    hooks = getattr(http_client, "event_hooks", None)
+    if failure is not None and hooks is not None:
+        hooks["response"].append(_record_failures(failure))
+    return streamable_http_client(server.url, http_client=http_client)
 
 
 def connection_target(
     server: McpServerRow,
     *,
     extra_headers: dict[str, str] | None = None,
+    failure: HttpFailure | None = None,
 ) -> StdioServerParameters | Transport:
     """What to hand the mcp Client: params for stdio, a transport for the rest.
 
@@ -133,4 +205,6 @@ def connection_target(
     if server.transport == "stdio":
         return stdio_params(server)
 
-    return remote_transport(server, {**server.headers, **(extra_headers or {})})
+    return remote_transport(
+        server, {**server.headers, **(extra_headers or {})}, failure=failure
+    )
