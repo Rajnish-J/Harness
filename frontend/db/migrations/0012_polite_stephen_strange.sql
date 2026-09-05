@@ -1,0 +1,1 @@
+CREATE INDEX "project_chat_messages_project_idx" ON "project_chat_messages" USING btree ("project_id","created_at");

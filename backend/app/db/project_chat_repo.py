@@ -64,6 +64,9 @@ class SessionSummary:
     updated_at: datetime
     message_count: int
     title: str
+    #: When this conversation was pinned, or None. Defaulted so a caller that
+    #: builds a summary without it -- a test fake, say -- still constructs.
+    pinned_at: datetime | None = None
 
 
 async def load_session(
@@ -185,6 +188,40 @@ async def append_messages(
     return len(entries)
 
 
+#: The projection both listing queries share. They differ only in their WHERE
+#: and ORDER BY, and they drifted into two character-identical copies once
+#: already -- a column added to one and not the other silently gives half the
+#: callers a stale summary. Static SQL concatenated with static SQL; every
+#: value still arrives through a %s placeholder.
+_SUMMARY_SELECT = """
+    select
+        s.session_id,
+        s.updated_at,
+        s.pinned_at,
+        (
+            select count(*) from project_chat_messages m
+            where m.session_id = s.session_id
+        ) as message_count,
+        (
+            select m.content from project_chat_messages m
+            where m.session_id = s.session_id and m.role = 'user'
+            order by m.seq asc
+            limit 1
+        ) as title_source
+    from project_chat_sessions s
+"""
+
+
+def _summary(row: dict[str, Any]) -> SessionSummary:
+    return SessionSummary(
+        session_id=row["session_id"],
+        updated_at=row["updated_at"],
+        message_count=int(row["message_count"]),
+        title=_derive_title(row["title_source"]),
+        pinned_at=row["pinned_at"],
+    )
+
+
 async def list_sessions(
     pool: AsyncConnectionPool, project_id: str | None, *, limit: int = 50
 ) -> list[SessionSummary]:
@@ -204,38 +241,20 @@ async def list_sessions(
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                """
-                select
-                    s.session_id,
-                    s.updated_at,
-                    (
-                        select count(*) from project_chat_messages m
-                        where m.session_id = s.session_id
-                    ) as message_count,
-                    (
-                        select m.content from project_chat_messages m
-                        where m.session_id = s.session_id and m.role = 'user'
-                        order by m.seq asc
-                        limit 1
-                    ) as title_source
-                from project_chat_sessions s
+                _SUMMARY_SELECT
+                + """
                 where s.project_id is not distinct from %s
-                order by s.updated_at desc
+                -- nulls last is mandatory, not decoration: Postgres defaults
+                -- DESC to NULLS FIRST, which would float every UNPINNED chat
+                -- above every pinned one and invert the whole feature.
+                order by s.pinned_at desc nulls last, s.updated_at desc
                 limit %s
                 """,
                 (project_id, limit),
             )
             rows = await cur.fetchall()
 
-    return [
-        SessionSummary(
-            session_id=row["session_id"],
-            updated_at=row["updated_at"],
-            message_count=int(row["message_count"]),
-            title=_derive_title(row["title_source"]),
-        )
-        for row in rows
-    ]
+    return [_summary(row) for row in rows]
 
 
 async def list_sessions_by_ids(
@@ -261,21 +280,10 @@ async def list_sessions_by_ids(
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                """
-                select
-                    s.session_id,
-                    s.updated_at,
-                    (
-                        select count(*) from project_chat_messages m
-                        where m.session_id = s.session_id
-                    ) as message_count,
-                    (
-                        select m.content from project_chat_messages m
-                        where m.session_id = s.session_id and m.role = 'user'
-                        order by m.seq asc
-                        limit 1
-                    ) as title_source
-                from project_chat_sessions s
+                # Ordering deliberately untouched by pinning: this answers a
+                # provenance question, where which chats are pinned is noise.
+                _SUMMARY_SELECT
+                + """
                 where s.session_id = any(%s)
                 order by s.updated_at desc
                 """,
@@ -283,15 +291,7 @@ async def list_sessions_by_ids(
             )
             rows = await cur.fetchall()
 
-    return [
-        SessionSummary(
-            session_id=row["session_id"],
-            updated_at=row["updated_at"],
-            message_count=int(row["message_count"]),
-            title=_derive_title(row["title_source"]),
-        )
-        for row in rows
-    ]
+    return [_summary(row) for row in rows]
 
 
 def _derive_title(first_user_message: str | None) -> str:
@@ -373,3 +373,94 @@ async def clear_session(pool: AsyncConnectionPool, session_id: str) -> None:
                 "delete from project_chat_sessions where session_id = %s",
                 (session_id,),
             )
+
+
+class SessionNotFoundError(LookupError):
+    """No conversation with this session id has been persisted yet."""
+
+    def __init__(self, session_id: str) -> None:
+        self.session_id = session_id
+        super().__init__(
+            f"No stored conversation for session {session_id!r}. A session is "
+            "written when its first turn completes, so one that has never "
+            "finished a turn cannot be adopted yet."
+        )
+
+
+async def attach_session_to_project(
+    pool: AsyncConnectionPool, session_id: str, project_id: str | None
+) -> int:
+    """Re-file one conversation under a project (or back to global).
+
+    Both tables in ONE transaction, because they answer the same question from
+    two sides: `list_sessions` reads project_chat_sessions and `load_transcript`
+    reads project_chat_messages. Half-applying this leaves a conversation the
+    sidebar files as global whose messages a project's page shows -- exactly the
+    split the write-once `project_id` below exists to keep from drifting into.
+
+    This is the ONLY sanctioned writer of project_chat_sessions.project_id after
+    insert. `save_session` deliberately leaves it out of its upsert so that a
+    stale browser tab -- still posting `project_id: null` from before an
+    adoption -- cannot re-home a conversation as a side effect of an ordinary
+    turn. Adoption is an explicit act, so it gets an explicit call.
+
+    That same omission is what makes a concurrent turn harmless here: the
+    advisory lock serialises this against `append_messages`, and if a turn's
+    `_persist` lands afterwards with the old project_id, `save_session` ignores
+    the column and only the history is rewritten.
+
+    Returns the number of transcript rows re-filed.
+    """
+    async with pool.connection() as conn:
+        async with conn.transaction():
+            async with conn.cursor() as cur:
+                # The same lock append_messages takes, so a turn cannot
+                # interleave an INSERT between the two UPDATEs below.
+                await cur.execute(
+                    "select pg_advisory_xact_lock(hashtext(%s))", (session_id,)
+                )
+                await cur.execute(
+                    "update project_chat_sessions "
+                    "set project_id = %s, updated_at = now() "
+                    "where session_id = %s",
+                    (project_id, session_id),
+                )
+                sessions_updated = cur.rowcount
+                if sessions_updated == 0:
+                    # Raised inside the transaction so it rolls back; there is
+                    # nothing to undo yet, but the messages UPDATE below must
+                    # not run against a session that does not exist.
+                    raise SessionNotFoundError(session_id)
+
+                await cur.execute(
+                    "update project_chat_messages set project_id = %s "
+                    "where session_id = %s",
+                    (project_id, session_id),
+                )
+                return cur.rowcount
+
+
+async def set_session_pinned(
+    pool: AsyncConnectionPool, session_id: str, pinned: bool
+) -> bool:
+    """Pin or unpin one conversation. False when no such session exists.
+
+    Deliberately does NOT touch `updated_at`. Pinning is a filing decision, not
+    activity, and bumping the timestamp would reorder the unpinned list as a
+    side effect of tidying the pinned one. That is the opposite of
+    `attach_session_to_project`, which does bump it -- because an adoption
+    really does change what the conversation is.
+
+    One statement rather than two branches: `pinned_at` is either now() or
+    null, and a caller flipping a checkbox should not be able to hit a
+    different code path in each direction.
+    """
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "update project_chat_sessions "
+                "set pinned_at = case when %s then now() else null end "
+                "where session_id = %s",
+                (pinned, session_id),
+            )
+            return cur.rowcount > 0
