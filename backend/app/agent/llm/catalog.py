@@ -140,43 +140,40 @@ MODEL_CATALOG: list[ModelInfo] = [
     # earns its place rather than repeating "fast" four times. Ids are taken
     # from the SDK's own Literal, which is why several carry a `/` namespace --
     # see MODEL_ID_PATTERN, which had to be widened to accept them.
-    ModelInfo(
-        id="llama-3.3-70b-versatile",
-        label="Llama 3.3 70B",
-        provider="groq",
-        description=(
-            "The strongest general-purpose model on Groq, and the sensible "
-            "default here. Handles tool calling reliably enough for agent turns."
-        ),
-        context_tokens=128_000,
-    ),
+    #
+    # llama-3.3-70b-versatile, moonshotai/kimi-k2-instruct and
+    # llama-3.1-8b-instant were removed 2026-09-06: Groq decommissioned all
+    # three (confirmed against a validated key's own validated_models list,
+    # which no longer names any of them). This table is hand-maintained and
+    # will drift again -- see the non-empty-validated_models filtering in
+    # models_for below, which is what catches the *next* one automatically.
     ModelInfo(
         id="openai/gpt-oss-120b",
         label="GPT-OSS 120B",
         provider="groq",
         description=(
-            "OpenAI's open-weights release, served by Groq. The best reasoning "
-            "available here, at the cost of being the slowest of these."
+            "The best reasoning available on Groq, and the sensible default "
+            "here. Handles tool calling reliably enough for agent turns."
         ),
         context_tokens=128_000,
     ),
     ModelInfo(
-        id="moonshotai/kimi-k2-instruct",
-        label="Kimi K2",
+        id="openai/gpt-oss-20b",
+        label="GPT-OSS 20B",
         provider="groq",
         description=(
-            "A large mixture-of-experts model that is unusually strong at "
-            "long multi-step tool use for its price."
+            "The smaller open-weights release, served by Groq. Faster than "
+            "the 120B at some cost to reasoning depth."
         ),
         context_tokens=128_000,
     ),
     ModelInfo(
-        id="llama-3.1-8b-instant",
-        label="Llama 3.1 8B",
+        id="groq/compound",
+        label="Compound",
         provider="groq",
         description=(
-            "Fastest and cheapest here by a wide margin. Good for classification "
-            "and short rewrites; not for multi-step tool work."
+            "Groq's own agentic system model, with built-in tool use. Good for "
+            "long multi-step tool work."
         ),
         context_tokens=128_000,
     ),
@@ -195,6 +192,7 @@ class CredentialLike(Protocol):
     provider: str
     enabled: bool
     extra_models: list[str]
+    validated_models: list[str]
     last_validated_at: object
     last_validation_error: str | None
 
@@ -218,6 +216,11 @@ class ResolvedCredential(BaseModel):
     source: Literal["db", "env"]
     enabled: bool = True
     extra_models: list[str] = Field(default_factory=list)
+    #: The provider's own model list, as of the last successful key test. Empty
+    #: means "never validated" -- not "the provider has no models" -- and that
+    #: distinction is why models_for treats empty as "don't filter" rather than
+    #: as "nothing is available".
+    validated_models: list[str] = Field(default_factory=list)
     status: CredentialStatus = "unknown"
     status_message: str | None = None
     checked_at: datetime | None = None
@@ -250,6 +253,7 @@ def resolve_credentials(
             source="db",
             enabled=row.enabled,
             extra_models=list(row.extra_models or []),
+            validated_models=list(row.validated_models or []),
             status=status,
             status_message=row.last_validation_error,
             checked_at=row.last_validated_at,  # type: ignore[arg-type]
@@ -284,12 +288,18 @@ def default_model(
     configured = configured_model(settings)
     if configured:
         credential = credentials.get(settings.llm_provider)
-        if credential and credential.enabled:
+        if (
+            credential
+            and credential.enabled
+            and (not credential.validated_models or configured in credential.validated_models)
+        ):
             return configured
 
     for model in MODEL_CATALOG:
         credential = credentials.get(model.provider)
         if credential and credential.enabled:
+            if credential.validated_models and model.id not in credential.validated_models:
+                continue
             return model.id
 
     return None
@@ -309,12 +319,25 @@ def models_for(
     picker can show what registering a key would buy. That is the same choice
     the previous env-driven version made about the non-configured provider -- it
     is just no longer limited to one provider being live at a time.
+
+    One exception: a catalog row is dropped outright when a validated key for
+    its provider names a model list that does not include it. This hand-written
+    table drifts as providers retire models (llama-3.3-70b-versatile is the one
+    that prompted this), and the provider's own answer at the last successful
+    key test is ground truth. An empty validated_models list means "never
+    validated" and filters nothing -- silence is not a retirement notice.
     """
     resolved = credentials if credentials is not None else {}
     rows: list[ModelInfo] = []
 
     for model in MODEL_CATALOG:
         credential = resolved.get(model.provider)
+        if (
+            credential
+            and credential.validated_models
+            and model.id not in credential.validated_models
+        ):
+            continue
         usable = bool(credential and credential.enabled)
         rows.append(
             model.model_copy(

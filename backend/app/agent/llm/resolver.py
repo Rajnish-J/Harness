@@ -9,7 +9,7 @@ The resolution order is deliberate:
 
 1. The requested model id decides the PROVIDER -- by catalog lookup, then by
    asking whether any credential claims it as an extra id. A turn asking for
-   `llama-3.3-70b-versatile` is asking for Groq whatever `.env` says.
+   `openai/gpt-oss-120b` is asking for Groq whatever `.env` says.
 2. The provider decides the KEY -- database first, `.env` second.
 3. No key for that provider is a `NoCredentialError`, which the chat route turns
    into an ordinary SSE error naming the fix, rather than a 500.
@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 _PROVIDER_FALLBACK_MODEL = {
     "anthropic": "claude-opus-5",
     "openai": "gpt-4o",
-    "groq": "llama-3.3-70b-versatile",
+    "groq": "openai/gpt-oss-120b",
 }
 
 

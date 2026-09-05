@@ -24,7 +24,7 @@ from tests.test_models_catalog import FakeRow, settings_with
 
 def test_a_catalogued_id_names_its_own_provider():
     settings = settings_with(llm_provider="anthropic")
-    assert provider_for_model("llama-3.3-70b-versatile", settings, {}) == "groq"
+    assert provider_for_model("groq/compound", settings, {}) == "groq"
     assert provider_for_model("claude-opus-5", settings, {}) == "anthropic"
     assert provider_for_model("gpt-4o", settings, {}) == "openai"
 
@@ -69,7 +69,7 @@ async def test_a_disabled_key_is_refused():
     settings = settings_with()
     credentials = resolve_credentials(settings, [FakeRow("groq", enabled=False)])
     with pytest.raises(NoCredentialError):
-        await client_for_turn(None, settings, "llama-3.3-70b-versatile", credentials)
+        await client_for_turn(None, settings, "openai/gpt-oss-120b", credentials)
 
 
 async def test_an_env_key_builds_a_client_without_a_database():
@@ -78,10 +78,10 @@ async def test_an_env_key_builds_a_client_without_a_database():
     credentials = resolve_credentials(settings, [])
 
     client, model = await client_for_turn(
-        None, settings, "llama-3.1-8b-instant", credentials
+        None, settings, "openai/gpt-oss-20b", credentials
     )
     assert client.provider == "groq"
-    assert model == "llama-3.1-8b-instant"
+    assert model == "openai/gpt-oss-20b"
 
 
 async def test_the_requested_model_beats_the_environments():
@@ -114,7 +114,7 @@ def test_client_for_builds_each_provider():
     for provider, model in [
         ("anthropic", "claude-opus-5"),
         ("openai", "gpt-4o"),
-        ("groq", "llama-3.3-70b-versatile"),
+        ("groq", "openai/gpt-oss-120b"),
     ]:
         client = client_for(provider, api_key="k", model=model)
         assert client.provider == provider
@@ -127,7 +127,7 @@ def test_client_for_rejects_an_unknown_provider():
 
 def test_groq_accepts_a_base_url_override():
     client = client_for(
-        "groq", api_key="k", model="llama-3.1-8b-instant", base_url="http://localhost:8081"
+        "groq", api_key="k", model="openai/gpt-oss-20b", base_url="http://localhost:8081"
     )
     assert client.provider == "groq"
 
