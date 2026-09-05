@@ -46,6 +46,7 @@ export async function POST(request: Request) {
       url: optionalString(body, "url"),
       env: optionalStringMap(body, "env"),
       headers: optionalStringMap(body, "headers"),
+      credentialId: optionalString(body, "credentialId"),
       enabled: optionalBoolean(body, "enabled"),
     };
 

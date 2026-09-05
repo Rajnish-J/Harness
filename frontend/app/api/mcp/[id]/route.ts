@@ -66,6 +66,9 @@ export async function PATCH(request: Request, ctx: Ctx) {
       ...("url" in body ? { url: optionalString(body, "url") } : {}),
       ...("env" in body ? { env: optionalStringMap(body, "env") } : {}),
       ...("headers" in body ? { headers: optionalStringMap(body, "headers") } : {}),
+      ...("credentialId" in body
+        ? { credentialId: optionalString(body, "credentialId") }
+        : {}),
       ...("enabled" in body ? { enabled: optionalBoolean(body, "enabled") } : {}),
     };
 
@@ -78,6 +81,23 @@ export async function PATCH(request: Request, ctx: Ctx) {
   }
 
   try {
+    // The same connectability invariant POST enforces, applied to the row this
+    // patch would produce. A PATCH can change one half of the pair — switching
+    // transport to http without supplying a url, say — so checking the patch
+    // alone is not enough; it has to be checked against the merged result.
+    // Without this, the editor can save a server that can never dial, and the
+    // failure only surfaces later as an McpConfigError at connect time.
+    const current = await getMcpServer(id);
+    if (!current) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    const merged = { ...current, ...patch };
+    if (merged.transport === "stdio" && !merged.command) {
+      return badRequest("command is required for a stdio server");
+    }
+    if (merged.transport !== "stdio" && !merged.url) {
+      return badRequest(`url is required for an ${merged.transport} server`);
+    }
+
     const row = await updateMcpServer(id, patch);
     if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json(row);
