@@ -1,0 +1,2 @@
+ALTER TABLE "project_chat_sessions" ADD COLUMN "pinned_at" timestamp with time zone;--> statement-breakpoint
+CREATE INDEX "project_chat_sessions_pinned_idx" ON "project_chat_sessions" USING btree ("project_id","pinned_at");

@@ -4,10 +4,11 @@ import { usePathname } from "next/navigation";
 
 import ActiveAgentBadge from "@/components/shell/ActiveAgentBadge";
 import MockBadge from "@/components/shell/MockBadge";
+import ChatActionsMenu from "@/components/chat/ChatActionsMenu";
 import ThemeToggle from "@/components/shell/ThemeToggle";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { findNavGroup, findNavItem } from "@/lib/nav";
+import { findNavGroup, findNavItem, isNavActive } from "@/lib/nav";
 
 /**
  * The one header for the whole app. Replaces the three near-identical inline
@@ -44,6 +45,11 @@ export default function AppHeader() {
       <div className="ml-auto flex items-center gap-2 pl-3">
         <ActiveAgentBadge />
         <MockBadge />
+        {/* Global chat only. This header renders above every route, including
+            the project IDE, and it sits OUTSIDE that page's nested chat
+            provider -- so an ungated menu here would quietly act on the global
+            conversation while a project was open. */}
+        {isNavActive("/", pathname) && <ChatActionsMenu />}
         <ThemeToggle />
       </div>
     </header>

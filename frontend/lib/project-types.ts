@@ -207,3 +207,19 @@ export type StoredMessage = {
   tool_args: Record<string, unknown> | null;
   is_error: boolean;
 };
+
+/** A starter scaffold offered when creating a project. */
+export type ProjectTemplate = {
+  id: string;
+  name: string;
+  description: string;
+};
+
+/** Outcome of bringing a chat's scratch files into a project. */
+export type AdoptWorkspaceResult = {
+  copied: string[];
+  skipped: { path: string; reason: string }[];
+  committed: boolean;
+  file_count: number;
+  message: string;
+};

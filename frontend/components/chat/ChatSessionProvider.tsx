@@ -31,6 +31,8 @@ export type ApprovalDecision = { id: string; approved: boolean };
 
 type ChatSessionValue = {
   sessionId: string | null;
+  /** The project this chat belongs to, or undefined in the global chat on `/`. */
+  projectId?: string;
   items: TranscriptItem[];
   streaming: boolean;
   /** Manual mode: a tool call is parked and the composer is waiting on a verdict. */
@@ -43,7 +45,8 @@ type ChatSessionValue = {
   stop: () => void;
   newChat: () => void;
   /** Reopen a past conversation from the sidebar's history list. */
-  openSession: (sessionId: string) => Promise<void>;
+  /** Reopen a past conversation. False when it had no messages to load. */
+  openSession: (sessionId: string) => Promise<boolean>;
 };
 
 const ChatSessionContext = createContext<ChatSessionValue | null>(null);
@@ -118,6 +121,18 @@ export default function ChatSessionProvider({
             },
           ];
 
+        case "attach_proposal":
+          return [
+            ...prev,
+            {
+              kind: "attach_proposal",
+              id: event.id,
+              projectId: event.project_id,
+              projectName: event.project_name,
+              reason: event.reason ?? "",
+            },
+          ];
+
         case "project_proposal":
           return [
             ...prev,
@@ -126,6 +141,7 @@ export default function ChatSessionProvider({
               id: event.id,
               name: event.name,
               description: event.description,
+              template: event.template ?? "",
             },
           ];
 
@@ -251,7 +267,9 @@ export default function ChatSessionProvider({
       const verdicts = new Map(decisions.map((d) => [d.id, d.approved]));
       setItems((prev) =>
         prev.map((item) =>
-          (item.kind === "approval" || item.kind === "project_proposal") &&
+          (item.kind === "approval" ||
+            item.kind === "project_proposal" ||
+            item.kind === "attach_proposal") &&
           verdicts.has(item.id)
             ? {
                 ...item,
@@ -331,6 +349,11 @@ export default function ChatSessionProvider({
       const messages = await fetchChatTranscript(targetSessionId);
       setItems(toTranscript(messages));
       setStoredSessionId(scope, targetSessionId);
+      // Reported rather than swallowed: fetchChatTranscript degrades to [] on
+      // any failure, so a caller handed an id that does not exist would
+      // otherwise adopt an empty conversation believing it worked. The deep
+      // link uses this to decide whether to clean the URL.
+      return messages.length > 0;
     },
     [scope],
   );
@@ -338,6 +361,10 @@ export default function ChatSessionProvider({
   const value = useMemo(
     () => ({
       sessionId,
+      // Exposed so consumers can tell which scope they are in: the summary
+      // card only offers itself in the global chat, and the IDE's switcher
+      // only lists the open project's conversations.
+      projectId,
       items,
       streaming,
       pending,
@@ -349,6 +376,7 @@ export default function ChatSessionProvider({
     }),
     [
       sessionId,
+      projectId,
       items,
       streaming,
       pending,

@@ -20,6 +20,7 @@ import { Label } from "@/components/ui/label";
 import { toast } from "@/components/ui/toast";
 import type { Credential } from "@/lib/credential-types";
 import { projectsApi } from "@/lib/project-api";
+import TemplatePicker, { useProjectTemplates } from "@/components/projects/TemplatePicker";
 import type { CloneEvent, RemoteRepo } from "@/lib/project-types";
 
 type Step = "choose" | "blank" | "github";
@@ -70,6 +71,8 @@ export default function NewProjectDialog({ credentials }: { credentials: Credent
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [template, setTemplate] = useState("blank");
+  const templates = useProjectTemplates();
 
   function reset() {
     setStep("choose");
@@ -77,6 +80,7 @@ export default function NewProjectDialog({ credentials }: { credentials: Credent
     setLines([]);
     setName("");
     setDescription("");
+    setTemplate("blank");
   }
 
   function onOpenChange(next: boolean) {
@@ -101,8 +105,9 @@ export default function NewProjectDialog({ credentials }: { credentials: Credent
         description: description.trim() || undefined,
       });
 
-      setLines((prev) => [...prev, "Setting up a git repository and README…"]);
-      await projectsApi.init(project.id);
+      const label = templates.find((t) => t.id === template)?.name ?? "starter";
+      setLines((prev) => [...prev, `Setting up a git repository and the ${label} files…`]);
+      await projectsApi.init(project.id, template);
 
       setOpen(false);
       router.push(`/projects/${project.id}/vscode`);
@@ -207,7 +212,7 @@ export default function NewProjectDialog({ credentials }: { credentials: Credent
               {step === "choose" &&
                 "Start from nothing, or bring in a repository you already have."}
               {step === "blank" &&
-                "A git repository with a README, ready to open in the editor."}
+                "A git repository with a starter scaffold, ready to open in the editor."}
               {step === "github" &&
                 "Clone a repository into the harness workspace so the agent can work inside it."}
             </DialogDescription>
@@ -263,6 +268,14 @@ export default function NewProjectDialog({ credentials }: { credentials: Credent
                     value={description}
                     placeholder="A brief description of your project"
                     onChange={(event) => setDescription(event.target.value)}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs font-medium">Scaffold</Label>
+                  <TemplatePicker
+                    templates={templates}
+                    value={template}
+                    onChange={setTemplate}
                   />
                 </div>
               </div>

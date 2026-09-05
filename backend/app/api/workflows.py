@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
+from app.agent.llm.errors import ProviderSDKMissingError
 from app.agent.llm.factory import get_llm_client
 from app.agent.tools.registry import ALL_TOOLS
 from app.api.sse import SSE_HEADERS
@@ -159,6 +160,12 @@ async def _run_stream(
 
     try:
         llm_client = get_llm_client(settings)
+    except ProviderSDKMissingError as exc:
+        yield WorkflowErrorEvent(
+            message=str(exc), code="provider_sdk_missing"
+        ).to_sse()
+        yield DoneEvent(reason="error").to_sse()
+        return
     except Exception as exc:  # noqa: BLE001
         yield WorkflowErrorEvent(
             message=f"LLM provider misconfigured: {exc}", code="config"

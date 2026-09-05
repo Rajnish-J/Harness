@@ -120,3 +120,65 @@
     font-family: var(--font-sans), Ubuntu, system-ui, sans-serif;
   }
 }
+
+/*
+ * Syntax highlighting, themed.
+ *
+ * components/ui/code-area.tsx passes `defaultColor={false}`, which makes Shiki
+ * emit every token with `--shiki-light` and `--shiki-dark` side by side and no
+ * `color` of its own. These four rules are what pick one. Without them a code
+ * block has no colour at all; with Shiki's default (`defaultColor: "light"`)
+ * it renders the light palette in both themes, which is the bug they replaced.
+ *
+ * Redefining nothing and setting `color` directly: because no inline colour is
+ * emitted, there is no specificity fight and no `!important` anywhere here.
+ *
+ * `.dark` is the class from `@custom-variant dark` above, not a media query --
+ * an explicit theme choice has to beat the OS preference for code the same way
+ * it does for everything else.
+ *
+ * Outside `@layer base` deliberately: base is the lowest layer, and these have
+ * to beat the Tailwind utilities code-area.tsx puts on the same elements.
+ */
+.rs-root :is(pre, code, span) {
+  color: var(--shiki-light);
+}
+.rs-root pre {
+  /* Light mode keeps github-light's own surface; only dark is overridden
+   * below, where the theme's tint was the thing that looked wrong. */
+  background-color: var(--shiki-light-bg);
+}
+.dark .rs-root :is(pre, code, span) {
+  color: var(--shiki-dark);
+}
+.dark .rs-root pre {
+  /* Black, not the theme's own --shiki-dark-bg.
+   *
+   * github-dark-default paints #0d1117, a blue-tinted near-black that reads as
+   * a slightly different shade from everything around it. Only the surface is
+   * overridden -- the token colours above still come from the theme, which is
+   * the whole reason the highlighter is here. */
+  background-color: #000;
+}
+
+/*
+ * Native scrollbars, matched to the Radix ones.
+ *
+ * Two scrollbar systems coexist and neither can style the other:
+ * components/ui/scroll-area.tsx hides the native bar and paints its own div,
+ * so this reaches only the surfaces that scroll natively -- the command menu's
+ * rail, a couple of dialogs, and every code block.
+ *
+ * The modern properties only, no `::-webkit-scrollbar` block: Chromium 121+
+ * honours `scrollbar-color` and then ignores the webkit rules entirely, so
+ * shipping both means the webkit styling silently never renders while still
+ * costing cross-browser consistency.
+ *
+ * This opts out of the `color-scheme`-derived chrome that :root and .dark set
+ * above -- that is the point. `--border` is already theme-scoped, so one
+ * declaration covers both themes and matches the Radix thumb's `bg-border`.
+ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}

@@ -2,23 +2,29 @@ import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse
 from psycopg_pool import AsyncConnectionPool
 
 from app.agent.llm.catalog import PRICING_AS_OF, default_model, models_for
+from app.agent.llm.errors import ProviderSDKMissingError
 from app.agent.llm.resolver import NoCredentialError, client_for_turn, load_credentials
 from app.agent.loop import SYSTEM_PROMPT, run_agent_loop, resume_agent_loop
 from app.agent.prompt import compose_system_prompt
 from app.agent.session import ProviderMismatchError, Session, session_store
 from app.agent.tools.base import Tool
+from app.agent.tools.attach_tools import (
+    LIST_PROJECTS_TOOL,
+    PROPOSE_ATTACH_PROJECT_TOOL,
+)
 from app.agent.tools.project_tools import PROPOSE_CREATE_PROJECT_TOOL
 from app.agent.tools.toolsets import UnknownToolError, merge_toolsets
 from app.api.sse import SSE_HEADERS
 from app.agent.exec_context import ExecutionContext
 from app.core.config import Settings, get_settings
 from app.core.secrets import CredentialCryptoError
-from app.db import memory_repo, project_chat_repo
+from app.db import memory_repo, project_chat_repo, project_repo
 from app.projects.execution import resolve_executor
 from app.projects.workspaces import InvalidProjectIdError, settings_for_project
 from app.mcp import resolve_mcp_tools
@@ -154,6 +160,11 @@ async def _prepare_turn(
         raise TurnSetupError(str(exc), "no_credential") from exc
     except CredentialCryptoError as exc:
         raise TurnSetupError(str(exc), "credential_crypto") from exc
+    except ProviderSDKMissingError as exc:
+        # Its own code, not "config": that one means the operator configured
+        # something wrong, and reading this as configuration is exactly what
+        # cost an afternoon the first time an SDK went missing.
+        raise TurnSetupError(str(exc), "provider_sdk_missing") from exc
     except Exception as exc:  # noqa: BLE001 - misconfiguration, report to the UI
         logger.exception("Failed to build LLM client")
         raise TurnSetupError(f"LLM provider misconfigured: {exc}", "config") from exc
@@ -173,8 +184,10 @@ async def _prepare_turn(
             )
         )
 
-    # Chat mode advertises no tools at all (see below), so there is nothing to
-    # propose creating a project with there either.
+    # The global chat's own tools: propose creating a project, list the ones
+    # that exist, and offer to file this conversation under one. All three are
+    # meaningless once a project is open, and chat mode advertises no tools at
+    # all (see below).
     propose_project_tool = project_id is None and payload.mode != "chat"
 
     # Same optional-pool discipline as _rehydrate/_persist below: memory is
@@ -194,6 +207,7 @@ async def _prepare_turn(
         skills=payload.skills,
         memories=memories,
         no_project_open=propose_project_tool,
+        project_open=project_id is not None,
         max_chars=turn_settings.max_system_prompt_chars,
     )
 
@@ -219,7 +233,14 @@ async def _prepare_turn(
             # module is also reused by workflow nodes, which have no concept
             # of a project-scoped chat. [*tools, ...] also guarantees a fresh
             # list even when merge_toolsets returned the shared ALL_TOOLS.
-            tools = [*tools, PROPOSE_CREATE_PROJECT_TOOL]
+            # Appended after PROPOSE_CREATE_PROJECT_TOOL so an in-flight
+            # session's cached prompt prefix up to that tool is unchanged.
+            tools = [
+                *tools,
+                PROPOSE_CREATE_PROJECT_TOOL,
+                LIST_PROJECTS_TOOL,
+                PROPOSE_ATTACH_PROJECT_TOOL,
+            ]
 
     return (
         Turn(
@@ -466,6 +487,9 @@ async def list_chat_sessions(
                 "updated_at": summary.updated_at.isoformat(),
                 "message_count": summary.message_count,
                 "title": summary.title,
+                "pinned_at": (
+                    summary.pinned_at.isoformat() if summary.pinned_at else None
+                ),
             }
             for summary in summaries
         ]
@@ -482,6 +506,103 @@ async def get_chat_session(session_id: str, request: Request) -> dict[str, objec
         return {"messages": []}
     rows = await project_chat_repo.load_transcript_for_session(pool, session_id)
     return {"messages": rows}
+
+
+class AttachSessionRequest(BaseModel):
+    """Which project adopts this conversation. None re-files it as global."""
+
+    project_id: str | None = Field(default=None, max_length=64)
+
+
+@router.post("/chat/sessions/{session_id}/attach")
+async def attach_chat_session(
+    session_id: str, payload: AttachSessionRequest, request: Request
+) -> dict[str, object]:
+    """Re-file a conversation under a project.
+
+    The counterpart to creating a project out of a chat: the files move with
+    POST /api/projects/{id}/adopt-workspace, and this moves the conversation so
+    the project's own chat rail opens on the discussion that produced it.
+
+    Unlike the history routes above, a missing pool is a 503 rather than an
+    empty answer. Those degrade because a failed *read* just shows less; a
+    failed *attach* that reported success would strand the conversation with
+    the client believing otherwise.
+    """
+    pool = getattr(request.app.state, "pool", None)
+    if pool is None:
+        raise HTTPException(
+            status_code=503,
+            detail="DATABASE_URL is not configured, so chats are not persisted.",
+        )
+
+    # Checked here rather than in the repo: attach_session_to_project writes the
+    # chat tables and has no business reading `projects`, but filing a
+    # conversation under an id nothing can open would strand it silently.
+    if payload.project_id is not None:
+        if await project_repo.get_project(pool, payload.project_id) is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Project not found, or it has been archived.",
+            )
+
+    try:
+        moved = await project_chat_repo.attach_session_to_project(
+            pool, session_id, payload.project_id
+        )
+    except project_chat_repo.SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    # Drop the in-RAM copy. Its history is not wrong -- _rehydrate keys on
+    # session_id alone -- but its `pending` belongs to a turn that ran against
+    # the old workspace root, and the next turn resolves a different
+    # settings_for_project. Forcing a clean reload from Postgres is cheaper
+    # than reasoning about which parts of it survived the move.
+    session_store.reset(session_id)
+
+    return {
+        "ok": True,
+        "session_id": session_id,
+        "project_id": payload.project_id,
+        "messages_moved": moved,
+    }
+
+
+class PinSessionRequest(BaseModel):
+    """Whether this conversation should sort above the rest."""
+
+    pinned: bool
+
+
+@router.post("/chat/sessions/{session_id}/pin")
+async def pin_chat_session(
+    session_id: str, payload: PinSessionRequest, request: Request
+) -> dict[str, object]:
+    """Pin or unpin a conversation.
+
+    503 on a missing pool rather than a quiet success, for the same reason the
+    attach route above does it: the history GETs may degrade because a failed
+    read just shows less, but a write that reported success would leave a pin
+    on screen that no reload will ever reproduce.
+    """
+    pool = getattr(request.app.state, "pool", None)
+    if pool is None:
+        raise HTTPException(
+            status_code=503,
+            detail="DATABASE_URL is not configured, so chats are not persisted.",
+        )
+
+    if not await project_chat_repo.set_session_pinned(
+        pool, session_id, payload.pinned
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail=f"No stored conversation for session {session_id!r}.",
+        )
+
+    # No session_store.reset() here, unlike attach: a pin changes nothing the
+    # in-RAM session knows about.
+    return {"ok": True, "session_id": session_id, "pinned": payload.pinned}
 
 
 @router.get("/models")

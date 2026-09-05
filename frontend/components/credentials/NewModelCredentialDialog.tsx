@@ -4,6 +4,7 @@ import { Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { useChatPreset } from "@/components/chat/ChatPresetProvider";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -32,9 +33,10 @@ import {
  * can never display a stored secret, so a half-created row would be
  * indistinguishable from a complete one.
  *
- * Providers already registered are disabled rather than hidden. The table is
- * UNIQUE on provider, so offering a second Groq key would only produce a 409;
- * showing it greyed out says "you already have this" instead.
+ * The provider is free text (matched case/whitespace-insensitively against the
+ * three supported providers) rather than a preset picker. The table is UNIQUE
+ * on provider, so typing an already-registered one is caught before the round
+ * trip — it would otherwise only surface as a 409.
  */
 export default function NewModelCredentialDialog({
   takenProviders,
@@ -42,8 +44,9 @@ export default function NewModelCredentialDialog({
   takenProviders: ModelProvider[];
 }) {
   const router = useRouter();
+  const { refetchModels } = useChatPreset();
   const [open, setOpen] = useState(false);
-  const [provider, setProvider] = useState<ModelProvider | null>(null);
+  const [providerText, setProviderText] = useState("");
   const [secret, setSecret] = useState("");
   const [label, setLabel] = useState("");
   const [busy, setBusy] = useState(false);
@@ -56,13 +59,20 @@ export default function NewModelCredentialDialog({
     if (busy) return;
     setOpen(next);
     if (next) {
-      setProvider(available[0] ?? null);
+      setProviderText("");
       setSecret("");
       setLabel("");
     }
   }
 
-  const prefix = provider ? MODEL_PROVIDER_KEY_PREFIXES[provider] : null;
+  // Typed text is matched against the enum case/whitespace-insensitively — the
+  // DB column is a lowercase Postgres enum, so this is the only normalization
+  // that happens; the input never shows or stores the raw casing.
+  const normalized = providerText.trim().toLowerCase();
+  const matchedProvider: ModelProvider | null =
+    MODEL_PROVIDERS.find((p) => p === normalized) ?? null;
+
+  const prefix = matchedProvider ? MODEL_PROVIDER_KEY_PREFIXES[matchedProvider] : null;
   const trimmed = secret.trim();
   // A warning, not a block: providers change key formats and being wrong about
   // one should not stop someone registering a key that actually works.
@@ -70,8 +80,18 @@ export default function NewModelCredentialDialog({
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (!provider) {
-      toast.warning("Pick a provider first.");
+    if (!normalized) {
+      toast.warning("Type a provider first.");
+      return;
+    }
+    if (!matchedProvider) {
+      toast.warning(
+        `Unsupported provider. Use one of: ${MODEL_PROVIDERS.map((p) => MODEL_PROVIDER_LABELS[p]).join(", ")}.`,
+      );
+      return;
+    }
+    if (takenProviders.includes(matchedProvider)) {
+      toast.warning(`${MODEL_PROVIDER_LABELS[matchedProvider]} is already registered.`);
       return;
     }
     if (!trimmed) {
@@ -82,14 +102,14 @@ export default function NewModelCredentialDialog({
     setBusy(true);
     try {
       const created = await modelCredentialsApi.create({
-        provider,
+        provider: matchedProvider,
         label: label.trim() || null,
         secret: trimmed,
       });
       // Clear the key from component state the moment it is no longer needed.
       setSecret("");
       setOpen(false);
-      toast.success(`${MODEL_PROVIDER_LABELS[provider]} key saved`);
+      toast.success(`${MODEL_PROVIDER_LABELS[matchedProvider]} key saved`);
 
       // Test immediately. The verdict is what the chat's model picker renders,
       // so a key that lands "untested" would show as a warning the operator
@@ -102,6 +122,9 @@ export default function NewModelCredentialDialog({
       } catch {
         // The key is saved; a failed check is not a failed save.
       }
+      // The chat catalog is fetched once on load, so without this the picker
+      // would only see this key after a full page reload.
+      void refetchModels();
       router.refresh();
     } catch (err) {
       toast.error({
@@ -140,28 +163,19 @@ export default function NewModelCredentialDialog({
 
             <div className="flex flex-col gap-3 py-4">
               <div className="flex flex-col gap-2">
-                <Label className="text-xs font-medium">Provider</Label>
-                <div className="flex flex-wrap gap-2">
-                  {MODEL_PROVIDERS.map((option) => {
-                    const taken = takenProviders.includes(option);
-                    return (
-                      <button
-                        key={option}
-                        type="button"
-                        disabled={busy || taken}
-                        title={taken ? "Already registered" : undefined}
-                        onClick={() => setProvider(option)}
-                        className={`rounded-md border px-3 py-1.5 text-xs transition-colors disabled:opacity-45 ${
-                          provider === option
-                            ? "border-primary bg-primary text-primary-foreground"
-                            : "hover:bg-accent"
-                        }`}
-                      >
-                        {MODEL_PROVIDER_LABELS[option]}
-                      </button>
-                    );
-                  })}
-                </div>
+                <Label htmlFor="model-credential-provider" className="text-xs font-medium">
+                  Provider
+                </Label>
+                <Input
+                  id="model-credential-provider"
+                  autoFocus
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={providerText}
+                  placeholder="anthropic, openai, groq…"
+                  onChange={(event) => setProviderText(event.target.value)}
+                  disabled={busy}
+                />
               </div>
 
               <div className="flex flex-col gap-2">
@@ -173,7 +187,6 @@ export default function NewModelCredentialDialog({
                   // type=password so it is not shoulder-readable and browsers do
                   // not offer to remember it as ordinary text.
                   type="password"
-                  autoFocus
                   autoComplete="off"
                   spellCheck={false}
                   value={secret}
@@ -184,21 +197,21 @@ export default function NewModelCredentialDialog({
                 />
                 {prefixLooksOff ? (
                   <p className="text-[11px] text-amber-600 dark:text-amber-400">
-                    {MODEL_PROVIDER_LABELS[provider!]} keys usually start with{" "}
+                    {MODEL_PROVIDER_LABELS[matchedProvider!]} keys usually start with{" "}
                     <span className="font-mono">{prefix}</span>. Saving anyway is
                     fine — the test will tell you for certain.
                   </p>
                 ) : (
-                  provider && (
+                  matchedProvider && (
                     <p className="text-[11px] text-muted-foreground">
                       Get one from{" "}
                       <a
-                        href={MODEL_PROVIDER_CONSOLES[provider]}
+                        href={MODEL_PROVIDER_CONSOLES[matchedProvider]}
                         target="_blank"
                         rel="noreferrer"
                         className="underline underline-offset-2"
                       >
-                        {MODEL_PROVIDER_LABELS[provider]}&apos;s console
+                        {MODEL_PROVIDER_LABELS[matchedProvider]}&apos;s console
                       </a>
                       .
                     </p>
@@ -214,7 +227,7 @@ export default function NewModelCredentialDialog({
                   id="model-credential-label"
                   value={label}
                   placeholder={
-                    provider ? `${MODEL_PROVIDER_LABELS[provider]} (personal)` : ""
+                    matchedProvider ? `${MODEL_PROVIDER_LABELS[matchedProvider]} (personal)` : ""
                   }
                   onChange={(event) => setLabel(event.target.value)}
                   disabled={busy}
@@ -231,7 +244,7 @@ export default function NewModelCredentialDialog({
               >
                 Cancel
               </Button>
-              <Button type="submit" disabled={busy || !provider || !trimmed}>
+              <Button type="submit" disabled={busy || !matchedProvider || !trimmed}>
                 {busy ? "Saving…" : "Save and test"}
               </Button>
             </DialogFooter>

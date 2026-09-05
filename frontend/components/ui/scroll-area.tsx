@@ -18,7 +18,19 @@ function ScrollArea({
     >
       <ScrollAreaPrimitive.Viewport
         data-slot="scroll-area-viewport"
-        className="size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1"
+        // The [&>div]: overrides are load-bearing, not cosmetic. Radix renders
+        // its own element inside the viewport with `display:table;min-width:100%`
+        // so that content wider than the box still stretches to fill it -- and a
+        // table box grows to its widest child, which means nothing inside can be
+        // told to shrink. A wide code block or markdown table then pushes the
+        // whole column past its container, and the viewport grows a native
+        // horizontal scrollbar across the top of the panel.
+        //
+        // block + min-w-0 + w-full restores the constraint in all three
+        // directions, so children scroll inside their own overflow-x instead of
+        // widening the column. These are !important because Radix sets the
+        // originals as inline styles, which a class cannot otherwise beat.
+        className="size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1 [&>div]:!block [&>div]:!min-w-0 [&>div]:!w-full"
       >
         {children}
       </ScrollAreaPrimitive.Viewport>
@@ -38,7 +50,10 @@ function ScrollBar({
       data-slot="scroll-area-scrollbar"
       orientation={orientation}
       className={cn(
-        "flex touch-none p-px transition-colors select-none",
+        // p-[3px] rather than p-px so the visible thumb is the same width as
+        // the native ones styled in app/globals.css -- a page showing one of
+        // each should not look like two applications.
+        "flex touch-none p-[3px] transition-colors select-none",
         orientation === "vertical" &&
           "h-full w-2.5 border-l border-l-transparent",
         orientation === "horizontal" &&
@@ -49,7 +64,10 @@ function ScrollBar({
     >
       <ScrollAreaPrimitive.ScrollAreaThumb
         data-slot="scroll-area-thumb"
-        className="relative flex-1 rounded-full bg-border"
+        // Deliberately always visible, not opacity-0-until-hover: the chat
+        // transcript is the one surface people actually scroll, and the bar's
+        // position is the only cue for how far back the conversation goes.
+        className="relative flex-1 rounded-full bg-border transition-colors hover:bg-muted-foreground"
       />
     </ScrollAreaPrimitive.ScrollAreaScrollbar>
   )

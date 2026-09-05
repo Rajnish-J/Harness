@@ -1,6 +1,8 @@
 "use client";
 
 import { ArrowUp, Bot, Plug, Sparkles, Square } from "lucide-react";
+import { cn } from "@/lib/utils";
+import type { ChatVariant } from "./variant";
 import type { LucideIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
@@ -24,6 +26,8 @@ import {
  * as three loose literals they drift apart the first time one is tuned.
  */
 const MAX_COMPOSER_PX = 320;
+/** The rail is short; its auto-grow ceiling has to match its max-h class. */
+const MAX_COMPOSER_RAIL_PX = 200;
 
 /** Same glyphs the "/" panel uses, so a typed match reads as the same thing. */
 const SLASH_ICONS: Record<SlashOption["kind"], LucideIcon> = {
@@ -37,13 +41,17 @@ export default function MessageInput({
   pending,
   onSubmit,
   onStop,
+  variant = "page",
 }: {
   disabled: boolean;
   /** A manual-mode tool call is parked; the turn resumes on a verdict. */
   pending?: boolean;
   onSubmit: (text: string) => void;
   onStop: () => void;
+  variant?: ChatVariant;
 }) {
+  const rail = variant === "rail";
+  const maxComposerPx = rail ? MAX_COMPOSER_RAIL_PX : MAX_COMPOSER_PX;
   const [value, setValue] = useState("");
   const [caret, setCaret] = useState(0);
   const [dismissed, setDismissed] = useState<string | null>(null);
@@ -97,7 +105,7 @@ export default function MessageInput({
     setValue(el.value);
     setCaret(el.selectionStart ?? el.value.length);
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, MAX_COMPOSER_PX)}px`;
+    el.style.height = `${Math.min(el.scrollHeight, maxComposerPx)}px`;
   }
 
   function accept(option: SlashOption) {
@@ -126,7 +134,7 @@ export default function MessageInput({
       el.focus();
       el.setSelectionRange(next.caret, next.caret);
       el.style.height = "auto";
-      el.style.height = `${Math.min(el.scrollHeight, MAX_COMPOSER_PX)}px`;
+      el.style.height = `${Math.min(el.scrollHeight, maxComposerPx)}px`;
     });
   }
 
@@ -178,7 +186,7 @@ export default function MessageInput({
   }
 
   return (
-    <div className="shrink-0 px-4 pb-4 pt-2">
+    <div className={cn("shrink-0 pt-2", rail ? "px-3 pb-3" : "px-4 pb-4")}>
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -252,7 +260,12 @@ export default function MessageInput({
           }
           // min-h floors the inline height the handlers set, so auto-grow
           // still works and submit()'s reset lands on three lines, not one.
-          className="max-h-[320px] min-h-[84px] w-full resize-none bg-transparent px-3 pt-3 text-sm outline-none placeholder:text-muted-foreground"
+          className={cn(
+            "w-full resize-none bg-transparent outline-none placeholder:text-muted-foreground",
+            rail
+              ? "max-h-[200px] min-h-[56px] px-2.5 pt-2.5 text-xs"
+              : "max-h-[320px] min-h-[84px] px-3 pt-3 text-sm",
+          )}
         />
 
         {/*

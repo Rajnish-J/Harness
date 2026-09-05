@@ -213,10 +213,22 @@ async def chat_history(project_id: str, request: Request) -> dict[str, object]:
 
     Read-only and read-once: the page seeds its provider with this on mount and
     the live stream takes over from there.
+
+    One conversation, not the project's. A project can hold several chats, and
+    returning every session's messages ordered by time interleaved them into a
+    transcript that never happened. The newest session is the one the browser's
+    localStorage almost certainly still points at, and it is the only answer the
+    server can give without being told which id the client holds.
     """
     pool = _require_pool(request)
     if await get_project(pool, project_id) is None:
         raise HTTPException(status_code=404, detail="Project not found.")
 
-    rows = await project_chat_repo.load_transcript(pool, project_id)
+    recent = await project_chat_repo.list_sessions(pool, project_id, limit=1)
+    if not recent:
+        return {"messages": []}
+
+    rows = await project_chat_repo.load_transcript_for_session(
+        pool, recent[0].session_id
+    )
     return {"messages": rows}

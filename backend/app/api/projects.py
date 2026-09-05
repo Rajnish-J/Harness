@@ -30,7 +30,7 @@ from typing import AsyncIterator, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.api.sse import SSE_HEADERS
 from app.core.config import Settings, get_settings
@@ -58,7 +58,15 @@ from app.projects.git_ops import (
     push,
     set_remote,
 )
+from app.projects.adopt import adopt_paths
 from app.projects.indexer import index_repository
+from app.projects.scaffold import ScaffoldError, apply_template
+from app.projects.templates import (
+    DEFAULT_TEMPLATE_ID,
+    TEMPLATES,
+    UnknownTemplateError,
+    get_template,
+)
 from app.projects.workspaces import (
     InvalidProjectIdError,
     project_workspace,
@@ -150,6 +158,30 @@ async def github_repos(
     return {
         "repos": [RepoOut(**vars(repo)).model_dump() for repo in repos],
         "page": page,
+    }
+
+
+class TemplateOut(BaseModel):
+    id: str
+    name: str
+    description: str
+
+
+@router.get("/projects/templates")
+async def project_templates() -> dict[str, object]:
+    """The starter scaffolds offered when creating a project.
+
+    Static and database-free: the registry is code, so this needs no pool and
+    cannot fail the way the GitHub listing above can.
+    """
+    return {
+        "default": DEFAULT_TEMPLATE_ID,
+        "templates": [
+            TemplateOut(
+                id=t.id, name=t.name, description=t.description
+            ).model_dump()
+            for t in TEMPLATES
+        ],
     }
 
 
@@ -257,18 +289,26 @@ async def _clone_stream(
         del token
 
 
+class InitRequest(BaseModel):
+    """Which starter tree to write. Omitted means the default (blank)."""
+
+    template: str | None = Field(default=None, max_length=64)
+
+
 class InitResult(BaseModel):
     branch: str | None = None
     file_count: int = 0
+    template: str = DEFAULT_TEMPLATE_ID
 
 
 @router.post("/projects/{project_id}/init")
 async def init_project(
     project_id: str,
     request: Request,
+    payload: InitRequest | None = None,
     settings: Settings = Depends(get_settings),
 ) -> InitResult:
-    """Set up a Blank Project's working tree: `git init`, a README, one commit.
+    """Set up a Blank Project's working tree: `git init`, a starter tree, one commit.
 
     Reuses the clone-status columns rather than adding new ones — a Blank
     Project has no remote, but "has this project's working tree been set up
@@ -279,6 +319,13 @@ async def init_project(
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found.")
 
+    # Resolved before anything is marked or written: an unknown id should cost
+    # nothing and leave no half-started clone row behind.
+    try:
+        template = get_template(payload.template if payload else None)
+    except UnknownTemplateError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     try:
         destination = project_workspace(settings, project_id)
     except InvalidProjectIdError as exc:
@@ -288,8 +335,14 @@ async def init_project(
 
     try:
         await init_repo(destination, branch=project.default_branch or "main")
-        (destination / "README.md").write_text(
-            f"# {project.name}\n", encoding="utf-8", newline=""
+        # Before ensure_devcontainer, and that order is load-bearing: detect_image
+        # only sees manifests that already exist, so scaffolding first is what
+        # earns a Next.js project a Node image instead of the generic default.
+        apply_template(
+            destination,
+            template,
+            project_name=project.name,
+            project_slug=project.slug,
         )
         ensure_devcontainer(
             destination,
@@ -305,9 +358,11 @@ async def init_project(
 
         branch = await current_branch(destination)
         await mark_clone_succeeded(pool, project_id, branch=branch)
-        return InitResult(branch=branch, file_count=count)
+        return InitResult(
+            branch=branch, file_count=count, template=template.id
+        )
 
-    except (GitOperationError, OSError) as exc:
+    except (GitOperationError, ScaffoldError, OSError) as exc:
         message = str(exc)
         logger.warning("init failed for project %s: %s", project_id, message)
         await mark_clone_failed(pool, project_id, error=message)
@@ -449,5 +504,82 @@ async def purge_project(
     return PurgeResult(
         workspace_removed=workspace_removed,
         container_removed=container_removed,
+        message=message,
+    )
+
+
+class AdoptRequest(BaseModel):
+    """Scratch-workspace paths to bring into this project."""
+
+    paths: list[str] = Field(default_factory=list, max_length=500)
+
+
+class AdoptWorkspaceResult(BaseModel):
+    copied: list[str] = Field(default_factory=list)
+    skipped: list[dict[str, str]] = Field(default_factory=list)
+    committed: bool = False
+    file_count: int = 0
+    message: str = ""
+
+
+@router.post("/projects/{project_id}/adopt-workspace")
+async def adopt_workspace(
+    project_id: str,
+    request: Request,
+    payload: AdoptRequest,
+    settings: Settings = Depends(get_settings),
+) -> AdoptWorkspaceResult:
+    """Bring a global chat's scratch files into this project, and commit them.
+
+    The other half of adopting a conversation (see POST /api/chat/sessions/
+    {id}/attach): that call moves the words, this one moves the bytes. Without
+    it a project created out of a chat opens on an empty tree.
+
+    Re-indexes at the end. The IDE's file tree reads project_files, not the
+    disk, so a copy that skipped this step would be invisible in the very UI
+    the user is about to be sent to.
+    """
+    pool = _require_pool(request)
+    project = await get_project(pool, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+    try:
+        destination = project_workspace(settings, project_id)
+    except InvalidProjectIdError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # Same guard connect_project uses: without a repository there is nothing to
+    # commit into, and the files would sit untracked forever.
+    if not (destination / ".git").is_dir():
+        raise HTTPException(
+            status_code=409,
+            detail="This project has no working tree yet. Set it up first.",
+        )
+
+    result = adopt_paths(settings, project_id, payload.paths)
+
+    committed = False
+    if result.copied:
+        try:
+            await commit_all(destination, "Adopt work from chat")
+            committed = True
+        except GitOperationError as exc:
+            # The files are on disk and indexed below either way; an
+            # uncommittable tree is worth reporting, not worth failing over.
+            logger.warning("could not commit adopted files for %s: %s", project_id, exc)
+
+    files = await index_repository(destination, max_file_bytes=settings.max_file_bytes)
+    count = await replace_project_files(pool, project_id, files)
+
+    message = f"Brought in {len(result.copied)} file(s)."
+    if result.skipped:
+        message += f" Skipped {len(result.skipped)}."
+
+    return AdoptWorkspaceResult(
+        copied=result.copied,
+        skipped=[{"path": path, "reason": reason} for path, reason in result.skipped],
+        committed=committed,
+        file_count=count,
         message=message,
     )

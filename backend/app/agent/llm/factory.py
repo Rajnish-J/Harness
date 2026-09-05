@@ -1,5 +1,11 @@
 from app.agent.llm.base import LLMClient
+from app.agent.llm.errors import ProviderSDKMissingError
 from app.core.config import Settings
+
+#: provider -> the third-party module its client imports at module scope. Used
+#: only to tell "our SDK is missing" apart from an unrelated ImportError raised
+#: from somewhere inside that SDK.
+_SDK_MODULE = {"anthropic": "anthropic", "openai": "openai", "groq": "groq"}
 
 
 def client_for(
@@ -14,24 +20,40 @@ def client_for(
     provider and which key a turn needs, and this turns that answer into a
     client. Imports are function-local so a deployment that only ever uses one
     provider never pays to import the other two SDKs.
+
+    That laziness has a cost this guards against: each client module imports its
+    SDK at module scope, so an uninstalled package is invisible at boot and at
+    GET /api/models, and only surfaces on the first turn that picks it. Without
+    the guard that arrives as a bare ModuleNotFoundError, which the API reports
+    as "misconfigured" -- true, but naming neither the package nor the fix.
     """
-    if provider == "anthropic":
-        from app.agent.llm.anthropic_client import AnthropicClient
+    if provider not in _SDK_MODULE:
+        raise ValueError(f"Unsupported LLM provider: {provider!r}")
 
-        return AnthropicClient(api_key=api_key, model=model)
+    try:
+        if provider == "anthropic":
+            from app.agent.llm.anthropic_client import AnthropicClient
 
-    if provider == "openai":
-        from app.agent.llm.openai_client import OpenAIClient
+            return AnthropicClient(api_key=api_key, model=model)
 
-        return OpenAIClient(api_key=api_key, model=model)
+        if provider == "openai":
+            from app.agent.llm.openai_client import OpenAIClient
 
-    if provider == "groq":
+            return OpenAIClient(api_key=api_key, model=model)
+
         from app.agent.llm.groq_client import GroqClient
 
         return GroqClient(api_key=api_key, model=model, base_url=base_url)
 
-    raise ValueError(f"Unsupported LLM provider: {provider!r}")
-
+    except ModuleNotFoundError as exc:
+        # Only OUR missing SDK. A ModuleNotFoundError raised from deep inside a
+        # provider SDK's own imports is a different bug, and relabelling it
+        # "run pip install" would be confidently wrong -- worse than vague.
+        missing = exc.name or ""
+        expected = _SDK_MODULE[provider]
+        if missing != expected and not missing.startswith(expected + "."):
+            raise
+        raise ProviderSDKMissingError(provider, expected) from exc
 
 def get_llm_client(settings: Settings) -> LLMClient:
     """Build a client from the environment alone.

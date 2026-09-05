@@ -60,6 +60,33 @@ class ProjectProposalEvent(AgentEvent):
     id: str
     name: str
     description: str
+    #: The scaffold the model suggested, or "" if it did not pick one. Empty
+    #: rather than "blank" so "the model was silent" stays distinguishable from
+    #: "the model chose blank" -- the card defaults, but the two are not the
+    #: same signal.
+    template: str = ""
+
+
+class AttachProposalEvent(AgentEvent):
+    """The model wants to file THIS conversation under an existing project.
+
+    The sibling of ProjectProposalEvent: that one creates a new workspace, this
+    one adopts an existing one. Force-parked for the same reason -- the move is
+    reversible, unlike creating a project, but it must never happen silently.
+
+    Its own event rather than a mode flag on ProjectProposalEvent: that event's
+    card creates a project (name, description, template picker), and every one
+    of those fields would become conditionally meaningful under a discriminator.
+    """
+
+    type: Literal["attach_proposal"] = "attach_proposal"
+    id: str
+    project_id: str
+    #: Resolved server-side from project_id rather than taken from the model, so
+    #: the card shows a name instead of a uuid and an invented id is caught
+    #: before it can be offered to a human.
+    project_name: str
+    reason: str = ""
 
 
 class AssistantMessageEvent(AgentEvent):
@@ -107,6 +134,7 @@ __all__ = [
     "ToolResultEvent",
     "ApprovalRequestEvent",
     "ProjectProposalEvent",
+    "AttachProposalEvent",
     "AssistantMessageEvent",
     "ErrorEvent",
     "DoneEvent",

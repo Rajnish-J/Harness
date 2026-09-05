@@ -11,6 +11,8 @@ export type ChatSessionSummary = {
   updated_at: string;
   message_count: number;
   title: string;
+  /** ISO timestamp when pinned, or null. Pinned rows sort first. */
+  pinned_at: string | null;
 };
 
 export const API_BASE =
@@ -208,6 +210,56 @@ export async function resetSession(sessionId: string): Promise<void> {
  * Never throws: a history list that fails to load should not take the rest of
  * the sidebar down with it.
  */
+/**
+ * Re-file a conversation under a project, or back to global with `null`.
+ *
+ * Unlike the history fetchers below this one throws. They swallow because a
+ * failed *read* just shows less; a conversation that silently failed to move
+ * would leave the user believing their chat followed them into the project.
+ */
+/**
+ * Pin or unpin a conversation.
+ *
+ * Throws, like attachChatSession and unlike the fetchers below. A pin that
+ * silently failed would sit on screen until the next reload contradicted it,
+ * which is the failure the endpoint's own 503 exists to prevent.
+ */
+export async function setChatSessionPinned(
+  sessionId: string,
+  pinned: boolean,
+): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/chat/sessions/${encodeURIComponent(sessionId)}/pin`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pinned }),
+    },
+  );
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(detail || `Could not pin the conversation (${res.status}).`);
+  }
+}
+
+export async function attachChatSession(
+  sessionId: string,
+  projectId: string | null,
+): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/chat/sessions/${encodeURIComponent(sessionId)}/attach`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project_id: projectId }),
+    },
+  );
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(detail || `Could not attach the conversation (${res.status}).`);
+  }
+}
+
 export async function fetchChatSessions(
   projectId?: string,
   signal?: AbortSignal,

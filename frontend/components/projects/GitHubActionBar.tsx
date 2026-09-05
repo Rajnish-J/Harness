@@ -52,11 +52,16 @@ type Action = "branch" | "commit" | "pr" | null;
  * These are the git verbs the agent is deliberately not given. It can edit
  * files and commit locally through its tools; pulling, pushing and merging are
  * outward facing, so a person presses them here. This is the one place these
- * actions live — there used to be a second "Create PR" surface elsewhere in the
- * toolbar with its own, less careful merge; that duplication is gone. Merge is
- * the occasional action of the group, so it lives behind the chevron rather
- * than as its own button; it still confirms before running, since it is the
- * only one here that changes a branch other people share.
+ * actions live — "View pull request" used to also sit in RepositoryMenu, which
+ * left the same verb in two menus; that duplication is gone.
+ *
+ * Shape: one "Git" menu plus a single visible Commit & push. The toolbar's
+ * right half is already menus (version history, container, repository, share),
+ * and five flat buttons here made the left half the only place that grows a
+ * button per verb. Commit & push stays out of the menu because it is the one
+ * that gets pressed repeatedly; the rest are occasional. Merge still confirms
+ * before running, since it is the only action here that changes a branch other
+ * people share.
  */
 export default function GitHubActionBar({ projectId }: { projectId: string }) {
   const [status, setStatus] = useState<GitStatus | null>(null);
@@ -157,69 +162,52 @@ export default function GitHubActionBar({ projectId }: { projectId: string }) {
         {status?.dirty && <span className="text-amber-600">•</span>}
       </span>
 
-      <Button
-        type="button"
-        size="sm"
-        variant="ghost"
-        className="h-6 px-2 text-[11px]"
-        onClick={() => open("branch")}
-      >
-        Branch
-      </Button>
-      <Button
-        type="button"
-        size="sm"
-        variant="ghost"
-        className="h-6 px-2 text-[11px]"
-        disabled={busy}
-        onClick={() =>
-          void run(async () => {
-            const r = await projectGitApi.pull(projectId);
-            return r.branch ? `Pulled into ${r.branch}.` : "Pulled.";
-          })
-        }
-      >
-        <Download className="size-3" />
-        Pull
-      </Button>
-      <Button
-        type="button"
-        size="sm"
-        variant="ghost"
-        className="h-6 px-2 text-[11px]"
-        onClick={() => open("commit")}
-      >
-        <Upload className="size-3" />
-        Commit &amp; push
-      </Button>
-      <Button
-        type="button"
-        size="sm"
-        variant="ghost"
-        className="h-6 px-2 text-[11px]"
-        onClick={() => open("pr")}
-      >
-        <GitPullRequest className="size-3" />
-        PR
-      </Button>
-
       <DropdownMenu>
         <Tooltip>
           <TooltipTrigger asChild>
             <DropdownMenuTrigger asChild>
-              <Button type="button" size="sm" variant="ghost" className="h-6 w-5 p-0">
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-6 gap-1 px-2 text-[11px]"
+              >
+                Git
                 <ChevronDown className="size-3" />
-                <span className="sr-only">Pull request actions</span>
               </Button>
             </DropdownMenuTrigger>
           </TooltipTrigger>
-          <TooltipContent>Pull request actions</TooltipContent>
+          <TooltipContent>Branch, pull and pull requests</TooltipContent>
         </Tooltip>
-        <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuContent align="start" className="w-56">
+          <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+            Branch
+          </DropdownMenuLabel>
+          <DropdownMenuItem onSelect={() => open("branch")}>
+            <GitBranch />
+            New branch
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={busy}
+            onSelect={() =>
+              void run(async () => {
+                const r = await projectGitApi.pull(projectId);
+                return r.branch ? `Pulled into ${r.branch}.` : "Pulled.";
+              })
+            }
+          >
+            <Download />
+            Pull
+          </DropdownMenuItem>
+
+          <DropdownMenuSeparator />
           <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
             Pull requests
           </DropdownMenuLabel>
-          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => open("pr")}>
+            <GitPullRequest />
+            Open a pull request
+          </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => void loadPulls()}>
             <GitPullRequest />
             View open pull requests
@@ -246,6 +234,18 @@ export default function GitHubActionBar({ projectId }: { projectId: string }) {
           )}
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {/* Out of the menu: the one verb here pressed repeatedly, not occasionally. */}
+      <Button
+        type="button"
+        size="sm"
+        variant="ghost"
+        className="h-6 px-2 text-[11px]"
+        onClick={() => open("commit")}
+      >
+        <Upload className="size-3" />
+        Commit &amp; push
+      </Button>
 
       <Dialog open={action !== null} onOpenChange={(o) => !o && setAction(null)}>
         <DialogContent className="sm:max-w-md">

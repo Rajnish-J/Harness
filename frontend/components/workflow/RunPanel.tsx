@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import AgentStepIndicator from "@/components/chat/AgentStepIndicator";
+import Markdown from "@/components/chat/Markdown";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { describeRun, type RunState } from "@/lib/run-state";
 import type { TranscriptItem } from "@/lib/types";
@@ -145,12 +146,11 @@ export default function RunPanel({
                       item.kind === "step" ? (
                         <AgentStepIndicator key={item.id} step={item} />
                       ) : item.kind === "assistant" ? (
-                        <p
-                          key={item.id}
-                          className="whitespace-pre-wrap px-2 py-1 text-xs text-foreground"
-                        >
-                          {item.text}
-                        </p>
+                        // The second assistant renderer in the app -- easy to
+                        // miss when changing how model output is displayed.
+                        <div key={item.id} className="min-w-0 px-2 py-1">
+                          <Markdown compact>{item.text}</Markdown>
+                        </div>
                       ) : item.kind === "error" ? (
                         <p
                           key={item.id}

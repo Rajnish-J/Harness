@@ -597,10 +597,18 @@ export const projectChatSessions = pgTable(
     history: jsonb("history").$type<unknown[]>().notNull().default(sql`'[]'::jsonb`),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    /** When this conversation was pinned, or null.
+     *
+     *  A timestamp rather than a boolean, and it costs the same: it gives the
+     *  pinned group its own stable order. With a boolean the group would fall
+     *  back to `updated_at`, so talking in any other chat would reshuffle the
+     *  pins -- which is the one thing pinning exists to prevent. */
+    pinnedAt: timestamp("pinned_at", { withTimezone: true }),
   },
   (t) => [
     unique("project_chat_sessions_session_uq").on(t.sessionId),
     index("project_chat_sessions_project_idx").on(t.projectId, t.updatedAt),
+    index("project_chat_sessions_pinned_idx").on(t.projectId, t.pinnedAt),
   ],
 );
 
@@ -630,6 +638,11 @@ export const projectChatMessages = pgTable(
   (t) => [
     index("project_chat_messages_session_seq_idx").on(t.sessionId, t.seq),
     unique("project_chat_messages_session_seq_uq").on(t.sessionId, t.seq),
+    // Every other index here keys on session. This one keys on project, for
+    // the two queries that ask "what belongs to this project": the IDE's
+    // history load, and the UPDATE that re-files a conversation when a
+    // project adopts it.
+    index("project_chat_messages_project_idx").on(t.projectId, t.createdAt),
   ],
 );
 
