@@ -28,10 +28,18 @@ ALLOWED = {"db/pool.py"}
 # default codepage.
 SKIP_DIRS = {"__pycache__", "venv", ".venv", "site-packages", "node_modules"}
 
+#: Starter-template bodies are not harness code -- they are files we write
+#: into someone else's project. A template that legitimately ships a schema
+#: would trip the DDL scan below for no reason.
+SKIP_PARTS = ("projects", "templates", "files")
+
 
 def _python_sources():
     for path in APP_DIR.rglob("*.py"):
-        if SKIP_DIRS & set(path.parts):
+        parts = set(path.parts)
+        if SKIP_DIRS & parts:
+            continue
+        if all(part in parts for part in SKIP_PARTS):
             continue
         yield path
 
