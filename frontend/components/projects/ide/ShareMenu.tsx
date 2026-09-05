@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { toast } from "@/components/ui/toast";
 import { API_BASE } from "@/lib/api";
-import { copyText } from "@/lib/clipboard";
+import { copyWithToast } from "@/lib/copy-with-toast";
 import type { WorkspaceShare } from "@/lib/ide-types";
 
 /**
@@ -33,17 +33,6 @@ import type { WorkspaceShare } from "@/lib/ide-types";
  * exist and says so when picked. The alternative — hiding the unbuilt one —
  * would make the menu look finished and leave no trace of what is still owed.
  */
-async function copy(value: string, what: string): Promise<void> {
-  if (await copyText(value)) {
-    toast.success(`${what} copied.`);
-    return;
-  }
-  toast.error({
-    title: `Could not copy the ${what.toLowerCase()}`,
-    description: "The clipboard is only available over HTTPS or on localhost.",
-  });
-}
-
 function notWired(what: string, detail: string): void {
   toast.info({ title: `${what} is not wired up yet`, description: detail });
 }
@@ -78,7 +67,7 @@ export default function ShareMenu({
 
         <DropdownMenuItem
           className="gap-2.5 py-2"
-          onSelect={() => void copy(share.link, "Workspace link")}
+          onSelect={() => void copyWithToast(share.link, "Workspace link")}
         >
           <Link2 />
           <span className="flex min-w-0 flex-col">
@@ -145,7 +134,7 @@ export default function ShareMenu({
 
         <DropdownMenuItem
           className="gap-2.5 py-2"
-          onSelect={() => void copy(share.password, "IDE password")}
+          onSelect={() => void copyWithToast(share.password, "IDE password")}
         >
           <KeyRound />
           <span className="flex min-w-0 flex-col">
