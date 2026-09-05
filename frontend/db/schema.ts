@@ -164,6 +164,16 @@ export const mcpServers = pgTable(
       .$type<Record<string, string>>()
       .notNull()
       .default(sql`'{}'::jsonb`),
+    /** Optional link to an encrypted credential in the vault below. When set,
+     *  Python decrypts the token at connect time and injects it as the
+     *  Authorization header, so a remote server never needs its PAT copied into
+     *  the plaintext `headers` map above.
+     *
+     *  `set null` rather than `cascade`: deleting a token should break the
+     *  connection loudly, not silently delete the server someone configured. */
+    credentialId: uuid("credential_id").references(() => credentials.id, {
+      onDelete: "set null",
+    }),
     enabled: boolean("enabled").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

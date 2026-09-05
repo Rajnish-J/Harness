@@ -35,6 +35,10 @@ class McpServerRow:
     url: str | None
     env: dict[str, str]
     headers: dict[str, str]
+    #: Optional link to an encrypted `credentials` row. Resolved to an
+    #: Authorization header at connect time by app/mcp/credentials.py, so a
+    #: remote server's PAT never has to be copied into `headers` in plaintext.
+    credential_id: UUID | None
     enabled: bool
     #: Doubles as the connection cache fingerprint: editing a server bumps this,
     #: which misses the cache and forces a reconnect with the new settings.
@@ -42,7 +46,8 @@ class McpServerRow:
 
 
 _COLUMNS = """
-    id, name, transport, command, args, url, env, headers, enabled, updated_at
+    id, name, transport, command, args, url, env, headers, credential_id,
+    enabled, updated_at
 """
 
 
@@ -56,6 +61,7 @@ def _row(record: dict[str, Any]) -> McpServerRow:
         url=record["url"],
         env=dict(record["env"] or {}),
         headers=dict(record["headers"] or {}),
+        credential_id=record["credential_id"],
         enabled=record["enabled"],
         updated_at=record["updated_at"],
     )

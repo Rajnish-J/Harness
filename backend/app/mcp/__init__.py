@@ -18,6 +18,7 @@ from app.db.registry_repo import (
     get_enabled_mcp_servers,
     list_enabled_mcp_servers,
 )
+from app.mcp.credentials import resolve_auth
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,7 @@ def _synthetic_rows(server_ids: list[str]) -> list[McpServerRow]:
                 url=None,
                 env={},
                 headers={},
+                credential_id=None,
                 enabled=True,
                 updated_at=datetime.now(UTC),
             )
@@ -96,4 +98,13 @@ async def resolve_mcp_tools(
     if not servers:
         return [], []
 
-    return await manager.tools_for(servers)
+    # Credentials are resolved here rather than inside the manager: decrypting
+    # one needs the pool, and McpManager deliberately holds no database handle.
+    # A server with no linked credential resolves to empty headers and costs
+    # nothing.
+    auth_by_id = {
+        str(server.id): await resolve_auth(pool, settings, server)
+        for server in servers
+    }
+
+    return await manager.tools_for(servers, auth_by_id)

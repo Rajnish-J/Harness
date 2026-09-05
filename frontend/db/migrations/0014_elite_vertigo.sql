@@ -1,0 +1,2 @@
+ALTER TABLE "mcp_servers" ADD COLUMN "credential_id" uuid;--> statement-breakpoint
+ALTER TABLE "mcp_servers" ADD CONSTRAINT "mcp_servers_credential_id_credentials_id_fk" FOREIGN KEY ("credential_id") REFERENCES "public"."credentials"("id") ON DELETE set null ON UPDATE no action;

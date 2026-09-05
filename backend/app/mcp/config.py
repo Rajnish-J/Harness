@@ -11,7 +11,16 @@ import shutil
 import sys
 
 from mcp import StdioServerParameters
+from mcp.client import Transport
+from mcp.client.sse import sse_client
 from mcp.client.stdio import get_default_environment
+from mcp.client.streamable_http import streamable_http_client
+
+# Private module, and knowingly so: create_mcp_http_client has no public alias
+# in mcp 2.1.1, and it is what streamable_http_client's own docstring points to
+# for setting headers. Pinned in requirements.txt, so this cannot shift under us
+# without a deliberate bump; the tests below fail loudly if it moves.
+from mcp.shared._httpx_utils import create_mcp_http_client
 
 from app.db.registry_repo import McpServerRow
 
@@ -83,13 +92,45 @@ def stdio_params(server: McpServerRow) -> StdioServerParameters:
     )
 
 
-def connection_target(server: McpServerRow) -> StdioServerParameters | str:
-    """What to hand the mcp Client: params for stdio, a URL for the rest."""
-    if server.transport == "stdio":
-        return stdio_params(server)
+def remote_transport(server: McpServerRow, headers: dict[str, str]) -> Transport:
+    """A configured transport for sse/http, so headers actually reach the wire.
 
+    `Client` accepts a bare URL string, but it has no `headers` argument: a URL
+    resolves to `streamable_http_client(url)` with no way to attach auth, which
+    is why a configured `headers` map used to be stored, shown in the editor,
+    and then silently dropped. Building the transport here is the SDK's own
+    answer — the two functions take headers by different routes, so both are
+    spelled out rather than hidden behind a shared helper.
+    """
     if not server.url:
         raise McpConfigError(
             f"{server.name}: {server.transport} server has no url configured"
         )
-    return server.url
+
+    if server.transport == "sse":
+        # sse_client takes headers directly.
+        return sse_client(server.url, headers=headers or None)
+
+    # streamable_http_client has no headers argument; per its docstring the way
+    # to set them is to hand it a pre-configured client.
+    return streamable_http_client(
+        server.url,
+        http_client=create_mcp_http_client(headers=headers or None),
+    )
+
+
+def connection_target(
+    server: McpServerRow,
+    *,
+    extra_headers: dict[str, str] | None = None,
+) -> StdioServerParameters | Transport:
+    """What to hand the mcp Client: params for stdio, a transport for the rest.
+
+    `extra_headers` (a token resolved from the credential vault) wins over the
+    row's own `headers`, so a stale value pasted into the editor cannot shadow
+    the vault — the linked credential is the more authoritative of the two.
+    """
+    if server.transport == "stdio":
+        return stdio_params(server)
+
+    return remote_transport(server, {**server.headers, **(extra_headers or {})})

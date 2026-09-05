@@ -38,6 +38,7 @@ from mcp import Client
 from app.core.config import Settings
 from app.db.registry_repo import McpServerRow
 from app.mcp.config import McpConfigError, connection_target
+from app.mcp.credentials import ResolvedAuth, no_auth
 from app.mcp.tools import dedupe, make_tool
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,9 @@ class _Runner:
 
     server: McpServerRow
     settings: Settings
+    #: Resolved from the server's linked credential, if it has one. Merged over
+    #: the row's own headers by connection_target.
+    extra_headers: dict[str, str] = field(default_factory=dict)
 
     queue: asyncio.Queue[Any] = field(default_factory=asyncio.Queue)
     ready: asyncio.Event = field(default_factory=asyncio.Event)
@@ -82,7 +86,9 @@ class _Runner:
 
     async def _run(self) -> None:
         try:
-            target = connection_target(self.server)
+            target = connection_target(
+                self.server, extra_headers=self.extra_headers
+            )
         except McpConfigError as exc:
             self.error = str(exc)
             self.ready.set()
@@ -179,13 +185,28 @@ class McpManager:
         self._lock = asyncio.Lock()
 
     @staticmethod
-    def _key(server: McpServerRow) -> tuple[str, str]:
-        return (str(server.id), server.updated_at.isoformat())
+    def _key(server: McpServerRow, auth_fingerprint: str = "") -> tuple[str, str]:
+        """Identity of a live connection: the row revision *and* the token.
+
+        updated_at alone is not enough once a server can link a credential.
+        Rotating a token writes to `credentials`, leaving `mcp_servers.updated_at`
+        untouched, so a cached runner would go on replaying the old bearer token
+        until the process restarted. The fingerprint is credential-derived and
+        carries no secret — see app/mcp/credentials.py.
+        """
+        return (str(server.id), f"{server.updated_at.isoformat()}|{auth_fingerprint}")
 
     async def tools_for(
-        self, servers: list[McpServerRow]
+        self,
+        servers: list[McpServerRow],
+        auth_by_id: dict[str, ResolvedAuth] | None = None,
     ) -> tuple[list[Any], list[str]]:
-        """Discovered tools plus human-readable notices for anything that failed."""
+        """Discovered tools plus human-readable notices for anything that failed.
+
+        `auth_by_id` is resolved by the caller rather than here: decrypting a
+        credential needs the pool, and this class deliberately holds no database
+        handle. See resolve_mcp_tools in app/mcp/__init__.py.
+        """
         if self._settings.mock_mcp:
             from app.mcp.mock import mock_tools_for
 
@@ -195,8 +216,12 @@ class McpManager:
         notices: list[str] = []
 
         for server in servers:
+            auth = (auth_by_id or {}).get(str(server.id)) or no_auth()
+            if auth.notice:
+                notices.append(auth.notice)
+
             try:
-                runner = await self._runner_for(server)
+                runner = await self._runner_for(server, auth)
             except Exception as exc:  # noqa: BLE001
                 notices.append(f"MCP server {server.name!r} unavailable: {exc}")
                 continue
@@ -212,8 +237,11 @@ class McpManager:
 
         return dedupe(tools), notices
 
-    async def _runner_for(self, server: McpServerRow) -> _Runner | None:
-        key = self._key(server)
+    async def _runner_for(
+        self, server: McpServerRow, auth: ResolvedAuth | None = None
+    ) -> _Runner | None:
+        auth = auth or no_auth()
+        key = self._key(server, auth.fingerprint)
 
         async with self._lock:
             existing = self._runners.get(key)
@@ -230,7 +258,11 @@ class McpManager:
             if time.monotonic() - failed_at < self._settings.mcp_retry_cooldown:
                 raise ConnectionError(reason)
 
-            runner = _Runner(server=server, settings=self._settings)
+            runner = _Runner(
+                server=server,
+                settings=self._settings,
+                extra_headers=auth.headers,
+            )
             await runner.start()
 
             if not runner.alive:
