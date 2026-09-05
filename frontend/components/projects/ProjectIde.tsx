@@ -9,6 +9,12 @@ import { useState } from "react";
 import ChatPresetProvider from "@/components/chat/ChatPresetProvider";
 import ChatSessionProvider from "@/components/chat/ChatSessionProvider";
 import ChatWindow from "@/components/chat/ChatWindow";
+import ProjectChatSwitcher from "@/components/projects/ide/ProjectChatSwitcher";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
 import DeleteProjectDialog from "@/components/projects/DeleteProjectDialog";
 import EditProjectDialog from "@/components/projects/EditProjectDialog";
 import FileTree from "@/components/projects/FileTree";
@@ -233,37 +239,65 @@ export default function ProjectIde({
         />
       )}
 
-      <div className="flex min-h-0 flex-1">
+      {/* Sizes are pixels, and the defaults are the widths these panes had
+          when they were fixed -- becoming draggable should not move anything
+          until the user actually drags.
+
+          Keyed on which panes are open: the group tracks children by position,
+          so toggling the tree off and on again would otherwise hand the
+          editor's stored size to the tree. */}
+      <ResizablePanelGroup
+        key={`${chatOpen}-${treeOpen}`}
+        orientation="horizontal"
+        className="flex min-h-0 flex-1"
+      >
         {chatOpen && (
-          <aside className="flex w-[26rem] min-w-0 shrink-0 flex-col border-r">
-            <ChatPresetProvider>
-              <ChatSessionProvider
-                scope={scopeForProject(project.id)}
-                projectId={project.id}
-                initialItems={initialMessages}
-              >
-                <ChatWindow />
-              </ChatSessionProvider>
-            </ChatPresetProvider>
-          </aside>
+          <>
+            <ResizablePanel
+              defaultSize={416}
+              minSize={280}
+              maxSize={720}
+              className="flex flex-col"
+            >
+              <ChatPresetProvider>
+                <ChatSessionProvider
+                  scope={scopeForProject(project.id)}
+                  projectId={project.id}
+                  initialItems={initialMessages}
+                >
+                  {/* Inside the provider, deliberately -- see the switcher's
+                      own comment. In the toolbar above it would bind to the
+                      global chat instead of this project's. */}
+                  <div className="flex shrink-0 items-center gap-1 border-b px-2 py-1.5">
+                    <ProjectChatSwitcher projectId={project.id} />
+                  </div>
+                  <ChatWindow variant="rail" />
+                </ChatSessionProvider>
+              </ChatPresetProvider>
+            </ResizablePanel>
+            <ResizableHandle withHandle />
+          </>
         )}
 
         {treeOpen && (
-          <aside className="w-64 shrink-0 border-r">
-            <FileTree
-              projectId={project.id}
-              selected={selected}
-              onSelect={setSelected}
-            />
-          </aside>
+          <>
+            <ResizablePanel defaultSize={256} minSize={160} maxSize={480}>
+              <FileTree
+                projectId={project.id}
+                selected={selected}
+                onSelect={setSelected}
+              />
+            </ResizablePanel>
+            <ResizableHandle withHandle />
+          </>
         )}
 
-        <main className="min-h-0 min-w-0 flex-1">
+        <ResizablePanel minSize={320}>
           {/* Keyed by path: a different file gets a fresh editor rather than
               needing an effect to reset the previous file's draft. */}
           <CodeEditor key={selected} projectId={project.id} path={selected} />
-        </main>
-      </div>
+        </ResizablePanel>
+      </ResizablePanelGroup>
     </div>
   );
 }
