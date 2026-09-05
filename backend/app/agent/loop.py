@@ -8,14 +8,17 @@ from app.agent.llm.base import LLMClient, ToolCallRequest, ToolResult
 from app.agent.session import Session
 from app.agent.exec_context import ExecutionContext
 from app.agent.tools.base import Tool, ToolExecutionError
+from app.agent.tools.attach_tools import PROPOSE_ATTACH_PROJECT_TOOL_NAME
 from app.agent.tools.project_tools import PROPOSE_CREATE_PROJECT_TOOL_NAME
 from app.agent.tools.registry import ALL_TOOLS
+from app.db import project_repo
 from app.core.config import Settings
 from app.core.workspace import WorkspaceSecurityError
 from app.models.events import (
     AgentEvent,
     ApprovalRequestEvent,
     AssistantMessageEvent,
+    AttachProposalEvent,
     DoneEvent,
     ErrorEvent,
     ProjectProposalEvent,
@@ -284,13 +287,21 @@ async def _drive(
                 for call in turn.tool_calls
                 if call.name == PROPOSE_CREATE_PROJECT_TOOL_NAME
             }
+            attach_ids = {
+                call.id
+                for call in turn.tool_calls
+                if call.name == PROPOSE_ATTACH_PROJECT_TOOL_NAME
+            }
 
-            if require_approval or proposal_ids:
+            if require_approval or proposal_ids or attach_ids:
                 # Park the turn. History already ends with the assistant turn,
                 # so resuming only has to append results — which is why nothing
                 # else about the turn needs storing. A project proposal parks
                 # even in agent mode: creating a project is a one-way door, so
                 # this pause is never optional the way manual-mode approval is.
+                # An attach proposal parks for a softer reason -- the move is
+                # reversible -- but a conversation must never relocate itself
+                # without the human who is having it saying so.
                 session.pending = list(turn.tool_calls)
                 for call in turn.tool_calls:
                     if call.id in proposal_ids:
@@ -298,7 +309,24 @@ async def _drive(
                             id=call.id,
                             name=str(call.arguments.get("name", "")),
                             description=str(call.arguments.get("description", "")),
+                            template=str(call.arguments.get("template", "")),
                         )
+                    elif call.id in attach_ids:
+                        resolved = await _resolve_attach_target(pool, call)
+                        if resolved is None:
+                            yield ApprovalRequestEvent(
+                                id=call.id,
+                                name=call.name,
+                                arguments=call.arguments,
+                            )
+                        else:
+                            target_id, target_name = resolved
+                            yield AttachProposalEvent(
+                                id=call.id,
+                                project_id=target_id,
+                                project_name=target_name,
+                                reason=str(call.arguments.get("reason", "")),
+                            )
                     else:
                         yield ApprovalRequestEvent(
                             id=call.id, name=call.name, arguments=call.arguments
@@ -344,6 +372,32 @@ async def _drive(
         logger.exception("Agent loop crashed for session %s", session.session_id)
         yield ErrorEvent(message=f"Harness error: {exc}", code="internal")
         yield DoneEvent(reason="error", usage=total_usage)
+
+
+async def _resolve_attach_target(
+    pool: AsyncConnectionPool | None, call: ToolCallRequest
+) -> tuple[str, str] | None:
+    """(project_id, project_name) for an attach proposal, or None if unusable.
+
+    The model supplies the id, so it may be invented, stale, or archived. A card
+    naming a project that does not exist is worse than no card, so an id that
+    does not resolve degrades to an ordinary approval request instead -- the
+    human can still deny it, and the denial tells the model to list first.
+    """
+    if pool is None:
+        return None
+
+    target = str(call.arguments.get("target_project_id", "")).strip()
+    if not target:
+        return None
+
+    try:
+        project = await project_repo.get_project(pool, target)
+    except Exception:  # noqa: BLE001 - a malformed id must not kill the turn
+        logger.exception("could not resolve attach target %s", target)
+        return None
+
+    return (str(project.id), project.name) if project else None
 
 
 async def _dispatch_tool(

@@ -43,13 +43,13 @@ TRUNCATION_NOTE = "\n[skill content truncated]"
 #: is on offer. A two-state boolean rather than per-request text, so it stays as
 #: cacheable-prefix-friendly as the rest of this module.
 NO_PROJECT_OPEN_BLOCK = """## No project is open right now
-This is the global chat: there is no project associated with this conversation \
-yet. If the user describes a new idea or project they want to build, call \
-propose_create_project(name, description) to suggest starting a blank one, \
-instead of building it directly in this general-purpose scratch workspace. It \
-creates nothing by itself -- a human must approve it in the UI -- so call it \
-once per idea and then wait; do not call it again unless they describe a \
-different idea, and do not retry it if they decline."""
+This is the global chat: there is no project associated with this conversation yet. If the user describes a new idea or project they want to build, call propose_create_project(name, description, template) to suggest starting one, instead of building it directly in this general-purpose scratch workspace.
+
+When you propose one, say plainly what it means: the work is saved as its own project with its own git repository and editor container, they can connect it to GitHub afterwards, and they push their changes when the work is done. Pick the scaffold that best fits what they described.
+
+It creates nothing by itself -- a human must approve it in the UI, and they can change the scaffold before they do -- so call it once per idea and then wait; do not call it again unless they describe a different idea, and do not retry it if they decline.
+
+If instead the work continues a project that already exists, call list_projects to see them, then propose_attach_project(target_project_id, reason) with an id copied from that list, to offer filing this conversation under it. Never invent an id. Prefer this over propose_create_project whenever an existing project already covers the work -- a second project for the same thing is worse than no project. It moves nothing by itself either; the same confirm-then-wait rule applies."""
 
 
 def _escape(text: str, tag: str = "skill") -> str:
@@ -89,6 +89,18 @@ def _memory_block(memory: MemoryLike) -> str:
     return "\n".join(parts)
 
 
+#: Appended when a project IS open. Gated on its own flag rather than on
+#: `not no_project_open`: that default also covers callers with no project
+#: concept at all -- workflow nodes, the memory preview -- and they must keep
+#: composing to the base prompt byte for byte.
+#:
+#: The mirror of NO_PROJECT_OPEN_BLOCK, and a
+#: two-state boolean for the same cacheable-prefix reason: the sibling chat ids
+#: belong in the tool's own output, never interpolated into the prompt.
+PROJECT_OPEN_BLOCK = """## Other conversations in this project
+A project can hold several chats, each with its own history. If the user refers to work you have no record of, or this conversation plainly lacks context that another one would have, call list_project_chats to see what else is here and read_project_chat to open one. Prefer that over asking the user to repeat themselves."""
+
+
 def compose_system_prompt(
     *,
     base: str,
@@ -97,6 +109,7 @@ def compose_system_prompt(
     skills: Sequence[SkillLike] = (),
     memories: Sequence[MemoryLike] = (),
     no_project_open: bool = False,
+    project_open: bool = False,
     max_chars: int | None = None,
 ) -> str:
     """Build the system prompt for one turn.
@@ -119,6 +132,8 @@ def compose_system_prompt(
 
     if no_project_open:
         sections.append(NO_PROJECT_OPEN_BLOCK)
+    elif project_open:
+        sections.append(PROJECT_OPEN_BLOCK)
 
     agent_prompt = (agent_prompt or "").strip()
     if agent_prompt:

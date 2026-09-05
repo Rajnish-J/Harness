@@ -178,3 +178,60 @@ async def test_declining_tells_the_model_not_to_retry(settings, session):
     assert "denied" in result.content.lower()
     # A denial is an observation, not a dead end: the loop carried on.
     assert events[-1].reason == "end_turn"
+
+
+async def test_proposal_carries_the_template_the_model_chose(settings, session):
+    """The scaffold reaches the card, so it can open on the model's suggestion."""
+    client = FakeClient(
+        [
+            tool_use(
+                "propose_create_project",
+                {
+                    "name": "expense-tracker",
+                    "description": "Track expenses.",
+                    "template": "nextjs",
+                },
+            )
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            session=session,
+            llm_client=client,
+            settings=settings,
+            user_message="build me an expense tracker web app",
+            tools=[PROPOSE_CREATE_PROJECT_TOOL],
+        )
+    )
+
+    proposal = next(event for event in events if event.type == "project_proposal")
+    assert proposal.template == "nextjs"
+
+
+async def test_proposal_without_a_template_reports_an_empty_string(settings, session):
+    """Silence is distinguishable from an explicit "blank"; the card decides."""
+    client = FakeClient(
+        [tool_use("propose_create_project", {"name": "something"})]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            session=session,
+            llm_client=client,
+            settings=settings,
+            user_message="build something",
+            tools=[PROPOSE_CREATE_PROJECT_TOOL],
+        )
+    )
+
+    proposal = next(event for event in events if event.type == "project_proposal")
+    assert proposal.template == ""
+
+
+def test_the_tool_only_offers_registered_templates():
+    """Catches a template added to the registry but not offered to the model."""
+    from app.projects.templates import TEMPLATES
+
+    enum = PROPOSE_CREATE_PROJECT_TOOL.input_schema["properties"]["template"]["enum"]
+    assert enum == [template.id for template in TEMPLATES]
