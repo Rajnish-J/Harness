@@ -4,22 +4,27 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
 import UseInChatButton from "@/components/chat/UseInChatButton";
+import CredentialPicker from "@/components/projects/CredentialPicker";
 import EditorShell from "@/components/registry/EditorShell";
 import {
   Field,
   KeyValueField,
+  SegmentedField,
   StringListField,
   TextField,
   ToggleField,
 } from "@/components/registry/fields";
+import type { Credential } from "@/lib/credential-types";
 import { mcpApi } from "@/lib/registry-api";
-import {
-  MCP_TRANSPORTS,
-  type McpServer,
-  type McpTransport,
-} from "@/lib/registry-types";
+import { MCP_TRANSPORTS, type McpServer } from "@/lib/registry-types";
 
-export default function McpEditor({ server }: { server: McpServer }) {
+export default function McpEditor({
+  server,
+  credentials = [],
+}: {
+  server: McpServer;
+  credentials?: Credential[];
+}) {
   const router = useRouter();
   const [draft, setDraft] = useState(server);
 
@@ -51,6 +56,7 @@ export default function McpEditor({ server }: { server: McpServer }) {
           url: draft.url,
           env: draft.env,
           headers: draft.headers,
+          credentialId: draft.credentialId,
           enabled: draft.enabled,
         });
       }}
@@ -72,27 +78,16 @@ export default function McpEditor({ server }: { server: McpServer }) {
         onChange={(v) => patch("description", v || null)}
       />
 
-      <Field
+      <SegmentedField
         label="Transport"
         hint="stdio launches a local process; sse and http dial a remote endpoint."
-      >
-        <div className="flex gap-2">
-          {MCP_TRANSPORTS.map((transport) => (
-            <button
-              key={transport}
-              type="button"
-              onClick={() => patch("transport", transport as McpTransport)}
-              className={`rounded-md border px-3 py-1.5 font-mono text-xs transition-colors ${
-                draft.transport === transport
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "hover:bg-accent"
-              }`}
-            >
-              {transport}
-            </button>
-          ))}
-        </div>
-      </Field>
+        options={MCP_TRANSPORTS.map((transport) => ({
+          value: transport,
+          label: transport,
+        }))}
+        value={draft.transport}
+        onChange={(v) => patch("transport", v)}
+      />
 
       {isStdio ? (
         <>
@@ -129,12 +124,29 @@ export default function McpEditor({ server }: { server: McpServer }) {
       />
 
       {!isStdio && (
-        <KeyValueField
-          label="Headers"
-          hint="Sent with every request to the endpoint."
-          entries={draft.headers}
-          onChange={(v) => patch("headers", v)}
-        />
+        <>
+          <div className="flex flex-col gap-1.5">
+            <CredentialPicker
+              credentials={credentials}
+              value={draft.credentialId}
+              onChange={(v) => patch("credentialId", v)}
+              label="Credential"
+              allowNone
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Sent as an Authorization bearer token, decrypted at connect time.
+              Preferred over typing a token into Headers below, which stores it
+              in plaintext.
+            </p>
+          </div>
+
+          <KeyValueField
+            label="Headers"
+            hint="Sent with every request to the endpoint. A linked credential above overrides an Authorization header set here."
+            entries={draft.headers}
+            onChange={(v) => patch("headers", v)}
+          />
+        </>
       )}
 
       <ToggleField
