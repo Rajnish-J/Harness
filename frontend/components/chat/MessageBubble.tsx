@@ -1,3 +1,5 @@
+import Markdown from "@/components/chat/Markdown";
+import type { ChatVariant } from "@/components/chat/variant";
 import type { TranscriptItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -15,11 +17,27 @@ type Bubble = Extract<TranscriptItem, { kind: "user" | "assistant" | "error" }>;
  */
 const NOTICE_CODES = new Set(["mcp_unavailable", "provider_switched"]);
 
-export default function MessageBubble({ item }: { item: Bubble }) {
+export default function MessageBubble({
+  item,
+  variant = "page",
+}: {
+  item: Bubble;
+  variant?: ChatVariant;
+}) {
+  const compact = variant === "rail";
+
   if (item.kind === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-sm bg-primary px-4 py-2.5 text-sm text-primary-foreground">
+        {/* Plain text on purpose: a user typing *text* or pasting a shell
+            snippet means the literal characters, and whitespace-pre-wrap keeps
+            their line breaks. Only the assistant's side renders markdown. */}
+        <div
+          className={cn(
+            "max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-sm bg-primary text-primary-foreground",
+            compact ? "px-3 py-2 text-xs" : "px-4 py-2.5 text-sm",
+          )}
+        >
           {item.text}
         </div>
       </div>
@@ -31,7 +49,8 @@ export default function MessageBubble({ item }: { item: Bubble }) {
     return (
       <div
         className={cn(
-          "rounded-lg border px-3 py-2 text-sm",
+          "rounded-lg border px-3 py-2",
+          compact ? "text-xs" : "text-sm",
           notice
             ? "border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-300"
             : "border-red-500/30 bg-red-500/5 text-red-700 dark:text-red-300",
@@ -43,9 +62,12 @@ export default function MessageBubble({ item }: { item: Bubble }) {
     );
   }
 
+  // Full width, not max-w-[85%]: an assistant message has no bubble background,
+  // so the cap bought no visual grouping and only cramped code blocks and
+  // tables. min-w-0 keeps a long code line from widening the flex parent.
   return (
-    <div className="max-w-[85%] whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">
-      {item.text}
+    <div className="w-full min-w-0 break-words">
+      <Markdown compact={compact}>{item.text}</Markdown>
     </div>
   );
 }
