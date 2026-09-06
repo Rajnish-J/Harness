@@ -85,10 +85,15 @@ export default function ModeSelector() {
 
       <PopoverContent
         align="start"
-        side="bottom"
+        side="top"
         sideOffset={8}
-        avoidCollisions={false}
-        className="w-80 p-1.5"
+        // Same reasoning as ModelPicker: the trigger sits in the composer at
+        // the foot of the page, so a downward panel ran off the bottom of the
+        // screen. The flip is the fix -- avoidCollisions={false} used to pin
+        // it there. The height clamp needs collision detection on to be given
+        // a value, which is exactly what dropping that override restores.
+        collisionPadding={{ top: 16, bottom: 16 }}
+        className="max-h-(--radix-popover-content-available-height) w-80 overflow-y-auto p-1.5"
       >
         <p className="px-2 pt-1 pb-2 text-[11px] font-medium text-muted-foreground">
           Select tool mode
