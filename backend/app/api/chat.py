@@ -613,6 +613,36 @@ async def pin_chat_session(
     return {"ok": True, "session_id": session_id, "pinned": payload.pinned}
 
 
+@router.delete("/chat/sessions/{session_id}")
+async def delete_chat_session(session_id: str, request: Request) -> dict[str, object]:
+    """Forget one conversation, permanently.
+
+    503 on a missing pool and 404 on an unknown id, exactly like the pin route
+    above: a delete that reported success without one would leave a row the
+    sidebar has already dropped and the next reload brings straight back.
+    """
+    pool = getattr(request.app.state, "pool", None)
+    if pool is None:
+        raise HTTPException(
+            status_code=503,
+            detail="DATABASE_URL is not configured, so chats are not persisted.",
+        )
+
+    if not await project_chat_repo.clear_session(pool, session_id):
+        raise HTTPException(
+            status_code=404,
+            detail=f"No stored conversation for session {session_id!r}.",
+        )
+
+    # Mandatory here, unlike the pin route. The in-RAM session still holds the
+    # history the model rehydrates from, so skipping this would leave the agent
+    # remembering a conversation Postgres no longer has -- and the next turn on
+    # that id would write it all back.
+    session_store.reset(session_id)
+
+    return {"ok": True, "session_id": session_id}
+
+
 @router.get("/models")
 async def models(
     request: Request, settings: Settings = Depends(get_settings)
