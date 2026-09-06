@@ -28,7 +28,12 @@ import type {
   SkillSummary,
 } from "@/lib/registry-types";
 import { toggleGroupNames, toggleToolName, type SelectableGroup } from "@/lib/tool-selection";
-import { fetchMcpTools, fetchTools, type ToolInfo } from "@/lib/workflow-api";
+import {
+  fetchMcpTools,
+  fetchTools,
+  type McpServerNotice,
+  type ToolInfo,
+} from "@/lib/workflow-api";
 
 export type Catalog = {
   agents: AgentSummary[];
@@ -39,6 +44,12 @@ export type Catalog = {
   models: ModelCatalog;
   /** Servers that failed to answer discovery, shown next to the ones that did. */
   mcpNotices: string[];
+  /** The same notices with a server id attached, for placing one against a row.
+   *
+   *  Matching a notice to a server by looking for its quoted name in the prose
+   *  cross-matched names that were substrings of one another, and could not
+   *  place notices that name no server at all. */
+  mcpServerNotices: McpServerNotice[];
   loading: boolean;
   /** A discovery round trip to the attached MCP servers is in flight.
    *
@@ -56,6 +67,7 @@ const EMPTY_CATALOG: Catalog = {
   tools: [],
   models: EMPTY_MODELS,
   mcpNotices: [],
+  mcpServerNotices: [],
   loading: true,
   mcpToolsLoading: false,
 };
@@ -194,7 +206,7 @@ export default function ChatPresetProvider({
     });
 
     fetchMcpTools(ids, controller.signal)
-      .then(({ tools, notices }) => {
+      .then(({ tools, notices, serverNotices }) => {
         if (controller.signal.aborted) return;
         setCatalog((prev) => ({
           ...prev,
@@ -203,6 +215,7 @@ export default function ChatPresetProvider({
             ...tools,
           ],
           mcpNotices: notices,
+          mcpServerNotices: serverNotices,
           mcpToolsLoading: false,
         }));
       })

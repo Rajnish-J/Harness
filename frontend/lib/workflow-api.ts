@@ -123,23 +123,55 @@ export async function fetchTools(signal?: AbortSignal): Promise<ToolInfo[]> {
  * A server being down is data, not an error: the composer shows the notice
  * next to the tools that did resolve, which is why this returns both rather
  * than throwing.
+ *
+ * `serverNotices` carries the same messages with the server id attached, so the
+ * composer can put a failure against the right row instead of matching the
+ * server's name inside the prose.
  */
+export type McpServerNotice = {
+  message: string;
+  /** null for notices that name no server — a missing DATABASE_URL, say. */
+  server_id: string | null;
+  server_name: string | null;
+};
+
+export type McpToolsResult = {
+  tools: ToolInfo[];
+  notices: string[];
+  serverNotices: McpServerNotice[];
+};
+
+const NO_MCP_TOOLS: McpToolsResult = { tools: [], notices: [], serverNotices: [] };
+
 export async function fetchMcpTools(
   serverIds: string[],
   signal?: AbortSignal,
-): Promise<{ tools: ToolInfo[]; notices: string[] }> {
-  if (serverIds.length === 0) return { tools: [], notices: [] };
-  if (flags.mockTools || flags.mockMcp) return { tools: MOCK_MCP_TOOLS, notices: [] };
+): Promise<McpToolsResult> {
+  if (serverIds.length === 0) return NO_MCP_TOOLS;
+  if (flags.mockTools || flags.mockMcp) {
+    return { tools: MOCK_MCP_TOOLS, notices: [], serverNotices: [] };
+  }
 
   try {
     const query = encodeURIComponent(serverIds.join(","));
     const res = await fetch(`${API_BASE}/api/mcp/tools?server_ids=${query}`, {
       signal,
     });
-    if (!res.ok) return { tools: [], notices: [] };
-    return (await res.json()) as { tools: ToolInfo[]; notices: string[] };
+    if (!res.ok) return NO_MCP_TOOLS;
+    const payload = (await res.json()) as {
+      tools: ToolInfo[];
+      notices: string[];
+      server_notices?: McpServerNotice[];
+    };
+    return {
+      tools: payload.tools ?? [],
+      notices: payload.notices ?? [],
+      // Optional so a backend older than this field degrades to the flat list
+      // rather than rendering nothing.
+      serverNotices: payload.server_notices ?? [],
+    };
   } catch {
-    return { tools: [], notices: [] };
+    return NO_MCP_TOOLS;
   }
 }
 

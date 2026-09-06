@@ -393,12 +393,19 @@ export default function CommandMenu() {
                     const discovered = allGroups.find(
                       (group) => serverNameFromGroup(group.name) === server.name,
                     );
-                    // Notices name the server as `MCP server 'name' unavailable: ...`
-                    // (see resolve_mcp_tools in the backend) — matched by name
-                    // since a failed connect never gets a discovered tool group.
-                    const failure = catalog.mcpNotices.find((notice) =>
-                      notice.includes(`'${server.name}'`),
-                    );
+                    // Matched by id, not by looking for the server's quoted name
+                    // in the message: names that were substrings of one another
+                    // cross-matched, and some notices name no server at all. The
+                    // name fallback covers a backend older than server_notices.
+                    const failure =
+                      catalog.mcpServerNotices.find(
+                        (notice) => notice.server_id === server.id,
+                      )?.message ??
+                      (catalog.mcpServerNotices.length === 0
+                        ? catalog.mcpNotices.find((notice) =>
+                            notice.includes(`'${server.name}'`),
+                          )
+                        : undefined);
                     const badge = !on
                       ? null
                       : discovered
