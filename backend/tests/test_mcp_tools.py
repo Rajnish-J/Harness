@@ -16,7 +16,13 @@ from app.agent.tools.registry import ALL_TOOLS
 from app.agent.tools.toolsets import merge_toolsets
 from app.db.registry_repo import McpServerRow
 from app.mcp.mock import mock_tools_for
-from app.mcp.tools import LOOP_INJECTED_KWARGS, dedupe, make_tool, namespaced
+from app.mcp.tools import (
+    LOOP_INJECTED_KWARGS,
+    dedupe,
+    make_tool,
+    namespaced,
+    server_names,
+)
 
 
 @dataclass
@@ -198,10 +204,22 @@ def test_merge_still_raises_on_an_unknown_builtin():
         merge_toolsets(["rm_rf"], [])
 
 
-def test_merge_falls_back_when_every_selected_tool_is_missing():
-    """An allowlist of only-down MCP tools would leave the model nothing."""
+def test_merge_does_not_widen_when_every_selected_tool_is_missing():
+    """A down server must never hand the model MORE than the user allowed.
+
+    This once returned ALL_TOOLS so the turn could still make progress, which
+    meant narrowing to three GitHub tools and then losing the server granted the
+    whole built-in registry -- run_command and the file-write tools included --
+    off the back of a failed network call.
+    """
     merged = merge_toolsets(["mcp__github__search_issues"], [])
-    assert merged == ALL_TOOLS
+    assert merged == []
+
+
+def test_merge_keeps_named_builtins_when_mcp_is_down():
+    """Only the unavailable half drops; what the user named still resolves."""
+    merged = merge_toolsets(["read_file", "mcp__github__search_issues"], [])
+    assert [tool.name for tool in merged] == ["read_file"]
 
 
 # --------------------------------------------------------------- connection targets
@@ -338,3 +356,36 @@ def test_the_sdk_still_exposes_what_the_remote_path_imports() -> None:
     http_params = inspect.signature(streamable_http_client).parameters
     assert "headers" not in http_params
     assert "http_client" in http_params
+
+
+# ------------------------------------------------------------------ server names
+#
+# What lets the system prompt name the attached servers without a second query.
+
+
+def test_server_names_round_trips_mcp_group():
+    from app.agent.tools.base import Tool
+    from app.mcp.tools import mcp_group
+
+    def fake(name: str, group: str | None) -> Tool:
+        return Tool(
+            name=name,
+            description="",
+            input_schema={"type": "object", "properties": {}},
+            run=lambda **_: "",
+            group=group,
+        )
+
+    tools = [
+        fake("mcp__b__x", mcp_group("b")),
+        fake("mcp__a__y", mcp_group("a")),
+        fake("mcp__a__z", mcp_group("a")),
+        fake("read_file", "Files"),
+        fake("run_command", None),
+    ]
+    # Sorted, deduped, and built-ins ignored.
+    assert server_names(tools) == ["a", "b"]
+
+
+def test_server_names_is_empty_without_mcp_tools():
+    assert server_names([]) == []
