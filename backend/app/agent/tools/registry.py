@@ -1,4 +1,5 @@
 from app.agent.tools.base import Tool
+from app.agent.tools.codeintel import CODEINTEL_TOOLS
 from app.agent.tools.execution.shell_tools import SHELL_TOOLS
 from app.agent.tools.files.file_tools import FILE_TOOLS
 from app.agent.tools.memory.memory_tools import MEMORY_TOOLS
@@ -25,6 +26,7 @@ ALL_TOOLS: list[Tool] = [
     # Inserting above it, or growing one of the lists above, shifts every tool
     # after the insertion point and invalidates the cached prompt prefix for
     # every in-flight session. tests/test_tool_registry_order.py pins this.
+    *CODEINTEL_TOOLS,
 ]
 
 TOOLS_BY_NAME: dict[str, Tool] = {tool.name: tool for tool in ALL_TOOLS}
