@@ -1,18 +1,22 @@
 "use client";
 
-import { ClipboardCopy, FolderPlus, Link2, MoreVertical } from "lucide-react";
+import { ClipboardCopy, FolderPlus, Link2, MoreVertical, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { useChatSession } from "@/components/chat/ChatSessionProvider";
+import DeleteChatDialog from "@/components/chat/DeleteChatDialog";
 import OpenAsProjectDialog from "@/components/chat/OpenAsProjectDialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { toast } from "@/components/ui/toast";
+import { deleteChatSession } from "@/lib/api";
 import { copyWithToast } from "@/lib/copy-with-toast";
 import { transcriptToMarkdown } from "@/lib/transcript-markdown";
 import { workspaceChanges } from "@/lib/workspace-changes";
@@ -32,8 +36,9 @@ import { cn } from "@/lib/utils";
  * the transcript stays the conversation and nothing else.
  */
 export default function ChatActionsMenu() {
-  const { sessionId, items } = useChatSession();
+  const { sessionId, items, newChat } = useChatSession();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   // Computed once here and handed to the dialog: it decides the sub-line and
   // the dot below, and the dialog needs the same list to adopt.
@@ -52,6 +57,23 @@ export default function ChatActionsMenu() {
 
   function copyMarkdown() {
     void copyWithToast(transcriptToMarkdown(items), "Chat");
+  }
+
+  async function remove() {
+    if (!sessionId) return;
+    try {
+      await deleteChatSession(sessionId);
+    } catch {
+      toast.error({ title: "Could not delete the conversation" });
+      // Rethrown so the dialog stays open on its own terms rather than
+      // guessing from a return value.
+      throw new Error("delete failed");
+    }
+    // Only after the row is gone: newChat rotates to a fresh id and clears the
+    // transcript, so doing it first would strand the operator on a blank chat
+    // if the delete then failed.
+    newChat();
+    toast.success({ title: "Chat deleted" });
   }
 
   return (
@@ -87,51 +109,39 @@ export default function ChatActionsMenu() {
           <TooltipContent>Chat menu</TooltipContent>
         </Tooltip>
 
-        <DropdownMenuContent align="end" className="w-72 p-1">
-          <DropdownMenuItem
-            className="gap-2.5 py-2"
-            disabled={!sessionId || empty}
-            onSelect={share}
-          >
+        {/* One line per item. The sub-lines these used to carry explained
+            actions whose labels already say the same thing; what they cost was
+            a menu three times taller than the four things in it. The one
+            genuinely dynamic sub-line -- how many files "Open as a project"
+            would keep -- is still on screen as the amber dot above. */}
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuItem disabled={!sessionId || empty} onSelect={share}>
             <Link2 />
-            <span className="flex min-w-0 flex-col">
-              <span className="text-sm">Share chat</span>
-              <span className="text-[11px] text-muted-foreground">
-                Copy a link that reopens this conversation
-              </span>
-            </span>
+            Share chat
           </DropdownMenuItem>
 
-          <DropdownMenuItem
-            className="gap-2.5 py-2"
-            disabled={empty}
-            onSelect={copyMarkdown}
-          >
+          <DropdownMenuItem disabled={empty} onSelect={copyMarkdown}>
             <ClipboardCopy />
-            <span className="flex min-w-0 flex-col">
-              <span className="text-sm">Copy chat as Markdown</span>
-              <span className="text-[11px] text-muted-foreground">
-                The full transcript, ready to paste
-              </span>
-            </span>
+            Copy chat as Markdown
           </DropdownMenuItem>
 
           <DropdownMenuItem
-            className="gap-2.5 py-2"
             disabled={empty}
             onSelect={() => setDialogOpen(true)}
           >
             <FolderPlus />
-            <span className="flex min-w-0 flex-col">
-              <span className="text-sm">Open this chat as a project</span>
-              <span className="text-[11px] text-muted-foreground">
-                {empty
-                  ? "Start a conversation first"
-                  : changes.length > 0
-                    ? `Keep the ${changes.length} file${changes.length === 1 ? "" : "s"} it wrote`
-                    : "No files written yet — the project starts empty"}
-              </span>
-            </span>
+            Open this chat as a project
+          </DropdownMenuItem>
+
+          <DropdownMenuSeparator />
+
+          <DropdownMenuItem
+            variant="destructive"
+            disabled={!sessionId || empty}
+            onSelect={() => setDeleteOpen(true)}
+          >
+            <Trash2 />
+            Delete chat
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -142,6 +152,12 @@ export default function ChatActionsMenu() {
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         changes={changes}
+      />
+
+      <DeleteChatDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        onConfirm={remove}
       />
     </>
   );
