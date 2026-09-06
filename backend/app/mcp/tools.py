@@ -34,6 +34,14 @@ LOOP_INJECTED_KWARGS = (
     "pool",
     "project_id",
     "session_id",
+    "typecheck_command",
+    "format_command",
+    "web_tools_enabled",
+    "web_timeout_seconds",
+    "web_max_response_bytes",
+    "web_allowed_domains",
+    "web_search_provider",
+    "web_search_api_key",
 )
 
 

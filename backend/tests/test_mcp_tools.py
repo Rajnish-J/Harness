@@ -16,7 +16,7 @@ from app.agent.tools.registry import ALL_TOOLS
 from app.agent.tools.toolsets import merge_toolsets
 from app.db.registry_repo import McpServerRow
 from app.mcp.mock import mock_tools_for
-from app.mcp.tools import dedupe, make_tool, namespaced
+from app.mcp.tools import LOOP_INJECTED_KWARGS, dedupe, make_tool, namespaced
 
 
 @dataclass
@@ -108,15 +108,27 @@ async def test_run_strips_every_kwarg_dispatch_tool_injects():
     caller = FakeCaller(FakeResult(content=[FakeBlock(text="ok")]))
     tool = make_tool("github", caller, FakeMcpTool(name="get_me"))
 
-    out = await tool.run(
-        executor=object(),
-        pool=object(),
-        project_id="proj-1",
-        session_id="sess-1",
-    )
+    # Driven off the tuple itself rather than a fixed four, so a name added to
+    # LOOP_INJECTED_KWARGS is exercised here the moment it is added. The values
+    # are deliberately junk: nothing here should reach the wire.
+    injected = {name: object() for name in LOOP_INJECTED_KWARGS}
+    assert len(injected) >= 4
+
+    out = await tool.run(**injected)
 
     assert out == "ok"
     assert caller.calls == [("get_me", {})]
+
+
+@pytest.mark.asyncio
+async def test_run_still_forwards_the_models_own_arguments():
+    """The strip must take the loop's kwargs and nothing else."""
+    caller = FakeCaller(FakeResult(content=[FakeBlock(text="ok")]))
+    tool = make_tool("github", caller, FakeMcpTool(name="search"))
+
+    await tool.run(query="bug", limit=5, **{n: object() for n in LOOP_INJECTED_KWARGS})
+
+    assert caller.calls == [("search", {"query": "bug", "limit": 5})]
 
 
 @pytest.mark.asyncio

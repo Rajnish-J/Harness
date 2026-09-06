@@ -446,6 +446,20 @@ async def _dispatch_tool(
             pool=pool,
             project_id=project_id,
             session_id=session_id,
+            # Read by the quality tools (run_typecheck/run_format) and reported
+            # by project_overview, which tells the model which checks exist
+            # before it spends a turn discovering one is unconfigured.
+            typecheck_command=settings.typecheck_command,
+            format_command=settings.format_command,
+            # Read only by the web tools. Passed as settings rather than read
+            # from get_settings() inside them so a per-turn model_copy (and a
+            # test's fixture) actually reaches them.
+            web_tools_enabled=settings.web_tools_enabled,
+            web_timeout_seconds=settings.web_timeout_seconds,
+            web_max_response_bytes=settings.web_max_response_bytes,
+            web_allowed_domains=settings.web_allowed_domains,
+            web_search_provider=settings.web_search_provider,
+            web_search_api_key=settings.web_search_api_key,
         )
         if inspect.isawaitable(output):
             output = await output
