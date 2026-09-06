@@ -9,6 +9,7 @@ from app.agent.tools.quality import QUALITY_TOOLS
 from app.agent.tools.search.search_tools import SEARCH_TOOLS
 from app.agent.tools.vcs.git_inspect import GIT_INSPECT_TOOLS
 from app.agent.tools.vcs.git_tools import GIT_TOOLS
+from app.agent.tools.web import WEB_TOOLS
 
 # The whole tool surface. Keeping it as one ordered list matters: a stable tool
 # order keeps the request prefix cacheable. FILE_TOOLS stays first so existing
@@ -35,6 +36,7 @@ ALL_TOOLS: list[Tool] = [
     # Version Control by group, but appended here rather than added to
     # GIT_TOOLS: growing that list would shift every tool after it.
     *GIT_INSPECT_TOOLS,
+    *WEB_TOOLS,
 ]
 
 TOOLS_BY_NAME: dict[str, Tool] = {tool.name: tool for tool in ALL_TOOLS}
