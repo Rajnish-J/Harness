@@ -19,6 +19,7 @@ from app.db.registry_repo import (
     list_enabled_mcp_servers,
 )
 from app.mcp.credentials import resolve_auth
+from app.mcp.manager import McpNotice
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,7 @@ async def resolve_mcp_tools(
     app: Any,
     settings: Settings,
     server_ids: list[str],
-) -> tuple[list[Tool], list[str]]:
+) -> tuple[list[Tool], list[McpNotice]]:
     """Tools for the servers attached to this turn, plus any failure notices."""
     manager = getattr(app.state, "mcp", None)
     if manager is None:
@@ -83,7 +84,7 @@ async def resolve_mcp_tools(
 
         # Chat is designed to run without a database. Say so once and continue,
         # rather than turning an optional feature into a hard failure.
-        return [], [NO_DATABASE_NOTICE]
+        return [], [McpNotice(message=NO_DATABASE_NOTICE)]
 
     try:
         servers = (
@@ -93,7 +94,7 @@ async def resolve_mcp_tools(
         )
     except Exception as exc:  # noqa: BLE001 - a read failure is not a chat failure
         logger.warning("Could not read mcp_servers: %s", exc)
-        return [], [f"Could not read the MCP server list: {exc}"]
+        return [], [McpNotice(message=f"Could not read the MCP server list: {exc}")]
 
     if not servers:
         return [], []

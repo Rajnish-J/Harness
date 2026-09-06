@@ -43,6 +43,23 @@ from app.mcp.tools import dedupe, make_tool
 
 logger = logging.getLogger(__name__)
 
+
+@dataclass(frozen=True)
+class McpNotice:
+    """Something the user should know about one server, as data.
+
+    Carries the server id because the UI has to attach the message to a row,
+    and matching on the name inside the prose could not do that reliably: names
+    that are substrings of one another cross-matched, and some notices name no
+    server at all. `server_id` is None for exactly those -- a missing
+    DATABASE_URL, a failed read of the server list -- which the UI shows in the
+    general list rather than against a row.
+    """
+
+    message: str
+    server_id: str | None = None
+    server_name: str | None = None
+
 _SHUTDOWN = object()
 
 
@@ -274,8 +291,8 @@ class McpManager:
         self,
         servers: list[McpServerRow],
         auth_by_id: dict[str, ResolvedAuth] | None = None,
-    ) -> tuple[list[Any], list[str]]:
-        """Discovered tools plus human-readable notices for anything that failed.
+    ) -> tuple[list[Any], list["McpNotice"]]:
+        """Discovered tools plus notices for anything that failed.
 
         `auth_by_id` is resolved by the caller rather than here: decrypting a
         credential needs the pool, and this class deliberately holds no database
@@ -287,22 +304,33 @@ class McpManager:
             return mock_tools_for(servers), []
 
         tools: list[Any] = []
-        notices: list[str] = []
+        notices: list[McpNotice] = []
 
         for server in servers:
+            def notice(message: str, _server: McpServerRow = server) -> McpNotice:
+                return McpNotice(
+                    message=message,
+                    server_id=str(_server.id),
+                    server_name=_server.name,
+                )
+
             auth = (auth_by_id or {}).get(str(server.id)) or no_auth()
             if auth.notice:
-                notices.append(auth.notice)
+                # credentials.py writes the prose; the id is attached here,
+                # where the server row is in hand.
+                notices.append(notice(auth.notice))
 
             try:
                 runner = await self._runner_for(server, auth)
             except Exception as exc:  # noqa: BLE001
-                notices.append(f"MCP server {server.name!r} unavailable: {exc}")
+                notices.append(notice(f"MCP server {server.name!r} unavailable: {exc}"))
                 continue
 
             if runner is None or not runner.alive:
                 reason = (runner.error if runner else None) or "could not connect"
-                notices.append(f"MCP server {server.name!r} unavailable: {reason}")
+                notices.append(
+                    notice(f"MCP server {server.name!r} unavailable: {reason}")
+                )
                 continue
 
             tools.extend(

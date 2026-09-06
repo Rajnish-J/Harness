@@ -171,3 +171,33 @@ async def test_a_credential_notice_surfaces_even_when_the_connect_itself_ok(
     result = await call_test_mcp_server(str(row.id), request, settings_with())
 
     assert result.error == "credential missing"
+
+
+# --------------------------------------------------------- notice shapes
+#
+# The route serves both shapes: `notices` stayed a flat string list so existing
+# consumers keep working, and `server_notices` carries the id the UI needs to
+# put a failure against the right row.
+
+
+async def test_tools_route_serves_both_notice_shapes(monkeypatch: pytest.MonkeyPatch):
+    from app.api.mcp import list_mcp_tools
+    from app.mcp.manager import McpNotice
+
+    async def fake_resolve(_app, _settings, _ids):
+        return [], [
+            McpNotice(message="boom", server_id="abc", server_name="github"),
+            McpNotice(message="no database"),
+        ]
+
+    monkeypatch.setattr("app.api.mcp.resolve_mcp_tools", fake_resolve)
+
+    payload = await list_mcp_tools(
+        request_with(manager=FakeManager(ok=True)), "abc", settings_with()
+    )
+
+    # Unchanged wire contract.
+    assert payload["notices"] == ["boom", "no database"]
+    # And the structured half, including the notice that names no server.
+    assert payload["server_notices"][0]["server_id"] == "abc"
+    assert payload["server_notices"][1]["server_id"] is None

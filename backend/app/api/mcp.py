@@ -57,7 +57,18 @@ async def list_mcp_tools(
             ).model_dump()
             for tool in tools
         ],
-        "notices": notices,
+        # Both shapes on purpose: `notices` stays a flat string list so every
+        # existing consumer keeps working, while `server_notices` carries the id
+        # the UI needs to attach a failure to the right server row.
+        "notices": [notice.message for notice in notices],
+        "server_notices": [
+            {
+                "message": notice.message,
+                "server_id": notice.server_id,
+                "server_name": notice.server_name,
+            }
+            for notice in notices
+        ],
         "mock": settings.mock_mcp,
     }
 
