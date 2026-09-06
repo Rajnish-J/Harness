@@ -7,6 +7,7 @@ from app.agent.tools.memory.memory_tools import MEMORY_TOOLS
 from app.agent.tools.project.chat_tools import CHAT_TOOLS
 from app.agent.tools.quality import QUALITY_TOOLS
 from app.agent.tools.search.search_tools import SEARCH_TOOLS
+from app.agent.tools.vcs.git_inspect import GIT_INSPECT_TOOLS
 from app.agent.tools.vcs.git_tools import GIT_TOOLS
 
 # The whole tool surface. Keeping it as one ordered list matters: a stable tool
@@ -31,6 +32,9 @@ ALL_TOOLS: list[Tool] = [
     *CODEINTEL_TOOLS,
     *INSIGHT_TOOLS,
     *QUALITY_TOOLS,
+    # Version Control by group, but appended here rather than added to
+    # GIT_TOOLS: growing that list would shift every tool after it.
+    *GIT_INSPECT_TOOLS,
 ]
 
 TOOLS_BY_NAME: dict[str, Tool] = {tool.name: tool for tool in ALL_TOOLS}
