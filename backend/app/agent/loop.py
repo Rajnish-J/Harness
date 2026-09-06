@@ -8,8 +8,8 @@ from app.agent.llm.base import LLMClient, ToolCallRequest, ToolResult
 from app.agent.session import Session
 from app.agent.exec_context import ExecutionContext
 from app.agent.tools.base import Tool, ToolExecutionError
-from app.agent.tools.attach_tools import PROPOSE_ATTACH_PROJECT_TOOL_NAME
-from app.agent.tools.project_tools import PROPOSE_CREATE_PROJECT_TOOL_NAME
+from app.agent.tools.project.attach_tools import PROPOSE_ATTACH_PROJECT_TOOL_NAME
+from app.agent.tools.project.project_tools import PROPOSE_CREATE_PROJECT_TOOL_NAME
 from app.agent.tools.registry import ALL_TOOLS
 from app.db import project_repo
 from app.core.config import Settings

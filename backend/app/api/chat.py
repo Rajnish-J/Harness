@@ -14,11 +14,11 @@ from app.agent.loop import SYSTEM_PROMPT, run_agent_loop, resume_agent_loop
 from app.agent.prompt import compose_system_prompt
 from app.agent.session import ProviderMismatchError, Session, session_store
 from app.agent.tools.base import Tool
-from app.agent.tools.attach_tools import (
+from app.agent.tools.project.attach_tools import (
     LIST_PROJECTS_TOOL,
     PROPOSE_ATTACH_PROJECT_TOOL,
 )
-from app.agent.tools.project_tools import PROPOSE_CREATE_PROJECT_TOOL
+from app.agent.tools.project.project_tools import PROPOSE_CREATE_PROJECT_TOOL
 from app.agent.tools.toolsets import UnknownToolError, merge_toolsets
 from app.api.sse import SSE_HEADERS
 from app.agent.exec_context import ExecutionContext

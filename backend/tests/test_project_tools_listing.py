@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.agent.tools.attach_tools import (
+from app.agent.tools.project.attach_tools import (
     PROPOSE_ATTACH_PROJECT_TOOL,
     list_projects,
     propose_attach_project,

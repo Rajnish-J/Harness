@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from app.agent.tools.base import ToolExecutionError
-from app.agent.tools.chat_tools import list_project_chats, read_project_chat
+from app.agent.tools.project.chat_tools import list_project_chats, read_project_chat
 from app.db.project_chat_repo import SessionSummary
 
 PROJECT = "44444444-4444-4444-4444-444444444444"
@@ -115,7 +115,7 @@ async def test_the_argument_is_not_named_session_id(stub):
     """
     import inspect
 
-    from app.agent.tools.chat_tools import READ_PROJECT_CHAT_TOOL
+    from app.agent.tools.project.chat_tools import READ_PROJECT_CHAT_TOOL
 
     params = inspect.signature(read_project_chat).parameters
     assert "session_id" not in params

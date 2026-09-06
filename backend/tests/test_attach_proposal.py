@@ -12,11 +12,11 @@ import pytest
 
 from app.agent.loop import resume_agent_loop, run_agent_loop
 from app.agent.session import Session
-from app.agent.tools.attach_tools import (
+from app.agent.tools.project.attach_tools import (
     LIST_PROJECTS_TOOL,
     PROPOSE_ATTACH_PROJECT_TOOL,
 )
-from app.agent.tools.project_tools import PROPOSE_CREATE_PROJECT_TOOL
+from app.agent.tools.project.project_tools import PROPOSE_CREATE_PROJECT_TOOL
 from app.core.config import get_settings
 
 from .test_tool_modes import FakeClient, answer, tool_use

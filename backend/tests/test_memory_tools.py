@@ -10,7 +10,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.agent.tools import memory_tools
+from app.agent.tools.memory import memory_tools
 from app.agent.tools.base import ToolExecutionError
 from app.db.memory_repo import MemoryRow
 
