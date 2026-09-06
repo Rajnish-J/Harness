@@ -5,6 +5,7 @@ from app.agent.tools.files.file_tools import FILE_TOOLS
 from app.agent.tools.insight import INSIGHT_TOOLS
 from app.agent.tools.memory.memory_tools import MEMORY_TOOLS
 from app.agent.tools.project.chat_tools import CHAT_TOOLS
+from app.agent.tools.quality import QUALITY_TOOLS
 from app.agent.tools.search.search_tools import SEARCH_TOOLS
 from app.agent.tools.vcs.git_tools import GIT_TOOLS
 
@@ -29,6 +30,7 @@ ALL_TOOLS: list[Tool] = [
     # every in-flight session. tests/test_tool_registry_order.py pins this.
     *CODEINTEL_TOOLS,
     *INSIGHT_TOOLS,
+    *QUALITY_TOOLS,
 ]
 
 TOOLS_BY_NAME: dict[str, Tool] = {tool.name: tool for tool in ALL_TOOLS}
