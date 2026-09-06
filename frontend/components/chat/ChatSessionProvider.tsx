@@ -99,6 +99,22 @@ export default function ChatSessionProvider({
   const [pending, setPending] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
+  // Which session id the transcript has already been loaded for.
+  //
+  // A ref rather than state: this must run once per id, survive StrictMode's
+  // double invocation, and never itself cause a render. Every path that fills
+  // `items` on its own claims the id here, so the hydrate effect below reads
+  // it as handled and does not fetch over the top of the result.
+  const hydratedFor = useRef<string | null>(null);
+
+  // A project scope is server-rendered with its history already in state, so
+  // there is nothing to fetch. Claimed during render rather than in an effect
+  // so the effect's very first run already sees it -- an effect would leave a
+  // window in which the fetch had started.
+  if (sessionId && initialItems && initialItems.length > 0) {
+    if (hydratedFor.current === null) hydratedFor.current = sessionId;
+  }
+
   // Abort any in-flight stream if the app goes away. Paired with the backend's
   // is_disconnected() check, this actually halts the agent loop instead of
   // leaving it burning tokens for nobody.
@@ -328,7 +344,10 @@ export default function ChatSessionProvider({
 
   const newChat = useCallback(() => {
     abortRef.current?.abort();
-    rotateSessionId(scope);
+    // Claim the new id so the hydrate effect treats it as handled. A fresh id
+    // has no rows server-side, so its empty-result guard would already save us
+    // -- claiming just avoids the pointless round trip on every "New chat".
+    hydratedFor.current = rotateSessionId(scope);
     setItems([]);
     setPending(false);
     // Fire-and-forget: the UI clears immediately, and a stale server session is
@@ -341,6 +360,10 @@ export default function ChatSessionProvider({
     async (targetSessionId: string) => {
       abortRef.current?.abort();
       setPending(false);
+      // Claim it up front: this function IS a load path, and letting the
+      // hydrate effect fire on the same id would fetch the same transcript a
+      // second time once the store update lands.
+      hydratedFor.current = targetSessionId;
       // The store update (below) and this fetch race by design: the id is
       // adopted regardless of whether the transcript fetch succeeds, same as
       // `newChat` clearing the transcript before its fire-and-forget reset
@@ -357,6 +380,38 @@ export default function ChatSessionProvider({
     },
     [scope],
   );
+
+  /**
+   * Repaint a conversation that is already in the database.
+   *
+   * The global chat on `/` mounts with no `initialItems`: its session id lives
+   * in localStorage, which a server render cannot read, so there is nothing to
+   * seed from. The rows ARE persisted, and the backend rehydrates the model's
+   * own history from them -- so without this the agent goes on remembering the
+   * conversation while the user stares at a blank screen.
+   */
+  useEffect(() => {
+    if (!sessionId) return; // server snapshot, no id yet
+    if (hydratedFor.current === sessionId) return; // loaded, or claimed
+    if (streaming || pending) return; // never repaint over a live turn
+    hydratedFor.current = sessionId; // claim BEFORE awaiting
+
+    let cancelled = false;
+    void fetchChatTranscript(sessionId).then((messages) => {
+      // An empty answer is never painted: a freshly rotated id has no rows, a
+      // failed fetch degrades to [], and mock mode always returns [] -- all
+      // three would blank a transcript that is already correct.
+      if (cancelled || messages.length === 0) return;
+      setItems((prev) => (prev.length > 0 ? prev : toTranscript(messages)));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+    // streaming/pending are deps so a page that loaded mid-turn hydrates once
+    // the turn settles; by then `items` is non-empty and the guard above makes
+    // it a no-op.
+  }, [sessionId, streaming, pending]);
 
   const value = useMemo(
     () => ({
