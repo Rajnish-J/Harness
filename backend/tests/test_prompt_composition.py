@@ -177,3 +177,45 @@ def test_a_bare_compose_is_still_byte_identical_to_the_base():
     assert composed == SYSTEM_PROMPT.strip()
     assert "list_projects" not in composed
     assert "propose_attach_project" not in composed
+
+
+# ------------------------------------------------------------- MCP servers
+#
+# The bug these pin: with a GitHub MCP server attached, the model was told
+# nothing about it, so it asked the user for a username and an access token
+# instead of calling one of the thirty authenticated tools in its own request.
+
+
+def test_no_mcp_servers_changes_nothing():
+    """Every caller with no MCP concept keeps composing to the base prompt."""
+    assert compose_system_prompt(base=SYSTEM_PROMPT, mcp_servers=[]) == SYSTEM_PROMPT.strip()
+
+
+def test_attached_server_is_named_and_declared_authenticated():
+    composed = compose_system_prompt(base=SYSTEM_PROMPT, mcp_servers=["github"])
+
+    assert "github" in composed
+    assert "already authenticated" in composed
+    # The specific instruction that fixes the reported failure.
+    assert "never ask the user for a username" in composed.lower()
+    assert "token" in composed
+
+
+def test_mcp_block_keeps_the_base_prefix_intact():
+    """The block lands after the base prompt, so the shared prefix is untouched."""
+    composed = compose_system_prompt(base=SYSTEM_PROMPT, mcp_servers=["github"])
+    assert composed.startswith(SYSTEM_PROMPT.strip())
+
+
+def test_mcp_server_order_does_not_change_the_output():
+    forwards = compose_system_prompt(base=SYSTEM_PROMPT, mcp_servers=["b", "a"])
+    backwards = compose_system_prompt(base=SYSTEM_PROMPT, mcp_servers=["a", "b"])
+    assert forwards == backwards
+
+
+def test_duplicate_and_blank_server_names_collapse():
+    once = compose_system_prompt(base=SYSTEM_PROMPT, mcp_servers=["github"])
+    twice = compose_system_prompt(
+        base=SYSTEM_PROMPT, mcp_servers=["github", "github", "", "  "]
+    )
+    assert once == twice

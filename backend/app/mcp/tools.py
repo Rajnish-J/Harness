@@ -53,9 +53,32 @@ def slugify_server(name: str) -> str:
     return NAME_RE.sub("_", name.strip().lower()).strip("_") or "server"
 
 
+#: The tool panel section prefix for one server's tools. A constant so
+#: mcp_group and server_names cannot drift apart -- the second parses what the
+#: first builds. The frontend has the same pair (serverNameFromGroup in
+#: frontend/lib/tool-selection.ts).
+MCP_GROUP_PREFIX = "MCP · "
+
+
 def mcp_group(server_name: str) -> str:
     """The tool panel section for one server's tools."""
-    return f"MCP · {server_name}"
+    return f"{MCP_GROUP_PREFIX}{server_name}"
+
+
+def server_names(tools: list[Tool]) -> list[str]:
+    """The MCP servers represented in a tool list, sorted and deduped.
+
+    Derived from the group label rather than re-queried, so naming the attached
+    servers in the system prompt costs no extra database round trip. Sorted for
+    the same reason app/agent/prompt.py sorts skills: the composed prompt must
+    not depend on the order servers were attached in.
+    """
+    found = {
+        tool.group[len(MCP_GROUP_PREFIX) :]
+        for tool in tools
+        if tool.group and tool.group.startswith(MCP_GROUP_PREFIX)
+    }
+    return sorted(name for name in found if name)
 
 
 def namespaced(server_name: str, tool_name: str) -> str:

@@ -28,6 +28,7 @@ from app.db import memory_repo, project_chat_repo, project_repo
 from app.projects.execution import resolve_executor
 from app.projects.workspaces import InvalidProjectIdError, settings_for_project
 from app.mcp import resolve_mcp_tools
+from app.mcp.tools import server_names
 from app.models.chat import ApprovalRequest, ChatRequest, ResetRequest, TurnPreset
 from app.models.events import AgentEvent, DoneEvent, ErrorEvent, sse_comment
 
@@ -200,30 +201,25 @@ async def _prepare_turn(
         except Exception:  # noqa: BLE001 - a chat must not die because memory did
             logger.exception("could not load memory for project %s", project_id)
 
-    system = compose_system_prompt(
-        base=SYSTEM_PROMPT,
-        agent_name=payload.agent_name,
-        agent_prompt=payload.system_prompt,
-        skills=payload.skills,
-        memories=memories,
-        no_project_open=propose_project_tool,
-        project_open=project_id is not None,
-        max_chars=turn_settings.max_system_prompt_chars,
-    )
-
     tools: list[Tool] | None
     if payload.mode == "chat":
         # An empty list, not None: None means "the full registry". Nothing is
         # advertised and nothing can be dispatched.
         tools = []
         notices: list[tuple[str, str]] = []
+        attached_mcp: list[str] = []
     else:
         # MCP is resolved non-fatally: an unreachable server degrades the turn
         # to the built-in tools rather than failing it.
         mcp_tools, mcp_notices = await resolve_mcp_tools(
             request.app, turn_settings, payload.mcp_server_ids
         )
-        notices = [(notice, "mcp_unavailable") for notice in mcp_notices]
+        notices = [(notice.message, "mcp_unavailable") for notice in mcp_notices]
+        # Named in the system prompt below, so the model is told these tools are
+        # already authenticated. Derived from what was actually discovered, not
+        # from payload.mcp_server_ids: a server that failed to connect
+        # contributes no tools and must not be promised to the model.
+        attached_mcp = server_names(mcp_tools)
         try:
             tools = merge_toolsets(payload.tool_names, mcp_tools)
         except UnknownToolError as exc:
@@ -241,6 +237,18 @@ async def _prepare_turn(
                 LIST_PROJECTS_TOOL,
                 PROPOSE_ATTACH_PROJECT_TOOL,
             ]
+
+    system = compose_system_prompt(
+        base=SYSTEM_PROMPT,
+        agent_name=payload.agent_name,
+        agent_prompt=payload.system_prompt,
+        skills=payload.skills,
+        memories=memories,
+        no_project_open=propose_project_tool,
+        project_open=project_id is not None,
+        mcp_servers=attached_mcp,
+        max_chars=turn_settings.max_system_prompt_chars,
+    )
 
     return (
         Turn(
