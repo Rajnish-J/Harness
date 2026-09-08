@@ -1,12 +1,12 @@
 "use client";
 
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import type { DisabledTools } from "@/lib/tool-selection";
@@ -27,6 +27,12 @@ import type { ToolInfo } from "@/lib/workflow-api";
  *
  * What it does NOT do is narrow one conversation. That is the composer's "/"
  * panel, and an agent's own preset. This is the floor under both.
+ *
+ * A drawer rather than a centred modal: a group can hold forty tools, and this
+ * is a list to work down while the grid behind it stays where it was. The
+ * modal put a long scrolling list in the middle of the screen and covered the
+ * page it came from. Floating — inset from all four edges — so it reads as
+ * lifted above the grid rather than as a new screen.
  */
 export default function ToolGroupDialog({
   group,
@@ -50,30 +56,37 @@ export default function ToolGroupDialog({
   const off = tools.filter((tool) => disabled.has(tool.name)).length;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>{group}</DialogTitle>
-          <DialogDescription>
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" floating className="gap-0 p-0">
+        {/* pr-12 keeps the description clear of the close button, which the
+            primitive pins at top-4 right-4. */}
+        <SheetHeader className="shrink-0 border-b px-5 py-4 pr-12">
+          <SheetTitle>{group}</SheetTitle>
+          <SheetDescription>
             {tools.length} {tools.length === 1 ? "tool" : "tools"} the agent can
             call. Switching one off here removes it from every chat and agent
             turn.
             {off > 0 && ` ${off} currently off.`}
-          </DialogDescription>
-        </DialogHeader>
+          </SheetDescription>
+        </SheetHeader>
 
-        <ScrollArea className="max-h-[60vh]">
-          <ul className="flex flex-col gap-2 pr-3">
+        <ScrollArea className="min-h-0 flex-1">
+          {/* The same rail the composer's expanded groups draw, for the same
+              reason: these are the members of one group, and a column of
+              bordered cards says nothing about where the group ends. */}
+          <ul className="relative ml-8 flex flex-col gap-1 py-4 pr-5 pl-6 before:absolute before:top-7 before:bottom-7 before:left-0 before:w-px before:bg-border before:content-['']">
             {tools.map((tool) => {
               const isOff = disabled.has(tool.name);
               return (
                 <li
                   key={tool.name}
                   className={cn(
-                    "rounded-lg border px-3 py-2.5 transition-opacity",
+                    "relative rounded-lg px-3 py-2.5 transition-colors hover:bg-accent/40",
                     isOff && "opacity-70",
                   )}
                 >
+                  <StepNode on={!isOff} />
+
                   <div className="flex items-start gap-3">
                     <div className="min-w-0 flex-1">
                       <p
@@ -119,7 +132,37 @@ export default function ToolGroupDialog({
             })}
           </ul>
         </ScrollArea>
-      </DialogContent>
-    </Dialog>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+/**
+ * One node on the group's rail. The twin of the composer's, sized for this
+ * denser row — see components/chat/CommandMenu.tsx.
+ *
+ * Pinned to the first line of the row rather than centred: these rows vary in
+ * height with their description, and a node floating beside the middle of a
+ * three-line block stops lining up with anything.
+ */
+function StepNode({ on }: { on: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className="pointer-events-none absolute top-[1.35rem] -left-6 flex size-4 -translate-x-1/2 -translate-y-1/2 items-center justify-center"
+    >
+      <span
+        className={cn(
+          "absolute size-4 rounded-full transition-all duration-200",
+          on ? "scale-100 bg-primary/20" : "scale-50 bg-transparent",
+        )}
+      />
+      <span
+        className={cn(
+          "relative size-2 rounded-full ring-2 ring-background transition-colors duration-200",
+          on ? "bg-primary" : "bg-muted-foreground/40",
+        )}
+      />
+    </span>
   );
 }
