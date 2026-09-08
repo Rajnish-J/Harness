@@ -710,7 +710,7 @@ function GroupRow({
         //
         // The line runs THROUGH the nodes rather than branching into them —
         // these are the members of one thing, not children hanging off it.
-        <ul className="relative ml-[1.375rem] pb-1 pl-5 before:absolute before:top-3 before:bottom-3 before:left-0 before:w-px before:bg-border before:content-['']">
+        <ul className="relative ml-[1.375rem] pb-1 pl-3.5 before:absolute before:top-3 before:bottom-3 before:left-0 before:w-px before:bg-border before:content-['']">
           {tools.map((tool) => {
             const locked = disabledTools.has(tool.name);
             const on = isToolEnabled(tool.name, toolNames, disabledTools);
@@ -761,41 +761,25 @@ function GroupRow({
 }
 
 /**
- * One node on the group's rail.
+ * One node on the group's rail. A dot, and nothing else.
  *
- * Sits ON the line — absolutely positioned back over the <ul>'s border, with
- * the page background ringed around it so the line appears to pass behind
- * rather than through.
- *
- * The halo carries the state. A tool that is on gets a filled node and a soft
- * ring; one that is off is hollow and unlit. That makes the rail readable at a
- * glance from the margin, which a column of identical dots beside a column of
- * switches would not be — the switch still says it precisely, and this says it
- * peripherally.
+ * No halo and no ring cut out of the line behind it: at this size the glow
+ * read as a smudge rather than a state, and the switch on the same row already
+ * says whether the tool is on. The dot marks position, not status — it dims
+ * with the row when a tool is off, which is the label's own treatment, not a
+ * second signal of its own.
  */
 function StepNode({ on }: { on: boolean }) {
   return (
     <span
       aria-hidden
-      // -left-5 puts it back on the rail the <ul> draws at its own left edge,
-      // undoing this row's pl-5.
-      className="pointer-events-none absolute top-1/2 -left-5 flex size-3 -translate-x-1/2 -translate-y-1/2 items-center justify-center"
-    >
-      {/* The glow. Scaled rather than resized so it animates smoothly, and it
-          is the only part that carries colour when the tool is off. */}
-      <span
-        className={cn(
-          "absolute size-3 rounded-full transition-all duration-200",
-          on ? "scale-100 bg-primary/20" : "scale-50 bg-transparent",
-        )}
-      />
-      <span
-        className={cn(
-          "relative size-1.5 rounded-full ring-2 ring-popover transition-colors duration-200",
-          on ? "bg-primary" : "bg-muted-foreground/40",
-        )}
-      />
-    </span>
+      // -left-3.5 puts it back on the rail the <ul> draws at its own left edge,
+      // undoing this row's pl-3.5.
+      className={cn(
+        "pointer-events-none absolute top-1/2 -left-3.5 size-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full",
+        on ? "bg-foreground" : "bg-muted-foreground/40",
+      )}
+    />
   );
 }
 

@@ -71,22 +71,22 @@ export default function ToolGroupDialog({
         </SheetHeader>
 
         <ScrollArea className="min-h-0 flex-1">
-          {/* The same rail the composer's expanded groups draw, for the same
-              reason: these are the members of one group, and a column of
-              bordered cards says nothing about where the group ends. */}
-          <ul className="relative ml-8 flex flex-col gap-1 py-4 pr-5 pl-6 before:absolute before:top-7 before:bottom-7 before:left-0 before:w-px before:bg-border before:content-['']">
+          {/* No stepper rail here, unlike the composer's expanded groups. There
+              the rail marks where one group's tools end and the next group's
+              begin, in a list that holds every group at once. This drawer shows
+              one group and nothing else, so the boundary it draws is already
+              the panel's own edge. */}
+          <ul className="flex flex-col gap-1 px-4 py-4">
             {tools.map((tool) => {
               const isOff = disabled.has(tool.name);
               return (
                 <li
                   key={tool.name}
                   className={cn(
-                    "relative rounded-lg px-3 py-2.5 transition-colors hover:bg-accent/40",
+                    "rounded-lg px-3 py-2.5 transition-colors hover:bg-accent/40",
                     isOff && "opacity-70",
                   )}
                 >
-                  <StepNode on={!isOff} />
-
                   <div className="flex items-start gap-3">
                     <div className="min-w-0 flex-1">
                       <p
@@ -134,35 +134,5 @@ export default function ToolGroupDialog({
         </ScrollArea>
       </SheetContent>
     </Sheet>
-  );
-}
-
-/**
- * One node on the group's rail. The twin of the composer's, sized for this
- * denser row — see components/chat/CommandMenu.tsx.
- *
- * Pinned to the first line of the row rather than centred: these rows vary in
- * height with their description, and a node floating beside the middle of a
- * three-line block stops lining up with anything.
- */
-function StepNode({ on }: { on: boolean }) {
-  return (
-    <span
-      aria-hidden
-      className="pointer-events-none absolute top-[1.35rem] -left-6 flex size-4 -translate-x-1/2 -translate-y-1/2 items-center justify-center"
-    >
-      <span
-        className={cn(
-          "absolute size-4 rounded-full transition-all duration-200",
-          on ? "scale-100 bg-primary/20" : "scale-50 bg-transparent",
-        )}
-      />
-      <span
-        className={cn(
-          "relative size-2 rounded-full ring-2 ring-background transition-colors duration-200",
-          on ? "bg-primary" : "bg-muted-foreground/40",
-        )}
-      />
-    </span>
   );
 }
