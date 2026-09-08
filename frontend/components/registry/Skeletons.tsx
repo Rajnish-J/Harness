@@ -107,25 +107,42 @@ export function SkeletonFields({ count = 5 }: { count?: number }) {
  *
  * The header strip reproduces EditorShell's own `border-b px-4 py-2.5` rather
  * than a plain row, because that border is the line the eye tracks — without it
- * the page visibly reflows when the real shell arrives.
+ * the page visibly reflows when the real shell arrives. It also copies the
+ * shell's full-width root with the max-width one level in, so the border runs
+ * edge to edge in both states and the swap moves nothing.
  *
  * The field count is a parameter and not a faithful copy of any one editor:
  * they differ in length and always will. What matters is the rhythm — a short
  * label over a taller control — so the page carries the right weight.
+ *
+ * `width` has to track whatever the real editor passes to EditorShell, or the
+ * column jumps sideways the moment the swap happens.
  */
-export function SkeletonEditor({ fields = 5 }: { fields?: number }) {
+export function SkeletonEditor({
+  fields = 5,
+  width = "prose",
+}: {
+  fields?: number;
+  width?: "prose" | "wide";
+}) {
+  const clamp = width === "wide" ? "max-w-6xl" : "max-w-3xl";
+
   return (
-    <div className="mx-auto flex h-full w-full max-w-3xl flex-col font-sans">
-      <div className="flex shrink-0 items-center gap-3 border-b px-4 py-2.5">
-        <Skeleton className="h-7 w-16" />
-        <Skeleton className="h-4 w-40" />
-        <div className="ml-auto flex items-center gap-2">
-          <Skeleton className="h-8 w-20" />
-          <Skeleton className="h-8 w-16" />
+    <div className="flex h-full w-full flex-col font-sans">
+      <div className="shrink-0 border-b px-4 py-2.5">
+        <div className={cn("mx-auto flex w-full items-center gap-3", clamp)}>
+          <Skeleton className="h-7 w-16" />
+          <Skeleton className="h-4 w-40" />
+          <div className="ml-auto flex items-center gap-2">
+            <Skeleton className="h-8 w-20" />
+            <Skeleton className="h-8 w-16" />
+          </div>
         </div>
       </div>
-      <div className="min-h-0 flex-1 p-4">
-        <SkeletonFields count={fields} />
+      <div className="min-h-0 flex-1">
+        <div className={cn("mx-auto w-full p-4", clamp)}>
+          <SkeletonFields count={fields} />
+        </div>
       </div>
     </div>
   );

@@ -8,5 +8,5 @@ import { SkeletonEditor } from "@/components/registry/Skeletons";
  * navigation used to sit on the previous screen with no feedback at all.
  */
 export default function Loading() {
-  return <SkeletonEditor fields={7} />;
+  return <SkeletonEditor fields={7} width="wide" />;
 }

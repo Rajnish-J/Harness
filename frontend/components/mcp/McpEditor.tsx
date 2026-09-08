@@ -67,6 +67,7 @@ export default function McpEditor({
     <EditorShell
       title={server.name}
       backHref="/mcp"
+      width="wide"
       dirty={dirty}
       actions={<UseInChatButton kind="mcp" value={server.name} />}
       deleteLabel={`Delete the MCP server "${server.name}"? This cannot be undone.`}
