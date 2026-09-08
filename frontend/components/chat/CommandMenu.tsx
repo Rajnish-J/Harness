@@ -90,6 +90,7 @@ export default function CommandMenu() {
     toggleToolGroup,
     resetTools,
     toggleMcp,
+    setAutoSelectTools,
     clearAttachments,
   } = useChatPreset();
 
@@ -98,6 +99,10 @@ export default function CommandMenu() {
   // Chat mode offers the model no tools at all, so every tool control below is
   // inert and says so rather than pretending the allowlist still means anything.
   const toolsOff = preset.mode === "chat";
+
+  // Tri-state on the wire, two-state here: null (follow the server) and true
+  // both read as on, and only an explicit false reads as off.
+  const autoSelect = preset.autoSelectTools !== false;
 
   const agents = catalog.agents.filter((agent) =>
     hit(needle, agent.name, agent.slug, agent.description),
@@ -375,6 +380,31 @@ export default function CommandMenu() {
                       off for everyone on the Tools page, and cannot be enabled
                       here.
                     </p>
+                  )}
+
+                  {/* Above the groups because it governs them: with this on,
+                      the switches below set the CEILING the harness picks from
+                      rather than the list the model is handed. */}
+                  {!toolsOff && (
+                    <label className="mx-1 mb-1 flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-accent">
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-xs">Auto-select tools</span>
+                        <span className="block text-[11px] text-muted-foreground">
+                          {autoSelect
+                            ? "The harness picks what each message needs, from the tools enabled here."
+                            : "Every tool enabled here is sent with every message."}
+                        </span>
+                      </span>
+                      <Switch
+                        checked={autoSelect}
+                        // null, not true: null follows the server, which only
+                        // spends a routing call once the toolset is big enough
+                        // to be worth one. Forcing true would pay for it on a
+                        // three-tool turn as well.
+                        onCheckedChange={(on) => setAutoSelectTools(on ? null : false)}
+                        aria-label="Auto-select tools"
+                      />
+                    </label>
                   )}
 
                   {groups.map(({ group, visible }) => (

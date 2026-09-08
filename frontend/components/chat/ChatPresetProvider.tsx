@@ -101,6 +101,7 @@ type ChatPresetValue = {
   resetTools: () => void;
   toggleMcp: (server: McpServerSummary) => void;
   setMode: (mode: ToolMode) => void;
+  setAutoSelectTools: (value: boolean | null) => void;
   setModel: (id: string | null) => void;
   clearAttachments: () => void;
   /** Applies ?agent= / ?skill= / ?mcp= from a "Use in chat" link. */
@@ -378,6 +379,10 @@ export default function ChatPresetProvider({
     setPreset((prev) => ({ ...prev, model }));
   }, []);
 
+  const setAutoSelectTools = useCallback((autoSelectTools: boolean | null) => {
+    setPreset((prev) => ({ ...prev, autoSelectTools }));
+  }, []);
+
   const resetTools = useCallback(() => {
     setPreset((prev) => ({ ...prev, toolNames: null }));
   }, []);
@@ -460,6 +465,7 @@ export default function ChatPresetProvider({
       toggleMcp,
       setMode,
       setModel,
+      setAutoSelectTools,
       clearAttachments,
       applyFromQuery,
       refetchModels,
@@ -477,6 +483,7 @@ export default function ChatPresetProvider({
       toggleMcp,
       setMode,
       setModel,
+      setAutoSelectTools,
       clearAttachments,
       applyFromQuery,
       refetchModels,

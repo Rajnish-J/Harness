@@ -37,6 +37,15 @@ export type ChatPreset = {
   mode: ToolMode;
   /** An explicit pick in the composer. null means the agent's, then the server's. */
   model: string | null;
+  /**
+   * Whether the harness picks this turn's tools with a cheap model first.
+   *
+   * null means "follow the server" — on, but only once the toolset is big
+   * enough to be worth a routing call. true and false force it, which is what
+   * makes the composer switch tri-state like toolNames above rather than a
+   * plain boolean that would have to guess the server's default.
+   */
+  autoSelectTools: boolean | null;
 };
 
 export const EMPTY_PRESET: ChatPreset = {
@@ -46,6 +55,7 @@ export const EMPTY_PRESET: ChatPreset = {
   mcpServers: [],
   mode: "agent",
   model: null,
+  autoSelectTools: null,
 };
 
 /**
@@ -105,6 +115,12 @@ export function presetToBody(
 
   if (preset.mcpServers.length > 0) {
     body.mcp_server_ids = preset.mcpServers.map((server) => server.id);
+  }
+
+  // Only when forced. null is the default and is omitted, so an untouched
+  // composer still posts what it posted before the router existed.
+  if (preset.autoSelectTools !== null) {
+    body.auto_select_tools = preset.autoSelectTools;
   }
 
   return body;
