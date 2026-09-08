@@ -67,6 +67,20 @@ function renderItem(item: TranscriptItem): string {
       return header + args;
     }
 
+    case "tool_selection": {
+      // Worth exporting: it is the reason the steps below it are the steps
+      // that ran, and a transcript missing it reads as an agent that
+      // inexplicably ignored half its toolset.
+      const summary = item.ran
+        ? `Selected ${item.selected.length} of ${item.poolSize} tools`
+        : `All ${item.poolSize} tools offered`;
+      const detail = item.note || item.reason;
+      const names = item.selected.length
+        ? `\n\n  ${item.selected.map((tool) => `\`${tool.name}\``).join(", ")}`
+        : "";
+      return `- _${summary}${detail ? ` — ${detail}` : ""}_${names}`;
+    }
+
     case "approval":
       return `- \`${item.name}\` — ${decision(item.decision)}`;
 

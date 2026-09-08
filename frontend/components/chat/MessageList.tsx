@@ -8,6 +8,7 @@ import AttachProposalCard from "./AttachProposalCard";
 import ApprovalCard from "./ApprovalCard";
 import MessageBubble from "./MessageBubble";
 import ProjectProposalCard from "./ProjectProposalCard";
+import ToolSelectionStep from "./ToolSelectionStep";
 import type { ChatVariant } from "./variant";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -120,6 +121,9 @@ export default function MessageList({
           {items.map((item) => {
             if (item.kind === "step") {
               return <AgentStepIndicator key={item.id} step={item} />;
+            }
+            if (item.kind === "tool_selection") {
+              return <ToolSelectionStep key={item.id} item={item} />;
             }
             if (item.kind === "approval") {
               return <ApprovalCard key={item.id} item={item} />;
