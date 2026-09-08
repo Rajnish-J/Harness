@@ -10,7 +10,10 @@ export type McpTransport = "stdio" | "sse" | "http";
 
 export const MCP_TRANSPORTS: McpTransport[] = ["stdio", "sse", "http"];
 
-/** What the list endpoint returns: no secrets, no argv. */
+/** What the list endpoint returns: no secrets, no argv.
+ *
+ * `credentialId` is safe to include — it is an id, not a secret, and the
+ * catalog and editor both need to know whether a server is already linked. */
 export type McpServerSummary = {
   id: string;
   name: string;
@@ -18,6 +21,7 @@ export type McpServerSummary = {
   transport: McpTransport;
   command: string | null;
   url: string | null;
+  credentialId: string | null;
   enabled: boolean;
   updatedAt: string;
 };
@@ -38,6 +42,7 @@ export type McpServerInput = {
   url?: string | null;
   env?: Record<string, string>;
   headers?: Record<string, string>;
+  credentialId?: string | null;
   enabled?: boolean;
 };
 

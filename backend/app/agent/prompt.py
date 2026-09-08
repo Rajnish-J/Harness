@@ -101,6 +101,32 @@ PROJECT_OPEN_BLOCK = """## Other conversations in this project
 A project can hold several chats, each with its own history. If the user refers to work you have no record of, or this conversation plainly lacks context that another one would have, call list_project_chats to see what else is here and read_project_chat to open one. Prefer that over asking the user to repeat themselves."""
 
 
+#: Appended when at least one MCP server is attached to the turn, naming the
+#: servers whose tools are in the request.
+#:
+#: This is the one block in this file that interpolates per-request text rather
+#: than being a two-state boolean, and it breaks the discipline the module
+#: docstring describes on purpose. The fact that has to reach the model is
+#: *which* servers are attached: without it, a model handed thirty tools named
+#: `mcp__github__*` has nothing saying they are already authenticated, and asks
+#: the user for a username and a token instead of calling one. That was the
+#: actual observed failure. The cost is bounded -- the block lands after the
+#: base prompt, so the longest shared prefix in the deployment is untouched, and
+#: the text is stable for a given set of attached servers.
+def _mcp_block(server_names: Sequence[str]) -> str:
+    listed = ", ".join(f"`{name}`" for name in server_names)
+    many = len(server_names) > 1
+    plural = "servers" if many else "server"
+    these = "these servers" if many else "this server"
+    s = "" if many else "s"
+    return f"""## Connected MCP {plural}: {listed}
+Tools named `mcp__<server>__<tool>` come from {these}. **They are already authenticated as the user.** The operator configured the credentials in this harness, and every call you make through them acts as the user's own account.
+
+So never ask the user for a username, account name, email, API key, token, or password for {these} -- you already have access, and asking makes it look as though you do not. If a call needs to know who the user is, call that server's own identity tool (`get_me`, `whoami`, `get_authenticated_user`, or whatever it is named here) and read the answer from the result.
+
+When a question is about a service {these} cover{s}, call its tool rather than guessing, answering from memory, or reaching for a generic web fetch. If a call fails, say what failed and what the error was -- do not fall back to asking the user for credentials."""
+
+
 def compose_system_prompt(
     *,
     base: str,
@@ -110,6 +136,7 @@ def compose_system_prompt(
     memories: Sequence[MemoryLike] = (),
     no_project_open: bool = False,
     project_open: bool = False,
+    mcp_servers: Sequence[str] = (),
     max_chars: int | None = None,
 ) -> str:
     """Build the system prompt for one turn.
@@ -123,6 +150,12 @@ def compose_system_prompt(
     headings. Nesting operator markdown under more markdown makes the boundary
     ambiguous; a tag does not.
 
+    `mcp_servers` names the MCP servers whose tools are in this turn's request.
+    It sits with the project block, among the environment facts, rather than
+    with the operator config below it. An empty sequence appends nothing, so
+    every caller with no MCP concept -- workflow nodes, the memory preview --
+    keeps composing to `base` byte for byte.
+
     Memories come last, after skills: skills are static, operator-authored
     config, while memories are dynamic and learned -- often from this very
     project's own conversations -- so they read as the most specific, most
@@ -134,6 +167,12 @@ def compose_system_prompt(
         sections.append(NO_PROJECT_OPEN_BLOCK)
     elif project_open:
         sections.append(PROJECT_OPEN_BLOCK)
+
+    # Sorted and deduped for the same reason skills are: attaching A-then-B and
+    # B-then-A must produce identical bytes.
+    attached = sorted({name.strip() for name in mcp_servers if name and name.strip()})
+    if attached:
+        sections.append(_mcp_block(attached))
 
     agent_prompt = (agent_prompt or "").strip()
     if agent_prompt:

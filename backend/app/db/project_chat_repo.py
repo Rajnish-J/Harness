@@ -361,18 +361,34 @@ async def load_transcript(
     return [dict(row) for row in reversed(rows)]
 
 
-async def clear_session(pool: AsyncConnectionPool, session_id: str) -> None:
-    """Forget one conversation. Used when the operator starts a new chat."""
+async def clear_session(pool: AsyncConnectionPool, session_id: str) -> bool:
+    """Forget one conversation, permanently. False when no such session exists.
+
+    Both tables in ONE transaction, for the same reason
+    `attach_session_to_project` moves them together: `list_sessions` reads
+    project_chat_sessions and `load_transcript` reads project_chat_messages, so
+    half-applying this leaves a transcript no listing can reach -- or worse, a
+    row in the sidebar that opens onto nothing.
+
+    Messages first, then the session: the reverse order would briefly leave
+    orphaned messages pointing at a session that is already gone.
+
+    The rowcount that decides the return value is the SESSION delete, not the
+    messages one. A conversation whose turn never finished has a session row and
+    no messages, and deleting it is a success, not a 404.
+    """
     async with pool.connection() as conn:
         async with conn.transaction():
-            await conn.execute(
-                "delete from project_chat_messages where session_id = %s",
-                (session_id,),
-            )
-            await conn.execute(
-                "delete from project_chat_sessions where session_id = %s",
-                (session_id,),
-            )
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "delete from project_chat_messages where session_id = %s",
+                    (session_id,),
+                )
+                await cur.execute(
+                    "delete from project_chat_sessions where session_id = %s",
+                    (session_id,),
+                )
+                return cur.rowcount > 0
 
 
 class SessionNotFoundError(LookupError):

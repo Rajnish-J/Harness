@@ -4,29 +4,58 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
 import UseInChatButton from "@/components/chat/UseInChatButton";
+import CredentialPicker from "@/components/projects/CredentialPicker";
 import EditorShell from "@/components/registry/EditorShell";
 import {
   Field,
   KeyValueField,
+  SegmentedField,
   StringListField,
   TextField,
   ToggleField,
 } from "@/components/registry/fields";
+import { Button } from "@/components/ui/button";
+import type { Credential } from "@/lib/credential-types";
 import { mcpApi } from "@/lib/registry-api";
-import {
-  MCP_TRANSPORTS,
-  type McpServer,
-  type McpTransport,
-} from "@/lib/registry-types";
+import { MCP_TRANSPORTS, type McpServer } from "@/lib/registry-types";
+import { testMcpServer, type McpTestResult } from "@/lib/workflow-api";
 
-export default function McpEditor({ server }: { server: McpServer }) {
+export default function McpEditor({
+  server,
+  credentials = [],
+}: {
+  server: McpServer;
+  credentials?: Credential[];
+}) {
   const router = useRouter();
   const [draft, setDraft] = useState(server);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<
+    (McpTestResult & { failedToRun?: string }) | null
+  >(null);
 
   const dirty = useMemo(
     () => JSON.stringify(draft) !== JSON.stringify(server),
     [draft, server],
   );
+
+  async function runTest() {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const result = await testMcpServer(server.id);
+      setTestResult(result);
+    } catch (error) {
+      setTestResult({
+        ok: false,
+        error: null,
+        toolCount: 0,
+        failedToRun: error instanceof Error ? error.message : "Could not reach the harness.",
+      });
+    } finally {
+      setTesting(false);
+    }
+  }
 
   function patch<K extends keyof McpServer>(key: K, value: McpServer[K]) {
     setDraft((prev) => ({ ...prev, [key]: value }));
@@ -38,6 +67,7 @@ export default function McpEditor({ server }: { server: McpServer }) {
     <EditorShell
       title={server.name}
       backHref="/mcp"
+      width="wide"
       dirty={dirty}
       actions={<UseInChatButton kind="mcp" value={server.name} />}
       deleteLabel={`Delete the MCP server "${server.name}"? This cannot be undone.`}
@@ -51,6 +81,7 @@ export default function McpEditor({ server }: { server: McpServer }) {
           url: draft.url,
           env: draft.env,
           headers: draft.headers,
+          credentialId: draft.credentialId,
           enabled: draft.enabled,
         });
       }}
@@ -72,27 +103,16 @@ export default function McpEditor({ server }: { server: McpServer }) {
         onChange={(v) => patch("description", v || null)}
       />
 
-      <Field
+      <SegmentedField
         label="Transport"
         hint="stdio launches a local process; sse and http dial a remote endpoint."
-      >
-        <div className="flex gap-2">
-          {MCP_TRANSPORTS.map((transport) => (
-            <button
-              key={transport}
-              type="button"
-              onClick={() => patch("transport", transport as McpTransport)}
-              className={`rounded-md border px-3 py-1.5 font-mono text-xs transition-colors ${
-                draft.transport === transport
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "hover:bg-accent"
-              }`}
-            >
-              {transport}
-            </button>
-          ))}
-        </div>
-      </Field>
+        options={MCP_TRANSPORTS.map((transport) => ({
+          value: transport,
+          label: transport,
+        }))}
+        value={draft.transport}
+        onChange={(v) => patch("transport", v)}
+      />
 
       {isStdio ? (
         <>
@@ -129,12 +149,29 @@ export default function McpEditor({ server }: { server: McpServer }) {
       />
 
       {!isStdio && (
-        <KeyValueField
-          label="Headers"
-          hint="Sent with every request to the endpoint."
-          entries={draft.headers}
-          onChange={(v) => patch("headers", v)}
-        />
+        <>
+          <div className="flex flex-col gap-1.5">
+            <CredentialPicker
+              credentials={credentials}
+              value={draft.credentialId}
+              onChange={(v) => patch("credentialId", v)}
+              label="Credential"
+              allowNone
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Sent as an Authorization bearer token, decrypted at connect time.
+              Preferred over typing a token into Headers below, which stores it
+              in plaintext.
+            </p>
+          </div>
+
+          <KeyValueField
+            label="Headers"
+            hint="Sent with every request to the endpoint. A linked credential above overrides an Authorization header set here."
+            entries={draft.headers}
+            onChange={(v) => patch("headers", v)}
+          />
+        </>
       )}
 
       <ToggleField
@@ -151,6 +188,44 @@ export default function McpEditor({ server }: { server: McpServer }) {
               "— no command set"
             : draft.url || "— no url set"}
         </p>
+      </Field>
+
+      <Field
+        label="Test connection"
+        hint={
+          dirty
+            ? "Save your changes first — this tests the stored server, not the draft above."
+            : "Connects right now, ignoring the usual retry backoff."
+        }
+      >
+        <div className="flex flex-col gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            className="w-fit"
+            disabled={testing || dirty}
+            onClick={runTest}
+          >
+            {testing ? "Testing…" : "Test connection"}
+          </Button>
+
+          {testResult && (
+            <p
+              className={`rounded-md border px-3 py-2 text-xs ${
+                testResult.ok
+                  ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300"
+                  : "border-red-500/30 bg-red-500/5 text-red-700 dark:text-red-300"
+              }`}
+            >
+              {testResult.failedToRun
+                ? `Could not run the test: ${testResult.failedToRun}`
+                : testResult.ok
+                  ? `Connected — ${testResult.toolCount} tool${testResult.toolCount === 1 ? "" : "s"} discovered.${testResult.error ? ` (${testResult.error})` : ""}`
+                  : testResult.error || "Could not connect."}
+            </p>
+          )}
+        </div>
       </Field>
     </EditorShell>
   );

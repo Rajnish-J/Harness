@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import MemoryDialog from "@/components/memory/MemoryDialog";
 import EmptyState from "@/components/registry/EmptyState";
+import { SkeletonCardGrid } from "@/components/registry/Skeletons";
 import ResourceCard from "@/components/registry/ResourceCard";
 import SectionHeader from "@/components/registry/SectionHeader";
 import { Button } from "@/components/ui/button";
@@ -144,9 +145,7 @@ export default function MemoryBrowser() {
       </div>
 
       {memories === null ? (
-        <p className="py-16 text-center text-sm text-muted-foreground">
-          Loading memory…
-        </p>
+        <SkeletonCardGrid />
       ) : error ? (
         <EmptyState
           icon={Brain}

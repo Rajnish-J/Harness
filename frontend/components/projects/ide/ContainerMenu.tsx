@@ -10,6 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useContainerState } from "@/hooks/use-container-state";
@@ -117,6 +118,14 @@ export default function ContainerMenu({
         description: (err as Error).message,
       });
     }
+  }
+
+  // Before the first status lands, `running` defaults to false and
+  // `dockerAvailable` to true — so the trigger confidently reported "stopped"
+  // for a container that was running. A placeholder says nothing instead of
+  // saying something wrong.
+  if (state === null) {
+    return <Skeleton className="h-[26px] w-24" />;
   }
 
   if (!dockerAvailable) {

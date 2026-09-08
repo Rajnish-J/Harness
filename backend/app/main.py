@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import logging
 from contextlib import asynccontextmanager
 
@@ -26,6 +28,27 @@ settings = get_settings()
 settings.workspace_root.mkdir(parents=True, exist_ok=True)
 
 
+async def _sweep_mcp_idle(manager, idle_timeout: float) -> None:
+    """Close MCP connections nobody has used lately, forever.
+
+    McpManager tracks `last_used` purely for this, and MCP_IDLE_TIMEOUT was a
+    setting with no effect until this task existed: sweep_idle was written and
+    never called, so a stdio server's child process lived until the process did.
+
+    One bad sweep must not kill the task -- a manager that raises once would
+    otherwise silently disable idle cleanup for the rest of the process's life.
+    The interval is capped at a minute so a long idle timeout does not mean a
+    correspondingly coarse sweep.
+    """
+    interval = max(1.0, min(60.0, idle_timeout))
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await manager.sweep_idle()
+        except Exception:  # noqa: BLE001 - one failure must not end the loop
+            logger.exception("MCP idle sweep failed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Open the shared pool and the LangGraph checkpointer, if configured.
@@ -41,6 +64,9 @@ async def lifespan(app: FastAPI):
     from app.mcp.manager import McpManager
 
     app.state.mcp = McpManager(settings)
+    sweeper = asyncio.create_task(
+        _sweep_mcp_idle(app.state.mcp, settings.mcp_idle_timeout)
+    )
 
     if settings.database_url:
         # Imported lazily so the app still boots if psycopg is unavailable.
@@ -57,6 +83,11 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        # The sweeper goes before aclose: both take the manager's lock, and a
+        # sweep landing mid-shutdown would race the close for it.
+        sweeper.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await sweeper
         # MCP first: its child processes are reached through this manager, and
         # closing them after the pool would leave them running a moment longer
         # for no reason.

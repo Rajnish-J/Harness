@@ -27,6 +27,7 @@ import ShareMenu from "@/components/projects/ide/ShareMenu";
 import VersionHistoryMenu from "@/components/projects/ide/VersionHistoryMenu";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { Credential } from "@/lib/credential-types";
 import { flags } from "@/lib/flags";
 import {
@@ -48,8 +49,10 @@ import type { TranscriptItem } from "@/lib/types";
 const CodeEditor = dynamic(() => import("@/components/projects/CodeEditor"), {
   ssr: false,
   loading: () => (
-    <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-      Loading editor…
+    <div className="flex h-full flex-col gap-2 p-4">
+      {[10, 7, 9, 5, 8, 6, 9, 4].map((w, i) => (
+        <Skeleton key={i} className="h-3" style={{ width: `${w * 10}%` }} />
+      ))}
     </div>
   ),
 });
@@ -243,27 +246,37 @@ export default function ProjectIde({
           when they were fixed -- becoming draggable should not move anything
           until the user actually drags.
 
-          Keyed on which panes are open: the group tracks children by position,
-          so toggling the tree off and on again would otherwise hand the
-          editor's stored size to the tree. */}
-      <ResizablePanelGroup
-        key={`${chatOpen}-${treeOpen}`}
-        orientation="horizontal"
-        className="flex min-h-0 flex-1"
-      >
-        {chatOpen && (
-          <>
-            <ResizablePanel
-              defaultSize={416}
-              minSize={280}
-              maxSize={720}
-              className="flex flex-col"
-            >
-              <ChatPresetProvider>
-                <ChatSessionProvider
-                  scope={scopeForProject(project.id)}
-                  projectId={project.id}
-                  initialItems={initialMessages}
+          Every panel carries an explicit `id`. Without one the library falls
+          back to a positional useId, which is why this group used to be keyed
+          on which panes were open. With stable ids it caches a layout per
+          panel-SET (mutableState.layouts is keyed on the joined id list), so
+          toggling a pane restores the sizes that set had last time -- and the
+          key that used to force a remount was throwing that cache away, since
+          it lives in a ref inside the group.
+
+          The providers sit ABOVE the group: `{chatOpen && ...}` unmounts the
+          panel, and with it went ChatSessionProvider and every message in its
+          state. Out here the conversation survives a hide, including a turn
+          still streaming, which keeps running and lands in the transcript the
+          user comes back to. */}
+      <ChatPresetProvider>
+        <ChatSessionProvider
+          scope={scopeForProject(project.id)}
+          projectId={project.id}
+          initialItems={initialMessages}
+        >
+          <ResizablePanelGroup
+            orientation="horizontal"
+            className="flex min-h-0 flex-1"
+          >
+            {chatOpen && (
+              <>
+                <ResizablePanel
+                  id="chat"
+                  defaultSize={416}
+                  minSize={280}
+                  maxSize={720}
+                  className="flex flex-col"
                 >
                   {/* Inside the provider, deliberately -- see the switcher's
                       own comment. In the toolbar above it would bind to the
@@ -272,32 +285,37 @@ export default function ProjectIde({
                     <ProjectChatSwitcher projectId={project.id} />
                   </div>
                   <ChatWindow variant="rail" />
-                </ChatSessionProvider>
-              </ChatPresetProvider>
-            </ResizablePanel>
-            <ResizableHandle withHandle />
-          </>
-        )}
+                </ResizablePanel>
+                <ResizableHandle id="chat-handle" withHandle />
+              </>
+            )}
 
-        {treeOpen && (
-          <>
-            <ResizablePanel defaultSize={256} minSize={160} maxSize={480}>
-              <FileTree
-                projectId={project.id}
-                selected={selected}
-                onSelect={setSelected}
-              />
-            </ResizablePanel>
-            <ResizableHandle withHandle />
-          </>
-        )}
+            {treeOpen && (
+              <>
+                <ResizablePanel
+                  id="tree"
+                  defaultSize={256}
+                  minSize={160}
+                  maxSize={480}
+                >
+                  <FileTree
+                    projectId={project.id}
+                    selected={selected}
+                    onSelect={setSelected}
+                  />
+                </ResizablePanel>
+                <ResizableHandle id="tree-handle" withHandle />
+              </>
+            )}
 
-        <ResizablePanel minSize={320}>
-          {/* Keyed by path: a different file gets a fresh editor rather than
-              needing an effect to reset the previous file's draft. */}
-          <CodeEditor key={selected} projectId={project.id} path={selected} />
-        </ResizablePanel>
-      </ResizablePanelGroup>
+            <ResizablePanel id="editor" minSize={320}>
+              {/* Keyed by path: a different file gets a fresh editor rather
+                  than needing an effect to reset the previous file's draft. */}
+              <CodeEditor key={selected} projectId={project.id} path={selected} />
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        </ChatSessionProvider>
+      </ChatPresetProvider>
     </div>
   );
 }

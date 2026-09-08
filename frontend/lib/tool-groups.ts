@@ -9,8 +9,11 @@
  */
 
 import {
+  Braces,
+  Compass,
   FolderOpen,
   GitBranch,
+  Globe,
   Plug,
   ShieldCheck,
   Terminal,
@@ -34,6 +37,9 @@ const PRESENTATION: Record<string, { icon: LucideIcon; tone: CardTone }> = {
   Validation: { icon: ShieldCheck, tone: "green" },
   Execution: { icon: Terminal, tone: "amber" },
   "Version Control": { icon: GitBranch, tone: "sky" },
+  "Code Intelligence": { icon: Braces, tone: "purple" },
+  "Project Insight": { icon: Compass, tone: "green" },
+  Web: { icon: Globe, tone: "neutral" },
 };
 
 const MCP_PRESENTATION = { icon: Plug, tone: "purple" } as const;

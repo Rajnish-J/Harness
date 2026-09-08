@@ -14,11 +14,11 @@ from app.agent.loop import SYSTEM_PROMPT, run_agent_loop, resume_agent_loop
 from app.agent.prompt import compose_system_prompt
 from app.agent.session import ProviderMismatchError, Session, session_store
 from app.agent.tools.base import Tool
-from app.agent.tools.attach_tools import (
+from app.agent.tools.project.attach_tools import (
     LIST_PROJECTS_TOOL,
     PROPOSE_ATTACH_PROJECT_TOOL,
 )
-from app.agent.tools.project_tools import PROPOSE_CREATE_PROJECT_TOOL
+from app.agent.tools.project.project_tools import PROPOSE_CREATE_PROJECT_TOOL
 from app.agent.tools.toolsets import UnknownToolError, merge_toolsets
 from app.api.sse import SSE_HEADERS
 from app.agent.exec_context import ExecutionContext
@@ -28,6 +28,7 @@ from app.db import memory_repo, project_chat_repo, project_repo
 from app.projects.execution import resolve_executor
 from app.projects.workspaces import InvalidProjectIdError, settings_for_project
 from app.mcp import resolve_mcp_tools
+from app.mcp.tools import server_names
 from app.models.chat import ApprovalRequest, ChatRequest, ResetRequest, TurnPreset
 from app.models.events import AgentEvent, DoneEvent, ErrorEvent, sse_comment
 
@@ -200,30 +201,25 @@ async def _prepare_turn(
         except Exception:  # noqa: BLE001 - a chat must not die because memory did
             logger.exception("could not load memory for project %s", project_id)
 
-    system = compose_system_prompt(
-        base=SYSTEM_PROMPT,
-        agent_name=payload.agent_name,
-        agent_prompt=payload.system_prompt,
-        skills=payload.skills,
-        memories=memories,
-        no_project_open=propose_project_tool,
-        project_open=project_id is not None,
-        max_chars=turn_settings.max_system_prompt_chars,
-    )
-
     tools: list[Tool] | None
     if payload.mode == "chat":
         # An empty list, not None: None means "the full registry". Nothing is
         # advertised and nothing can be dispatched.
         tools = []
         notices: list[tuple[str, str]] = []
+        attached_mcp: list[str] = []
     else:
         # MCP is resolved non-fatally: an unreachable server degrades the turn
         # to the built-in tools rather than failing it.
         mcp_tools, mcp_notices = await resolve_mcp_tools(
             request.app, turn_settings, payload.mcp_server_ids
         )
-        notices = [(notice, "mcp_unavailable") for notice in mcp_notices]
+        notices = [(notice.message, "mcp_unavailable") for notice in mcp_notices]
+        # Named in the system prompt below, so the model is told these tools are
+        # already authenticated. Derived from what was actually discovered, not
+        # from payload.mcp_server_ids: a server that failed to connect
+        # contributes no tools and must not be promised to the model.
+        attached_mcp = server_names(mcp_tools)
         try:
             tools = merge_toolsets(payload.tool_names, mcp_tools)
         except UnknownToolError as exc:
@@ -241,6 +237,18 @@ async def _prepare_turn(
                 LIST_PROJECTS_TOOL,
                 PROPOSE_ATTACH_PROJECT_TOOL,
             ]
+
+    system = compose_system_prompt(
+        base=SYSTEM_PROMPT,
+        agent_name=payload.agent_name,
+        agent_prompt=payload.system_prompt,
+        skills=payload.skills,
+        memories=memories,
+        no_project_open=propose_project_tool,
+        project_open=project_id is not None,
+        mcp_servers=attached_mcp,
+        max_chars=turn_settings.max_system_prompt_chars,
+    )
 
     return (
         Turn(
@@ -603,6 +611,36 @@ async def pin_chat_session(
     # No session_store.reset() here, unlike attach: a pin changes nothing the
     # in-RAM session knows about.
     return {"ok": True, "session_id": session_id, "pinned": payload.pinned}
+
+
+@router.delete("/chat/sessions/{session_id}")
+async def delete_chat_session(session_id: str, request: Request) -> dict[str, object]:
+    """Forget one conversation, permanently.
+
+    503 on a missing pool and 404 on an unknown id, exactly like the pin route
+    above: a delete that reported success without one would leave a row the
+    sidebar has already dropped and the next reload brings straight back.
+    """
+    pool = getattr(request.app.state, "pool", None)
+    if pool is None:
+        raise HTTPException(
+            status_code=503,
+            detail="DATABASE_URL is not configured, so chats are not persisted.",
+        )
+
+    if not await project_chat_repo.clear_session(pool, session_id):
+        raise HTTPException(
+            status_code=404,
+            detail=f"No stored conversation for session {session_id!r}.",
+        )
+
+    # Mandatory here, unlike the pin route. The in-RAM session still holds the
+    # history the model rehydrates from, so skipping this would leave the agent
+    # remembering a conversation Postgres no longer has -- and the next turn on
+    # that id would write it all back.
+    session_store.reset(session_id)
+
+    return {"ok": True, "session_id": session_id}
 
 
 @router.get("/models")

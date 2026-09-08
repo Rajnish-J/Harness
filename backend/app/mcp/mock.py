@@ -15,7 +15,7 @@ from typing import Any
 
 from app.agent.tools.base import Tool
 from app.db.registry_repo import McpServerRow
-from app.mcp.tools import dedupe, namespaced
+from app.mcp.tools import dedupe, mcp_group, namespaced
 
 _STDIO_TOOLS = [
     ("list_directory", "List a directory through this server.", ["path"]),
@@ -58,6 +58,12 @@ def _make(server: McpServerRow, name: str, description: str, params: list[str]) 
         description=f"[{server.name}] {description} (mock)",
         input_schema=schema,
         run=run,
+        # Set for the same reason the real make_tool sets it: the group is how
+        # the tool panel sections a server's tools, and how the system prompt
+        # recovers which servers are attached (server_names in app/mcp/tools.py).
+        # Omitting it here made mock mode diverge from the real path in two
+        # user-visible ways at once.
+        group=mcp_group(server.name),
     )
 
 

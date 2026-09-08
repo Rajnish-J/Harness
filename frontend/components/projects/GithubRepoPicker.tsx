@@ -1,12 +1,13 @@
 "use client";
 
-import { GitBranch, Loader2, Lock, RefreshCw } from "lucide-react";
+import { GitBranch, Lock, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "@/components/ui/toast";
+import { Skeleton } from "@/components/ui/skeleton";
 import CredentialPicker from "@/components/projects/CredentialPicker";
 import type { Credential } from "@/lib/credential-types";
 import { projectsApi } from "@/lib/project-api";
@@ -107,9 +108,13 @@ export default function GithubRepoPicker({
       )}
 
       {status === "loading" && (
-        <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
-          <Loader2 className="size-4 animate-spin" />
-          Asking GitHub…
+        // The list that is coming, not a spinner: the wait is a network round
+        // trip to GitHub and the repo rows are a predictable shape.
+        <div className="flex flex-col gap-2 py-2">
+          <Skeleton className="h-9 w-full" />
+          {[0, 1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-12 w-full" />
+          ))}
         </div>
       )}
 

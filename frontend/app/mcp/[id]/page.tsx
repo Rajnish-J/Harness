@@ -1,7 +1,9 @@
 import { notFound } from "next/navigation";
 
 import McpEditor from "@/components/mcp/McpEditor";
+import type { Credential } from "@/lib/credential-types";
 import type { McpServer } from "@/lib/registry-types";
+import { listCredentials } from "@/lib/server/credential-service";
 import { getMcpServer } from "@/lib/server/registry-service";
 
 export const dynamic = "force-dynamic";
@@ -23,5 +25,16 @@ export default async function McpServerPage({
     updatedAt: row.updatedAt.toISOString(),
   };
 
-  return <McpEditor server={server} />;
+  // Offered as the link target for a remote server's Authorization header.
+  // A failure here must not take down the editor: the credential link is one
+  // optional field, and the rest of the page is still worth rendering. There is
+  // no mock branch on listCredentials, so this also covers mock mode.
+  let credentials: Credential[] = [];
+  try {
+    credentials = await listCredentials();
+  } catch {
+    credentials = [];
+  }
+
+  return <McpEditor server={server} credentials={credentials} />;
 }

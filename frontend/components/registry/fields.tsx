@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export function Field({
   label,
@@ -161,6 +162,7 @@ export function CheckboxList({
   selected,
   onChange,
   emptyMessage,
+  loading = false,
 }: {
   label: string;
   hint?: string;
@@ -168,6 +170,10 @@ export function CheckboxList({
   selected: string[];
   onChange: (next: string[]) => void;
   emptyMessage: string;
+  /** Options are still being fetched. Distinct from having none: without it an
+   *  in-flight list renders `emptyMessage`, which tells the reader there is
+   *  nothing to pick moments before the choices appear. */
+  loading?: boolean;
 }) {
   function toggle(value: string) {
     onChange(
@@ -179,7 +185,12 @@ export function CheckboxList({
 
   return (
     <Field label={label} hint={hint}>
-      {options.length === 0 ? (
+      {loading ? (
+        <div className="flex flex-col gap-1 rounded-md border p-2">
+          <Skeleton className="h-6 w-full" />
+          <Skeleton className="h-6 w-full" />
+        </div>
+      ) : options.length === 0 ? (
         <p className="rounded-md border border-dashed px-3 py-4 text-center text-[11px] text-muted-foreground">
           {emptyMessage}
         </p>

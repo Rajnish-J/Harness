@@ -55,11 +55,13 @@ def merge_toolsets(names: list[str] | None, mcp_tools: list[Tool]) -> list[Tool]
     builtins = resolve_toolset(builtin_names) if builtin_names else []
     selected_mcp = [mcp_by_name[name] for name in sorted(wanted_mcp) if name in mcp_by_name]
 
-    # An allowlist naming only MCP tools whose servers are all down would leave
-    # the model with nothing to call. Fall back to the built-ins so the turn can
-    # still make progress; the caller has already emitted an mcp_unavailable
-    # notice explaining why.
-    if not builtins and not selected_mcp:
-        return ALL_TOOLS
-
+    # No fallback when everything named is unavailable. Returning ALL_TOOLS here
+    # -- which this once did, "so the turn can make progress" -- meant a user who
+    # narrowed to three MCP tools got the entire built-in registry, shell and
+    # file-write tools included, because a network call failed. Widening what the
+    # model may do is not an acceptable response to a server being down. The
+    # empty list is safe: the loop passes it through (`tools is None` is what
+    # means "the full registry"), every client omits an empty tools array rather
+    # than sending a 400, and the caller has already emitted an mcp_unavailable
+    # notice explaining why the turn has nothing to call.
     return [*builtins, *selected_mcp]

@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight, File, FileLock2, Folder } from "lucide-react
 import { useEffect, useState } from "react";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import { projectFilesApi } from "@/lib/project-api";
 import type { TreeLevel } from "@/lib/project-types";
@@ -83,13 +84,16 @@ export default function FileTree({
   function renderLevel(dirPath: string, depth: number): React.ReactNode {
     const level = levels[dirPath];
     if (!level) {
+      // Indented to match the rows that will replace them, so expanding a
+      // directory does not shift everything sideways when its contents land.
       return (
-        <p
-          className="px-2 py-1 text-[11px] text-muted-foreground"
+        <div
+          className="flex flex-col gap-1 py-1 pr-2"
           style={{ paddingLeft: depth * 12 + 8 }}
         >
-          loading…
-        </p>
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-4 w-24" />
+        </div>
       );
     }
 

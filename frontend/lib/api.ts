@@ -242,6 +242,26 @@ export async function setChatSessionPinned(
   }
 }
 
+/**
+ * Forget one conversation, permanently. There is no undo.
+ *
+ * Throws for the same reason the two writes above do: the caller drops the row
+ * from the sidebar on success, and a delete that failed quietly would put it
+ * back on the next refetch with no explanation.
+ */
+export async function deleteChatSession(sessionId: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/chat/sessions/${encodeURIComponent(sessionId)}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(
+      detail || `Could not delete the conversation (${res.status}).`,
+    );
+  }
+}
+
 export async function attachChatSession(
   sessionId: string,
   projectId: string | null,

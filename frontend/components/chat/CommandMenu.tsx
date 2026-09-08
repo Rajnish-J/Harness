@@ -238,7 +238,13 @@ export default function CommandMenu() {
                   <Icon className="size-3.5 shrink-0 opacity-70" />
                   <span className="min-w-0 flex-1 truncate">{entry.label}</span>
                   <span className="font-mono text-[10px] text-muted-foreground">
-                    {catalog.loading ? "…" : counts[entry.id]}
+                    {/* Tools are also unsettled while MCP discovery runs: the
+                        count would tick down and back up as mcp__* tools are
+                        swapped out and in. */}
+                    {catalog.loading ||
+                    (entry.id === "tools" && catalog.mcpToolsLoading)
+                      ? "…"
+                      : counts[entry.id]}
                   </span>
                 </button>
               );
@@ -373,6 +379,13 @@ export default function CommandMenu() {
                     href="/mcp"
                   />
 
+                  {toolsOff && preset.mcpServers.length > 0 && (
+                    <p className="px-2 py-1 text-[11px] text-muted-foreground">
+                      Chat mode does not use tools — attached servers are
+                      ignored until you switch to Agent or Manual.
+                    </p>
+                  )}
+
                   {servers.map((server) => {
                     const on = preset.mcpServers.some((s) => s.id === server.id);
                     // Tool counts only exist once a server is attached, since
@@ -380,6 +393,28 @@ export default function CommandMenu() {
                     const discovered = allGroups.find(
                       (group) => serverNameFromGroup(group.name) === server.name,
                     );
+                    // Matched by id, not by looking for the server's quoted name
+                    // in the message: names that were substrings of one another
+                    // cross-matched, and some notices name no server at all. The
+                    // name fallback covers a backend older than server_notices.
+                    const failure =
+                      catalog.mcpServerNotices.find(
+                        (notice) => notice.server_id === server.id,
+                      )?.message ??
+                      (catalog.mcpServerNotices.length === 0
+                        ? catalog.mcpNotices.find((notice) =>
+                            notice.includes(`'${server.name}'`),
+                          )
+                        : undefined);
+                    const badge = !on
+                      ? null
+                      : discovered
+                        ? `${discovered.enabled}/${discovered.tools.length} tools`
+                        : failure
+                          ? "failed"
+                          : catalog.mcpToolsLoading
+                            ? "connecting…"
+                            : "failed";
                     return (
                       <Row
                         key={server.id}
@@ -387,13 +422,9 @@ export default function CommandMenu() {
                         title={server.name}
                         meta={server.transport}
                         description={server.description}
-                        badge={
-                          on
-                            ? discovered
-                              ? `${discovered.enabled}/${discovered.tools.length} tools`
-                              : "connecting…"
-                            : null
-                        }
+                        badge={badge}
+                        badgeTone={badge === "failed" ? "error" : "neutral"}
+                        badgeTitle={failure}
                         selected={on}
                         onSelect={() => toggleMcp(server)}
                       />
@@ -421,7 +452,12 @@ export default function CommandMenu() {
                   )}
                   {show("tools") && groups.length === 0 && (
                     <p className="px-2 py-1.5 text-[11px] text-muted-foreground">
-                      No tools reported. Check that the Python harness is running.
+                      {/* Discovery empties the tool list while it runs, and
+                          telling someone to go check a healthy backend is worse
+                          than saying nothing. */}
+                      {catalog.mcpToolsLoading
+                        ? "Discovering tools…"
+                        : "No tools reported. Check that the Python harness is running."}
                     </p>
                   )}
                   {show("mcp") && servers.length === 0 && (
@@ -498,6 +534,8 @@ function Row({
   meta,
   description,
   badge,
+  badgeTitle,
+  badgeTone = "neutral",
   disabled,
   selected,
   onSelect,
@@ -507,6 +545,9 @@ function Row({
   meta?: string | null;
   description?: string | null;
   badge?: string | null;
+  /** Shown as a native tooltip — the full failure reason doesn't fit inline. */
+  badgeTitle?: string;
+  badgeTone?: "neutral" | "error";
   disabled?: boolean;
   selected: boolean;
   onSelect: () => void;
@@ -530,7 +571,15 @@ function Row({
             </span>
           )}
           {badge && (
-            <span className="shrink-0 rounded bg-muted px-1 text-[10px] text-muted-foreground">
+            <span
+              title={badgeTitle}
+              className={cn(
+                "shrink-0 rounded px-1 text-[10px]",
+                badgeTone === "error"
+                  ? "bg-red-500/15 text-red-600 dark:text-red-400"
+                  : "bg-muted text-muted-foreground",
+              )}
+            >
               {badge}
             </span>
           )}

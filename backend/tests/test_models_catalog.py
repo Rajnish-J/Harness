@@ -34,6 +34,7 @@ class FakeRow:
     provider: str
     enabled: bool = True
     extra_models: list[str] = field(default_factory=list)
+    validated_models: list[str] = field(default_factory=list)
     last_validated_at: datetime | None = None
     last_validation_error: str | None = None
 
@@ -159,11 +160,11 @@ def test_extra_models_are_synthesized_for_their_provider():
 def test_an_extra_model_that_duplicates_the_catalog_is_not_listed_twice():
     settings = settings_with()
     credentials = resolve_credentials(
-        settings, [FakeRow("groq", extra_models=["llama-3.3-70b-versatile"])]
+        settings, [FakeRow("groq", extra_models=["openai/gpt-oss-120b"])]
     )
 
     ids = [row.id for row in models_for(settings, credentials)]
-    assert ids.count("llama-3.3-70b-versatile") == 1
+    assert ids.count("openai/gpt-oss-120b") == 1
 
 
 def test_exactly_one_default():
@@ -172,6 +173,48 @@ def test_exactly_one_default():
 
     defaults = [row.id for row in models_for(settings, credentials) if row.default]
     assert defaults == ["llama-3.1-8b-instant"]
+
+
+def test_a_validated_credential_drops_a_retired_catalog_id():
+    """A non-empty validated_models list is the provider's own retirement notice."""
+    settings = settings_with()
+    credentials = resolve_credentials(
+        settings,
+        [FakeRow("groq", validated_models=["openai/gpt-oss-120b"])],
+    )
+
+    ids = [row.id for row in models_for(settings, credentials) if row.provider == "groq"]
+    assert ids == ["openai/gpt-oss-120b"]
+
+
+def test_an_unvalidated_credential_drops_nothing():
+    """Never having tested the key is not evidence any id is retired."""
+    settings = settings_with()
+    credentials = resolve_credentials(settings, [FakeRow("groq")])
+
+    ids = {row.id for row in models_for(settings, credentials) if row.provider == "groq"}
+    assert ids == {m.id for m in MODEL_CATALOG if m.provider == "groq"}
+
+
+def test_default_model_skips_a_retired_id_even_when_first_in_catalog_order():
+    settings = settings_with(llm_provider="groq")
+    credentials = resolve_credentials(
+        settings,
+        [FakeRow("groq", validated_models=["groq/compound"])],
+    )
+
+    assert default_model(settings, credentials) == "groq/compound"
+
+
+def test_default_model_skips_a_retired_configured_model():
+    """.env naming a retired model must not win just because it is configured."""
+    settings = settings_with(llm_provider="groq", groq_model="openai/gpt-oss-120b")
+    credentials = resolve_credentials(
+        settings,
+        [FakeRow("groq", validated_models=["groq/compound"])],
+    )
+
+    assert default_model(settings, credentials) == "groq/compound"
 
 
 def test_the_default_falls_through_to_a_usable_provider():

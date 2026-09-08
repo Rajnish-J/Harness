@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     test_command: str | None = None
     lint_command: str | None = None
     build_command: str | None = None
+    # Same contract, for run_typecheck/run_format. Left unset the tool says so
+    # plainly rather than guessing mypy vs pyright vs tsc, or black vs prettier.
+    typecheck_command: str | None = None
+    # Rewrites files in place, which is another reason not to guess one.
+    format_command: str | None = None
 
     # Workflow subsystem. `database_url` is deliberately optional: chat must
     # keep working with no database, and /api/workflows/* returns 503 instead.
@@ -97,6 +102,23 @@ class Settings(BaseSettings):
     # not respawned on every single message.
     mcp_retry_cooldown: float = 30.0
 
+    # ---- Web access --------------------------------------------------------
+    # The agent's only route off this machine. Off by default: gaining network
+    # egress should be a deliberate operator decision, not something that
+    # arrives with a git pull. The web tools stay registered either way, so
+    # flipping this never changes the tool list and never invalidates a cached
+    # prompt prefix -- a disabled tool refuses when called, naming this flag.
+    web_tools_enabled: bool = False
+    web_timeout_seconds: float = 15.0
+    web_max_response_bytes: int = 2_000_000
+    # When non-empty, the ONLY reachable hosts (subdomains included). Private,
+    # loopback, link-local and reserved addresses are refused regardless.
+    web_allowed_domains: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    # There is no search without a provider: scraping a search engine's HTML is
+    # brittle and against its terms, so web_search refuses unless one is set.
+    web_search_provider: Literal["none", "brave", "tavily"] = "none"
+    web_search_api_key: str | None = None
+
     # NoDecode is required: without it pydantic-settings JSON-decodes complex
     # types straight from the env source, so `CORS_ORIGINS=http://localhost:3000`
     # fails as invalid JSON before any validator can split it.
@@ -110,6 +132,14 @@ class Settings(BaseSettings):
         # Env vars arrive as a single comma-separated string.
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
+
+    @field_validator("web_allowed_domains", mode="before")
+    @classmethod
+    def _split_domains(cls, value: object) -> object:
+        # Same comma-separated env shape as cors_origins above.
+        if isinstance(value, str):
+            return [d.strip().lower() for d in value.split(",") if d.strip()]
         return value
 
     @field_validator("workspace_root", mode="after")

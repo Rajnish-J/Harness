@@ -7,6 +7,10 @@ import { useEffect, useMemo, useState } from "react";
 import MemoryFlowPanel from "@/components/memory/MemoryFlowPanel";
 import MemoryGroupList, { type MemoryGroup } from "@/components/memory/MemoryGroupList";
 import EmptyState from "@/components/registry/EmptyState";
+import {
+  SkeletonCardGrid,
+  SkeletonRows,
+} from "@/components/registry/Skeletons";
 import SectionHeader from "@/components/registry/SectionHeader";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -180,9 +184,7 @@ export default function MemoryInsights() {
       <MemoryFlowPanel />
 
       {overview === null ? (
-        <p className="py-16 text-center text-sm text-muted-foreground">
-          Loading memory…
-        </p>
+        <SkeletonCardGrid count={3} />
       ) : error ? (
         <EmptyState
           icon={Brain}
@@ -278,9 +280,11 @@ function PromptPreview({
       </div>
 
       {preview === null ? (
-        <p className="py-8 text-center text-sm text-muted-foreground">
-          Loading preview…
-        </p>
+        // Refetched on every scope change, not just on mount, so this is the
+        // placeholder someone sees most often on this page.
+        <div className="rounded-lg border bg-muted/40 p-3">
+          <SkeletonRows count={5} height="h-3" className="gap-2" />
+        </div>
       ) : preview.block === "" ? (
         <EmptyState
           icon={Brain}

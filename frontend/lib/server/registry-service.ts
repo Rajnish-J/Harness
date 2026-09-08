@@ -52,6 +52,7 @@ export async function listMcpServers() {
         transport: row.transport,
         command: row.command,
         url: row.url,
+        credentialId: row.credentialId,
         enabled: row.enabled,
         updatedAt: row.updatedAt,
       };
@@ -66,6 +67,7 @@ export async function listMcpServers() {
       transport: mcpServers.transport,
       command: mcpServers.command,
       url: mcpServers.url,
+      credentialId: mcpServers.credentialId,
       enabled: mcpServers.enabled,
       updatedAt: mcpServers.updatedAt,
     })
@@ -105,6 +107,7 @@ export async function createMcpServer(input: McpServerInput) {
       url: input.url ?? null,
       env: input.env ?? {},
       headers: input.headers ?? {},
+      credentialId: input.credentialId ?? null,
       enabled: input.enabled ?? true,
       createdAt: now,
       updatedAt: now,
@@ -124,6 +127,7 @@ export async function createMcpServer(input: McpServerInput) {
       url: input.url ?? null,
       env: input.env ?? {},
       headers: input.headers ?? {},
+      credentialId: input.credentialId ?? null,
       enabled: input.enabled ?? true,
     })
     .returning();
@@ -157,6 +161,7 @@ export async function updateMcpServer(id: string, patch: Partial<McpServerInput>
       ...(patch.url !== undefined ? { url: patch.url } : {}),
       ...(patch.env !== undefined ? { env: patch.env } : {}),
       ...(patch.headers !== undefined ? { headers: patch.headers } : {}),
+      ...(patch.credentialId !== undefined ? { credentialId: patch.credentialId } : {}),
       ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
       updatedAt: new Date(),
     })

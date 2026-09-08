@@ -16,7 +16,13 @@ from app.agent.tools.registry import ALL_TOOLS
 from app.agent.tools.toolsets import merge_toolsets
 from app.db.registry_repo import McpServerRow
 from app.mcp.mock import mock_tools_for
-from app.mcp.tools import dedupe, make_tool, namespaced
+from app.mcp.tools import (
+    LOOP_INJECTED_KWARGS,
+    dedupe,
+    make_tool,
+    namespaced,
+    server_names,
+)
 
 
 @dataclass
@@ -47,16 +53,24 @@ class FakeCaller:
         return self.result
 
 
-def server_row(name: str = "github") -> McpServerRow:
+def server_row(
+    name: str = "github",
+    *,
+    transport: str = "stdio",
+    url: str | None = None,
+    headers: dict[str, str] | None = None,
+    credential_id: Any = None,
+) -> McpServerRow:
     return McpServerRow(
         id=uuid4(),
         name=name,
-        transport="stdio",
-        command="npx",
+        transport=transport,
+        command="npx" if transport == "stdio" else None,
         args=[],
-        url=None,
+        url=url,
         env={},
-        headers={},
+        headers=headers or {},
+        credential_id=credential_id,
         enabled=True,
         updated_at=datetime.now(UTC),
     )
@@ -85,6 +99,42 @@ async def test_run_strips_the_kwargs_the_loop_injects():
 
     assert out == "ok"
     assert caller.calls == [("search", {"query": "bug"})]
+
+
+@pytest.mark.asyncio
+async def test_run_strips_every_kwarg_dispatch_tool_injects():
+    """Regression: _dispatch_tool also injects executor/pool/project_id/session_id.
+
+    LOOP_INJECTED_KWARGS used to list only the workspace/command settings, so
+    these four rode straight through into the MCP wire call. pool in particular
+    is an AsyncConnectionPool, which pydantic cannot serialize -- every MCP tool
+    call failed with PydanticSerializationError until this list matched
+    _dispatch_tool's actual kwargs (app/agent/loop.py).
+    """
+    caller = FakeCaller(FakeResult(content=[FakeBlock(text="ok")]))
+    tool = make_tool("github", caller, FakeMcpTool(name="get_me"))
+
+    # Driven off the tuple itself rather than a fixed four, so a name added to
+    # LOOP_INJECTED_KWARGS is exercised here the moment it is added. The values
+    # are deliberately junk: nothing here should reach the wire.
+    injected = {name: object() for name in LOOP_INJECTED_KWARGS}
+    assert len(injected) >= 4
+
+    out = await tool.run(**injected)
+
+    assert out == "ok"
+    assert caller.calls == [("get_me", {})]
+
+
+@pytest.mark.asyncio
+async def test_run_still_forwards_the_models_own_arguments():
+    """The strip must take the loop's kwargs and nothing else."""
+    caller = FakeCaller(FakeResult(content=[FakeBlock(text="ok")]))
+    tool = make_tool("github", caller, FakeMcpTool(name="search"))
+
+    await tool.run(query="bug", limit=5, **{n: object() for n in LOOP_INJECTED_KWARGS})
+
+    assert caller.calls == [("search", {"query": "bug", "limit": 5})]
 
 
 @pytest.mark.asyncio
@@ -154,7 +204,188 @@ def test_merge_still_raises_on_an_unknown_builtin():
         merge_toolsets(["rm_rf"], [])
 
 
-def test_merge_falls_back_when_every_selected_tool_is_missing():
-    """An allowlist of only-down MCP tools would leave the model nothing."""
+def test_merge_does_not_widen_when_every_selected_tool_is_missing():
+    """A down server must never hand the model MORE than the user allowed.
+
+    This once returned ALL_TOOLS so the turn could still make progress, which
+    meant narrowing to three GitHub tools and then losing the server granted the
+    whole built-in registry -- run_command and the file-write tools included --
+    off the back of a failed network call.
+    """
     merged = merge_toolsets(["mcp__github__search_issues"], [])
-    assert merged == ALL_TOOLS
+    assert merged == []
+
+
+def test_merge_keeps_named_builtins_when_mcp_is_down():
+    """Only the unavailable half drops; what the user named still resolves."""
+    merged = merge_toolsets(["read_file", "mcp__github__search_issues"], [])
+    assert [tool.name for tool in merged] == ["read_file"]
+
+
+# --------------------------------------------------------------- connection targets
+#
+# The bug these pin: `headers` was stored, shown in the editor, and then dropped
+# on the floor, because Client accepts a bare URL and has no headers argument.
+
+
+def test_stdio_still_gets_server_parameters(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The remote work must not disturb the subprocess path."""
+    from mcp import StdioServerParameters
+
+    from app.mcp.config import connection_target
+
+    monkeypatch.setattr("app.mcp.config.assert_stdio_supported", lambda: None)
+    monkeypatch.setattr("app.mcp.config.resolve_command", lambda command: command)
+
+    target = connection_target(server_row(transport="stdio"))
+
+    assert isinstance(target, StdioServerParameters)
+
+
+def test_remote_headers_reach_the_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.mcp.config import remote_transport
+
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(
+        "app.mcp.config.create_mcp_http_client",
+        lambda headers=None: seen.update(headers=headers) or "client",
+    )
+    monkeypatch.setattr(
+        "app.mcp.config.streamable_http_client",
+        lambda url, http_client=None: seen.update(url=url, client=http_client),
+    )
+
+    row = server_row(transport="http", url="https://example.com/mcp/")
+    remote_transport(row, {"Authorization": "Bearer t"})
+
+    assert seen["url"] == "https://example.com/mcp/"
+    assert seen["headers"] == {"Authorization": "Bearer t"}
+    assert seen["client"] == "client"
+
+
+def test_sse_takes_headers_directly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """sse_client has a headers kwarg; streamable_http_client does not."""
+    from app.mcp.config import remote_transport
+
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(
+        "app.mcp.config.sse_client",
+        lambda url, headers=None: seen.update(url=url, headers=headers),
+    )
+
+    row = server_row(transport="sse", url="http://localhost:8931/sse")
+    remote_transport(row, {"Authorization": "Bearer t"})
+
+    assert seen["headers"] == {"Authorization": "Bearer t"}
+
+
+def test_a_resolved_credential_wins_over_a_pasted_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale value typed into the editor must not shadow the vault."""
+    from app.mcp.config import connection_target
+
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(
+        "app.mcp.config.create_mcp_http_client",
+        lambda headers=None: seen.update(headers=headers),
+    )
+    monkeypatch.setattr(
+        "app.mcp.config.streamable_http_client", lambda url, http_client=None: None
+    )
+
+    row = server_row(
+        transport="http",
+        url="https://example.com/mcp/",
+        headers={"Authorization": "Bearer stale", "X-Trace": "keep"},
+    )
+    connection_target(row, extra_headers={"Authorization": "Bearer fresh"})
+
+    assert seen["headers"]["Authorization"] == "Bearer fresh"
+    # Unrelated headers survive the merge.
+    assert seen["headers"]["X-Trace"] == "keep"
+
+
+def test_a_remote_server_without_a_url_is_refused() -> None:
+    from app.mcp.config import McpConfigError, connection_target
+
+    with pytest.raises(McpConfigError, match="no url configured"):
+        connection_target(server_row(transport="http", url=None))
+
+
+def test_rotating_a_token_invalidates_the_cached_connection() -> None:
+    """A rotated PAT must force a reconnect.
+
+    Rotating a token writes to `credentials`, not `mcp_servers`, so updated_at
+    alone would keep a live runner replaying the old bearer token until the
+    process restarted.
+    """
+    from app.core.config import Settings
+    from app.mcp.manager import McpManager
+
+    manager = McpManager(Settings())
+    row = server_row(transport="http", url="https://example.com/mcp/")
+
+    assert manager._key(row, "cred:1234") != manager._key(row, "cred:9999")
+    # Same token, same row: the connection is still reusable.
+    assert manager._key(row, "cred:1234") == manager._key(row, "cred:1234")
+    # The server id stays the first element, which is what the stale-runner
+    # sweep in _runner_for matches on.
+    assert manager._key(row, "cred:1234")[0] == str(row.id)
+
+
+def test_the_sdk_still_exposes_what_the_remote_path_imports() -> None:
+    """A canary on mcp==2.1.1's shape.
+
+    connection_target reaches into `mcp.shared._httpx_utils` because
+    `create_mcp_http_client` has no public alias and is what
+    streamable_http_client's docstring names for setting headers. If a version
+    bump moves or renames it, this fails here with an obvious cause instead of
+    surfacing as MCP servers that mysteriously stop authenticating.
+    """
+    import inspect
+
+    from mcp.client import Transport  # noqa: F401 - the public re-export
+    from mcp.shared._httpx_utils import create_mcp_http_client
+    from mcp.client.sse import sse_client
+    from mcp.client.streamable_http import streamable_http_client
+
+    assert "headers" in inspect.signature(create_mcp_http_client).parameters
+    assert "headers" in inspect.signature(sse_client).parameters
+    # The reason we cannot just pass headers to streamable_http_client.
+    http_params = inspect.signature(streamable_http_client).parameters
+    assert "headers" not in http_params
+    assert "http_client" in http_params
+
+
+# ------------------------------------------------------------------ server names
+#
+# What lets the system prompt name the attached servers without a second query.
+
+
+def test_server_names_round_trips_mcp_group():
+    from app.agent.tools.base import Tool
+    from app.mcp.tools import mcp_group
+
+    def fake(name: str, group: str | None) -> Tool:
+        return Tool(
+            name=name,
+            description="",
+            input_schema={"type": "object", "properties": {}},
+            run=lambda **_: "",
+            group=group,
+        )
+
+    tools = [
+        fake("mcp__b__x", mcp_group("b")),
+        fake("mcp__a__y", mcp_group("a")),
+        fake("mcp__a__z", mcp_group("a")),
+        fake("read_file", "Files"),
+        fake("run_command", None),
+    ]
+    # Sorted, deduped, and built-ins ignored.
+    assert server_names(tools) == ["a", "b"]
+
+
+def test_server_names_is_empty_without_mcp_tools():
+    assert server_names([]) == []

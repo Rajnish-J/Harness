@@ -37,12 +37,62 @@ from mcp import Client
 
 from app.core.config import Settings
 from app.db.registry_repo import McpServerRow
-from app.mcp.config import McpConfigError, connection_target
+from app.mcp.config import HttpFailure, McpConfigError, connection_target
+from app.mcp.credentials import ResolvedAuth, no_auth
 from app.mcp.tools import dedupe, make_tool
 
 logger = logging.getLogger(__name__)
 
+
+@dataclass(frozen=True)
+class McpNotice:
+    """Something the user should know about one server, as data.
+
+    Carries the server id because the UI has to attach the message to a row,
+    and matching on the name inside the prose could not do that reliably: names
+    that are substrings of one another cross-matched, and some notices name no
+    server at all. `server_id` is None for exactly those -- a missing
+    DATABASE_URL, a failed read of the server list -- which the UI shows in the
+    general list rather than against a row.
+    """
+
+    message: str
+    server_id: str | None = None
+    server_name: str | None = None
+
 _SHUTDOWN = object()
+
+
+def describe_exception(exc: BaseException) -> str:
+    """The innermost useful message from a (possibly nested) ExceptionGroup.
+
+    mcp 2.1.1 wraps a failed connect in two anyio task groups before the real
+    cause (an MCPError, an httpx error, ...) -- and str() of an ExceptionGroup
+    is only ever "unhandled errors in a TaskGroup (N sub-exceptions)". Walking
+    to the leaves is the difference between a legible 401 and a shrug.
+    """
+    leaves: list[str] = []
+    seen: set[str] = set()
+
+    def walk(node: BaseException) -> None:
+        subs = getattr(node, "exceptions", None)
+        if subs:
+            for sub in subs:
+                walk(sub)
+            return
+
+        message = str(node).strip()
+        if not message and node.__cause__ is not None:
+            walk(node.__cause__)
+            return
+
+        text = f"{type(node).__name__}: {message}" if message else type(node).__name__
+        if text not in seen:
+            seen.add(text)
+            leaves.append(text)
+
+    walk(exc)
+    return "; ".join(leaves) if leaves else f"{type(exc).__name__}: {exc}"
 
 
 @dataclass
@@ -58,6 +108,9 @@ class _Runner:
 
     server: McpServerRow
     settings: Settings
+    #: Resolved from the server's linked credential, if it has one. Merged over
+    #: the row's own headers by connection_target.
+    extra_headers: dict[str, str] = field(default_factory=dict)
 
     queue: asyncio.Queue[Any] = field(default_factory=asyncio.Queue)
     ready: asyncio.Event = field(default_factory=asyncio.Event)
@@ -81,14 +134,29 @@ class _Runner:
             await self.aclose()
 
     async def _run(self) -> None:
+        # Filled in by an httpx response hook on any 4xx/5xx -- the only point
+        # where the real status/body are still visible before the SDK buries
+        # a failed connect in a bare "unhandled errors in a TaskGroup".
+        http_failure = HttpFailure(status_code=0)
         try:
-            target = connection_target(self.server)
+            target = connection_target(
+                self.server, extra_headers=self.extra_headers, failure=http_failure
+            )
         except McpConfigError as exc:
             self.error = str(exc)
             self.ready.set()
             return
+        except Exception as exc:  # noqa: BLE001 - anything else must still land
+            # in the handler below (which sets self.error and self.ready via
+            # `finally`) rather than propagate out of _run() unhandled, which
+            # would leave self.ready unset and hang start() for its full budget.
+            connection_target_error: Exception | None = exc
+        else:
+            connection_target_error = None
 
         try:
+            if connection_target_error is not None:
+                raise connection_target_error
             # Entering the client performs the initialize handshake. It is not
             # wrapped in wait_for here because cancelling an async context
             # manager mid-enter is exactly the anyio hazard this design avoids;
@@ -125,8 +193,11 @@ class _Runner:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - one bad server, not a dead chat
-            logger.warning("MCP server %s failed: %s", self.server.name, exc)
-            self.error = f"{self.server.name}: {exc}"
+            logger.exception("MCP server %s failed", self.server.name)
+            detail = describe_exception(exc)
+            if http_failure.status_code:
+                detail = f"{detail} ({http_failure.describe()})"
+            self.error = f"{self.server.name}: {detail}"
         finally:
             self.ready.set()
             self._drain()
@@ -179,31 +250,87 @@ class McpManager:
         self._lock = asyncio.Lock()
 
     @staticmethod
-    def _key(server: McpServerRow) -> tuple[str, str]:
-        return (str(server.id), server.updated_at.isoformat())
+    def _key(server: McpServerRow, auth_fingerprint: str = "") -> tuple[str, str]:
+        """Identity of a live connection: the row revision *and* the token.
+
+        updated_at alone is not enough once a server can link a credential.
+        Rotating a token writes to `credentials`, leaving `mcp_servers.updated_at`
+        untouched, so a cached runner would go on replaying the old bearer token
+        until the process restarted. The fingerprint is credential-derived and
+        carries no secret — see app/mcp/credentials.py.
+        """
+        return (str(server.id), f"{server.updated_at.isoformat()}|{auth_fingerprint}")
+
+    async def test_connection(
+        self, server: McpServerRow, auth: ResolvedAuth | None = None
+    ) -> tuple[bool, str | None, int]:
+        """Connect to one server right now, bypassing the failure cooldown.
+
+        For the "Test connection" button, not for a chat turn -- a turn that
+        reuses tools should still back off from a server that just failed.
+        Returns (ok, error, tool_count).
+        """
+        if self._settings.mock_mcp:
+            from app.mcp.mock import mock_tools_for
+
+            tools = mock_tools_for([server])
+            return True, None, len(tools)
+
+        try:
+            runner = await self._runner_for(server, auth, force=True)
+        except Exception as exc:  # noqa: BLE001 - reported to the caller, not raised
+            return False, describe_exception(exc), 0
+
+        if runner is None or not runner.alive:
+            reason = (runner.error if runner else None) or "could not connect"
+            return False, reason, 0
+
+        return True, None, len(runner.tools)
 
     async def tools_for(
-        self, servers: list[McpServerRow]
-    ) -> tuple[list[Any], list[str]]:
-        """Discovered tools plus human-readable notices for anything that failed."""
+        self,
+        servers: list[McpServerRow],
+        auth_by_id: dict[str, ResolvedAuth] | None = None,
+    ) -> tuple[list[Any], list["McpNotice"]]:
+        """Discovered tools plus notices for anything that failed.
+
+        `auth_by_id` is resolved by the caller rather than here: decrypting a
+        credential needs the pool, and this class deliberately holds no database
+        handle. See resolve_mcp_tools in app/mcp/__init__.py.
+        """
         if self._settings.mock_mcp:
             from app.mcp.mock import mock_tools_for
 
             return mock_tools_for(servers), []
 
         tools: list[Any] = []
-        notices: list[str] = []
+        notices: list[McpNotice] = []
 
         for server in servers:
+            def notice(message: str, _server: McpServerRow = server) -> McpNotice:
+                return McpNotice(
+                    message=message,
+                    server_id=str(_server.id),
+                    server_name=_server.name,
+                )
+
+            auth = (auth_by_id or {}).get(str(server.id)) or no_auth()
+            if auth.notice:
+                # credentials.py writes the prose; the id is attached here,
+                # where the server row is in hand.
+                notices.append(notice(auth.notice))
+
             try:
-                runner = await self._runner_for(server)
+                runner = await self._runner_for(server, auth)
             except Exception as exc:  # noqa: BLE001
-                notices.append(f"MCP server {server.name!r} unavailable: {exc}")
+                notices.append(notice(f"MCP server {server.name!r} unavailable: {exc}"))
                 continue
 
             if runner is None or not runner.alive:
                 reason = (runner.error if runner else None) or "could not connect"
-                notices.append(f"MCP server {server.name!r} unavailable: {reason}")
+                notices.append(
+                    notice(f"MCP server {server.name!r} unavailable: {reason}")
+                )
                 continue
 
             tools.extend(
@@ -212,8 +339,20 @@ class McpManager:
 
         return dedupe(tools), notices
 
-    async def _runner_for(self, server: McpServerRow) -> _Runner | None:
-        key = self._key(server)
+    async def _runner_for(
+        self,
+        server: McpServerRow,
+        auth: ResolvedAuth | None = None,
+        *,
+        force: bool = False,
+    ) -> _Runner | None:
+        """`force` skips the failure cooldown below -- for an explicit retry
+        (the "Test connection" button), not for a turn quietly reusing tools.
+        A user pressing that button is asking to try right now, regardless of
+        when the last attempt failed.
+        """
+        auth = auth or no_auth()
+        key = self._key(server, auth.fingerprint)
 
         async with self._lock:
             existing = self._runners.get(key)
@@ -226,11 +365,16 @@ class McpManager:
                 stale = self._runners.pop(stale_key)
                 await stale.aclose()
 
-            failed_at, reason = self._failures.get(key[0], (0.0, ""))
-            if time.monotonic() - failed_at < self._settings.mcp_retry_cooldown:
-                raise ConnectionError(reason)
+            if not force:
+                failed_at, reason = self._failures.get(key[0], (0.0, ""))
+                if time.monotonic() - failed_at < self._settings.mcp_retry_cooldown:
+                    raise ConnectionError(reason)
 
-            runner = _Runner(server=server, settings=self._settings)
+            runner = _Runner(
+                server=server,
+                settings=self._settings,
+                extra_headers=auth.headers,
+            )
             await runner.start()
 
             if not runner.alive:

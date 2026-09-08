@@ -90,7 +90,7 @@ def test_an_unrelated_missing_module_is_not_relabelled(uninstall, monkeypatch):
     [
         ("anthropic", "claude-opus-5"),
         ("openai", "gpt-4o"),
-        ("groq", "llama-3.3-70b-versatile"),
+        ("groq", "openai/gpt-oss-120b"),
     ],
 )
 def test_installed_providers_still_build(provider, model):

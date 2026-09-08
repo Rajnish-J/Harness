@@ -22,9 +22,11 @@ import { fetchTools, type ToolInfo } from "@/lib/workflow-api";
 export default function AgentEditor({ agent }: { agent: Agent }) {
   const router = useRouter();
   const [draft, setDraft] = useState(agent);
-  const [tools, setTools] = useState<ToolInfo[]>([]);
-  const [skills, setSkills] = useState<SkillSummary[]>([]);
-  const [servers, setServers] = useState<McpServerSummary[]>([]);
+  // null while in flight, so the pickers below can say "loading" rather than
+  // "there are none" — which is what an empty array claims.
+  const [tools, setTools] = useState<ToolInfo[] | null>(null);
+  const [skills, setSkills] = useState<SkillSummary[] | null>(null);
+  const [servers, setServers] = useState<McpServerSummary[] | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -48,8 +50,11 @@ export default function AgentEditor({ agent }: { agent: Agent }) {
   // Attachments are id arrays in jsonb, not foreign keys, so a deleted skill
   // leaves a dangling id behind. Drop those on save rather than showing a
   // checkbox with nothing to check.
-  function liveIds(ids: string[], known: { id: string }[]): string[] {
-    if (known.length === 0) return ids;
+  // `null` (still loading) is treated exactly like an empty list already was:
+  // keep every saved id. Pruning against a list that has not arrived would
+  // silently detach every skill and server the agent had.
+  function liveIds(ids: string[], known: { id: string }[] | null): string[] {
+    if (known === null || known.length === 0) return ids;
     const present = new Set(known.map((k) => k.id));
     return ids.filter((id) => present.has(id));
   }
@@ -127,7 +132,7 @@ export default function AgentEditor({ agent }: { agent: Agent }) {
       <CheckboxList
         label="Tools"
         hint="Leave empty to grant every registered tool."
-        options={tools.map((tool) => ({
+        options={(tools ?? []).map((tool) => ({
           value: tool.name,
           label: tool.name,
           description: tool.description,
@@ -135,11 +140,12 @@ export default function AgentEditor({ agent }: { agent: Agent }) {
         selected={draft.toolNames}
         onChange={(v) => patch("toolNames", v)}
         emptyMessage="No tools reported. Is the Python harness running?"
+        loading={tools === null}
       />
 
       <CheckboxList
         label="Skills"
-        options={skills.map((skill) => ({
+        options={(skills ?? []).map((skill) => ({
           value: skill.id,
           label: skill.slug,
           description: skill.description ?? skill.name,
@@ -147,11 +153,12 @@ export default function AgentEditor({ agent }: { agent: Agent }) {
         selected={draft.skillIds}
         onChange={(v) => patch("skillIds", v)}
         emptyMessage="No skills defined yet."
+        loading={skills === null}
       />
 
       <CheckboxList
         label="MCP servers"
-        options={servers.map((server) => ({
+        options={(servers ?? []).map((server) => ({
           value: server.id,
           label: server.name,
           description: server.description ?? server.transport,
@@ -159,6 +166,7 @@ export default function AgentEditor({ agent }: { agent: Agent }) {
         selected={draft.mcpServerIds}
         onChange={(v) => patch("mcpServerIds", v)}
         emptyMessage="No MCP servers configured yet."
+        loading={servers === null}
       />
 
       <ToggleField
