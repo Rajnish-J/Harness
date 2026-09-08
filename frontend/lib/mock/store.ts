@@ -25,6 +25,10 @@ type Stores = {
    *  fetched client-side from the Python harness rather than through a Next
    *  route — so it lives in the tab's realm and resets on a full reload. */
   memory: Map<string, Memory>;
+  /** Tool names switched off globally on /tools. A set, not a Map: the rows
+   *  carry no identity worth addressing, only membership. Seeded empty —
+   *  every tool starts enabled. */
+  disabledTools: Set<string>;
 };
 
 const globalForMock = globalThis as unknown as { __harnessMock?: Stores };
@@ -37,6 +41,7 @@ function seed(): Stores {
     skills: new Map(MOCK_SKILLS.map((s) => [s.id, { ...s }])),
     mcp: new Map(MOCK_MCP_SERVERS.map((m) => [m.id, { ...m }])),
     memory: new Map(MOCK_MEMORIES.map((m) => [m.id, { ...m }])),
+    disabledTools: new Set<string>(),
   };
 }
 
