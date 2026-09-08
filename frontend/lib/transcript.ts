@@ -31,6 +31,32 @@ export function toTranscript(messages: StoredMessage[]): TranscriptItem[] {
         });
         break;
       case "tool_call":
+        // The router's decision is persisted as a tool_call named select_tools
+        // rather than under a chat_role of its own — the enum lives in Drizzle
+        // and adding a value would mean a migration for what is, on the wire,
+        // exactly this: one call, with arguments, that shaped the turn. See
+        // _entry_for in backend/app/api/chat.py.
+        if (message.tool_name === "select_tools") {
+          const args = (message.tool_args ?? {}) as {
+            selected?: { name: string; group: string }[];
+            pool_size?: number;
+            reason?: string;
+            ran?: boolean;
+            note?: string | null;
+            model?: string | null;
+          };
+          items.push({
+            kind: "tool_selection",
+            id: message.tool_call_id ?? `h-${message.seq}`,
+            selected: args.selected ?? [],
+            poolSize: args.pool_size ?? 0,
+            reason: args.reason ?? "",
+            ran: args.ran ?? false,
+            note: args.note ?? null,
+            model: args.model ?? null,
+          });
+          break;
+        }
         items.push({
           kind: "step",
           id: message.tool_call_id ?? `h-${message.seq}`,

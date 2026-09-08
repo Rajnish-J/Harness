@@ -54,6 +54,26 @@ export type AttachProposalEvent = {
   reason?: string;
 };
 
+/**
+ * Which tools the harness narrowed this turn to, and why.
+ *
+ * Sent once, before the first step, whenever narrowing was possible — including
+ * when it did not happen. `ran: false` with a `note` is a router that failed
+ * open, and must render as such: a silent fallback looks identical to a router
+ * that simply chose everything.
+ */
+export type ToolSelectionEvent = {
+  type: "tool_selection";
+  id: string;
+  /** Group travels with the name so the UI need not re-fetch the catalog. */
+  selected: { name: string; group: string }[];
+  pool_size: number;
+  reason?: string;
+  ran?: boolean;
+  note?: string | null;
+  model?: string | null;
+};
+
 export type AssistantMessageEvent = {
   type: "assistant_message";
   text: string;
@@ -80,6 +100,7 @@ export type DoneEvent = {
 export type AgentEvent =
   | ToolCallEvent
   | ToolResultEvent
+  | ToolSelectionEvent
   | ApprovalRequestEvent
   | ProjectProposalEvent
   | AttachProposalEvent
@@ -129,6 +150,22 @@ export type TranscriptItem =
       description: string;
       template?: string;
       decision?: "approved" | "denied";
+    }
+  /**
+   * The tool router's decision for this turn, rendered as a vertical stepper
+   * above the steps it governs. Not a `step`: it has no call, no result and no
+   * running state, and folding it into one would make it expand into a `pre`
+   * block of JSON rather than a list of tools.
+   */
+  | {
+      kind: "tool_selection";
+      id: string;
+      selected: { name: string; group: string }[];
+      poolSize: number;
+      reason: string;
+      ran: boolean;
+      note?: string | null;
+      model?: string | null;
     }
   /** An offer to move this conversation into an existing project. */
   | {

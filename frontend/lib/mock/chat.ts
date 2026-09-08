@@ -51,6 +51,20 @@ type Script = {
   closing: string;
 };
 
+/**
+ * Groups for the tools these fixtures narrate, so the mocked tool_selection
+ * carries the same section labels the real one does.
+ *
+ * A literal rather than a lookup through lib/tool-groups.ts: that reads a
+ * fetched catalog, and the point of the mock path is to work without a harness
+ * to fetch one from. Only the handful of tools the scripts above use.
+ */
+const MOCK_TOOL_GROUPS: Record<string, string> = {
+  read_file: "File Operations",
+  write_file: "File Operations",
+  list_directory: "File Operations",
+};
+
 function scriptFor(message: string, toolNames: string[]): Script {
   const text = message.toLowerCase();
   const can = (name: string) => toolNames.length === 0 || toolNames.includes(name);
@@ -237,6 +251,24 @@ export async function streamMockChat(
   if (preset.agentName) prefix.push(`Running as **${preset.agentName}**.`);
   if (preset.skillNames?.length) {
     prefix.push(`Skills in play: ${preset.skillNames.join(", ")}.`);
+  }
+
+  // The router's decision, ahead of the steps it governs -- same order the real
+  // stream sends it in, so the mock exercises ToolSelectionStep rather than
+  // leaving it renderable only against a live harness with a key.
+  if (preset.mode !== "chat" && script.rounds.length > 0) {
+    onEvent({
+      type: "tool_selection",
+      id: "sel_mock",
+      selected: script.rounds.map((round) => ({
+        name: round.tool,
+        group: MOCK_TOOL_GROUPS[round.tool] ?? "General",
+      })),
+      pool_size: 43,
+      reason: "Reading and editing files in the workspace.",
+      ran: true,
+      model: "mock-router",
+    });
   }
 
   onEvent({

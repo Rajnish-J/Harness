@@ -161,6 +161,23 @@ export default function ChatSessionProvider({
             },
           ];
 
+        case "tool_selection":
+          return [
+            ...prev,
+            {
+              kind: "tool_selection",
+              id: event.id,
+              selected: event.selected,
+              poolSize: event.pool_size,
+              reason: event.reason ?? "",
+              // Optional on the wire so an older harness that does not send
+              // them still renders; absent reads as "it did not run".
+              ran: event.ran ?? false,
+              note: event.note ?? null,
+              model: event.model ?? null,
+            },
+          ];
+
         case "tool_call":
           return [
             ...prev,
