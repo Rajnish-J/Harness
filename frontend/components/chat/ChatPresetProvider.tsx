@@ -27,7 +27,17 @@ import type {
   McpServerSummary,
   SkillSummary,
 } from "@/lib/registry-types";
-import { toggleGroupNames, toggleToolName, type SelectableGroup } from "@/lib/tool-selection";
+import {
+  fetchToolSettings,
+  type ToolSettings,
+} from "@/lib/tool-settings-api";
+import {
+  NO_DISABLED_TOOLS,
+  toggleGroupNames,
+  toggleToolName,
+  type DisabledTools,
+  type SelectableGroup,
+} from "@/lib/tool-selection";
 import {
   fetchMcpTools,
   fetchTools,
@@ -41,6 +51,13 @@ export type Catalog = {
   mcp: McpServerSummary[];
   /** Built-in tools, plus the tools of every attached MCP server. */
   tools: ToolInfo[];
+  /** Tools switched off for everyone on /tools.
+   *
+   *  A set of names, kept out of the allowlist arithmetic entirely — see the
+   *  header of lib/tool-selection.ts. It renders those tools off and locked;
+   *  the harness applies the same subtraction again when building the turn, so
+   *  a stale tab cannot spend one. */
+  disabledTools: DisabledTools;
   models: ModelCatalog;
   /** Servers that failed to answer discovery, shown next to the ones that did. */
   mcpNotices: string[];
@@ -65,6 +82,7 @@ const EMPTY_CATALOG: Catalog = {
   skills: [],
   mcp: [],
   tools: [],
+  disabledTools: NO_DISABLED_TOOLS,
   models: EMPTY_MODELS,
   mcpNotices: [],
   mcpServerNotices: [],
@@ -89,6 +107,8 @@ type ChatPresetValue = {
   applyFromQuery: (params: URLSearchParams) => Promise<boolean>;
   /** Re-pulls the model list — call after a provider key is saved or tested. */
   refetchModels: () => Promise<void>;
+  /** Re-pulls the global disable list — call after /tools writes to it. */
+  refetchToolSettings: () => Promise<void>;
 };
 
 const ChatPresetContext = createContext<ChatPresetValue | null>(null);
@@ -143,8 +163,12 @@ export default function ChatPresetProvider({
       mcpApi.list().catch(() => [] as McpServerSummary[]),
       fetchTools(controller.signal),
       fetchModels(controller.signal),
+      // A sixth entry rather than its own effect: it is one same-origin GET
+      // with no dependency on anything above, and folding it in keeps the
+      // catalog landing in a single setState instead of two renders.
+      fetchToolSettings(controller.signal),
     ])
-      .then(([agents, skills, mcp, tools, models]) => {
+      .then(([agents, skills, mcp, tools, models, toolSettings]) => {
         if (controller.signal.aborted) return;
         setCatalog((prev) => ({
           ...prev,
@@ -154,6 +178,7 @@ export default function ChatPresetProvider({
           models,
           // Keep any MCP tools the second effect has already discovered.
           tools: [...tools, ...prev.tools.filter((t) => t.name.startsWith("mcp__"))],
+          disabledTools: new Set(toolSettings.disabled),
           loading: false,
         }));
       })
@@ -179,6 +204,21 @@ export default function ChatPresetProvider({
     }
     const models = await fetchModels();
     setCatalog((prev) => ({ ...prev, models }));
+  }, [parent]);
+
+  // Called after /tools switches something on or off. Delegates when nested for
+  // exactly the reason refetchModels does: a nested instance displays
+  // `inherited`, so fetching into ownCatalog here would update nothing visible.
+  const refetchToolSettings = useCallback(async () => {
+    if (parent) {
+      await parent.refetchToolSettings();
+      return;
+    }
+    const settings: ToolSettings = await fetchToolSettings();
+    setCatalog((prev) => ({
+      ...prev,
+      disabledTools: new Set(settings.disabled),
+    }));
   }, [parent]);
 
   // MCP tools are discovered separately, and only for servers the composer has
@@ -303,22 +343,31 @@ export default function ChatPresetProvider({
 
   const toggleTool = useCallback(
     (name: string) => {
+      // A globally disabled tool has no local state to flip. The switch is
+      // already disabled in the panel; this makes that true of the model too,
+      // so a keyboard or a stale render cannot get around it.
+      if (catalog.disabledTools.has(name)) return;
       setPreset((prev) => ({
         ...prev,
         toolNames: toggleToolName(prev.toolNames, name, universe),
       }));
     },
-    [universe],
+    [universe, catalog.disabledTools],
   );
 
   const toggleToolGroup = useCallback(
     (group: SelectableGroup) => {
       setPreset((prev) => ({
         ...prev,
-        toolNames: toggleGroupNames(prev.toolNames, group, universe),
+        toolNames: toggleGroupNames(
+          prev.toolNames,
+          group,
+          universe,
+          catalog.disabledTools,
+        ),
       }));
     },
-    [universe],
+    [universe, catalog.disabledTools],
   );
 
   const setMode = useCallback((mode: ToolMode) => {
@@ -414,6 +463,7 @@ export default function ChatPresetProvider({
       clearAttachments,
       applyFromQuery,
       refetchModels,
+      refetchToolSettings,
     }),
     [
       preset,
@@ -430,6 +480,7 @@ export default function ChatPresetProvider({
       clearAttachments,
       applyFromQuery,
       refetchModels,
+      refetchToolSettings,
     ],
   );
 
