@@ -74,6 +74,10 @@ async def get_enabled_mcp_servers(
 
     Disabled rows are filtered in SQL rather than in Python so a server turned
     off in the UI can never be attached by a stale id held in a browser tab.
+
+    This is the function the chat path uses, and the `and enabled` clause is
+    what makes that guarantee. See get_mcp_servers below for the deliberate
+    exception, which exists only so /tools can preview a server it will not run.
     """
     if not server_ids:
         return []
@@ -90,6 +94,34 @@ async def get_enabled_mcp_servers(
     return [by_id[sid] for sid in server_ids if sid in by_id]
 
 
+async def get_mcp_servers(
+    pool: AsyncConnectionPool, server_ids: list[str]
+) -> list[McpServerRow]:
+    """The given servers, enabled or not, in the order the caller asked.
+
+    The sibling of get_enabled_mcp_servers, minus its filter, and the ONLY
+    caller allowed to reach for it is the tool-discovery endpoint serving
+    /tools: that page exists to report what every configured server offers, and
+    a disabled one vanishing from it is the moment someone comes looking. It is
+    a preview, never an attachment -- nothing here can put a disabled server's
+    tools into a turn, because the chat path goes through the enabled-only
+    function above.
+    """
+    if not server_ids:
+        return []
+
+    async with pool.connection() as conn, conn.cursor() as cur:
+        await cur.execute(
+            f"select {_COLUMNS} from mcp_servers "  # noqa: S608 - no interpolated values
+            "where id = any(%s)",
+            (server_ids,),
+        )
+        records = await cur.fetchall()
+
+    by_id = {str(record["id"]): _row(record) for record in records}
+    return [by_id[sid] for sid in server_ids if sid in by_id]
+
+
 async def list_enabled_mcp_servers(pool: AsyncConnectionPool) -> list[McpServerRow]:
     """Every enabled server. Only used when MCP_ATTACH_ALL_ENABLED is on."""
     async with pool.connection() as conn, conn.cursor() as cur:
@@ -97,3 +129,21 @@ async def list_enabled_mcp_servers(pool: AsyncConnectionPool) -> list[McpServerR
             f"select {_COLUMNS} from mcp_servers where enabled order by name"  # noqa: S608
         )
         return [_row(record) for record in await cur.fetchall()]
+
+
+async def list_disabled_tool_names(pool: AsyncConnectionPool) -> set[str]:
+    """Tool names switched off globally on the /tools page.
+
+    A set, because membership is the only use: _prepare_turn subtracts these
+    from the toolset it has already resolved. The query takes no parameters --
+    it is a whole-table read of a table holding one row per tool touched -- so
+    it is a literal string, which is the placeholder rule satisfied trivially
+    rather than bypassed.
+
+    Names are not validated against the registry here. A row can name a tool
+    this harness does not have (an MCP server that was renamed, most likely);
+    it then matches nothing and is inert.
+    """
+    async with pool.connection() as conn, conn.cursor() as cur:
+        await cur.execute("select tool_name from tool_settings where not enabled")
+        return {record["tool_name"] for record in await cur.fetchall()}
