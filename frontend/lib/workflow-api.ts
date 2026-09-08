@@ -143,9 +143,19 @@ export type McpToolsResult = {
 
 const NO_MCP_TOOLS: McpToolsResult = { tools: [], notices: [], serverNotices: [] };
 
+/**
+ * `includeDisabled` reaches servers whose `enabled` flag is off.
+ *
+ * Only /tools passes it, and only to report what a configured server offers.
+ * The composer must not: the harness reads mcp_servers with an enabled filter
+ * on every chat path, so a disabled server's tools could be listed here and
+ * still never be spendable — showing them in the picker would be a promise the
+ * turn cannot keep.
+ */
 export async function fetchMcpTools(
   serverIds: string[],
   signal?: AbortSignal,
+  options?: { includeDisabled?: boolean },
 ): Promise<McpToolsResult> {
   if (serverIds.length === 0) return NO_MCP_TOOLS;
   if (flags.mockTools || flags.mockMcp) {
@@ -154,9 +164,11 @@ export async function fetchMcpTools(
 
   try {
     const query = encodeURIComponent(serverIds.join(","));
-    const res = await fetch(`${API_BASE}/api/mcp/tools?server_ids=${query}`, {
-      signal,
-    });
+    const suffix = options?.includeDisabled ? "&include_disabled=true" : "";
+    const res = await fetch(
+      `${API_BASE}/api/mcp/tools?server_ids=${query}${suffix}`,
+      { signal },
+    );
     if (!res.ok) return NO_MCP_TOOLS;
     const payload = (await res.json()) as {
       tools: ToolInfo[];

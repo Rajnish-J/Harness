@@ -87,6 +87,16 @@ export function optionalStringArray(
   return value as string[];
 }
 
+/** Like optionalStringArray, but the field must be present. */
+export function requiredStringArray(
+  body: Record<string, unknown>,
+  field: string,
+): string[] {
+  const value = optionalStringArray(body, field);
+  if (value === undefined) throw new BadRequest(`${field} is required`);
+  return value;
+}
+
 export function optionalStringMap(
   body: Record<string, unknown>,
   field: string,
@@ -110,6 +120,16 @@ export function optionalBoolean(
   if (!(field in body)) return undefined;
   const value = body[field];
   if (typeof value !== "boolean") throw new BadRequest(`${field} must be a boolean`);
+  return value;
+}
+
+/** Like optionalBoolean, but the field must be present. */
+export function requiredBoolean(
+  body: Record<string, unknown>,
+  field: string,
+): boolean {
+  const value = optionalBoolean(body, field);
+  if (value === undefined) throw new BadRequest(`${field} is required`);
   return value;
 }
 

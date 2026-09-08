@@ -36,16 +36,36 @@ async def list_mcp_tools(
         default="",
         description="Comma-separated mcp_servers ids. Empty means none.",
     ),
+    include_disabled: bool = Query(
+        default=False,
+        description=(
+            "Also discover servers whose `enabled` flag is off. For the /tools "
+            "page, which reports every configured server; a listing, not an "
+            "attachment."
+        ),
+    ),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
     """Discovered tools for the given servers, plus notices for any that failed.
 
     Notices are data, not errors: a server being down is a normal condition the
     UI should show next to the tools that did resolve.
+
+    `include_disabled` defaults to False, so the composer -- which calls this
+    with the servers it has attached -- keeps seeing only enabled ones.
     """
     ids = [part.strip() for part in server_ids.split(",") if part.strip()]
 
-    tools, notices = await resolve_mcp_tools(request.app, settings, ids)
+    tools, notices = await resolve_mcp_tools(
+        request.app,
+        settings,
+        ids,
+        # bool(), not the value itself: this route is also called directly in
+        # tests, where FastAPI has not resolved the default and the parameter
+        # is still a Query object -- which is truthy, and would silently opt
+        # every such caller into reading disabled servers.
+        include_disabled=include_disabled is True,
+    )
 
     return {
         "tools": [

@@ -184,7 +184,7 @@ async def test_tools_route_serves_both_notice_shapes(monkeypatch: pytest.MonkeyP
     from app.api.mcp import list_mcp_tools
     from app.mcp.manager import McpNotice
 
-    async def fake_resolve(_app, _settings, _ids):
+    async def fake_resolve(_app, _settings, _ids, include_disabled=False):
         return [], [
             McpNotice(message="boom", server_id="abc", server_name="github"),
             McpNotice(message="no database"),
@@ -193,7 +193,9 @@ async def test_tools_route_serves_both_notice_shapes(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr("app.api.mcp.resolve_mcp_tools", fake_resolve)
 
     payload = await list_mcp_tools(
-        request_with(manager=FakeManager(ok=True)), "abc", settings_with()
+        request_with(manager=FakeManager(ok=True)),
+        server_ids="abc",
+        settings=settings_with(),
     )
 
     # Unchanged wire contract.
@@ -201,3 +203,85 @@ async def test_tools_route_serves_both_notice_shapes(monkeypatch: pytest.MonkeyP
     # And the structured half, including the notice that names no server.
     assert payload["server_notices"][0]["server_id"] == "abc"
     assert payload["server_notices"][1]["server_id"] is None
+
+
+# ------------------------------------------------- listing disabled servers
+
+
+async def test_tools_route_defaults_to_enabled_servers_only(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The composer's call must keep reaching only servers that are switched on."""
+    from app.api.mcp import list_mcp_tools
+
+    seen: dict[str, bool] = {}
+
+    async def fake_resolve(_app, _settings, _ids, include_disabled=False):
+        seen["include_disabled"] = include_disabled
+        return [], []
+
+    monkeypatch.setattr("app.api.mcp.resolve_mcp_tools", fake_resolve)
+
+    await list_mcp_tools(
+        request_with(manager=FakeManager(ok=True)),
+        server_ids="abc",
+        settings=settings_with(),
+    )
+
+    # Called as a plain function, so the default is FastAPI's unresolved Query
+    # object rather than the bool it becomes over HTTP. What matters either way
+    # is that it is falsy: the unfiltered repo read stays opt-in.
+    assert not seen["include_disabled"]
+
+
+async def test_tools_route_can_include_disabled_servers(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """/tools asks for every configured server, so a disabled one is not blank."""
+    from app.api.mcp import list_mcp_tools
+
+    seen: dict[str, bool] = {}
+
+    async def fake_resolve(_app, _settings, _ids, include_disabled=False):
+        seen["include_disabled"] = include_disabled
+        return [], []
+
+    monkeypatch.setattr("app.api.mcp.resolve_mcp_tools", fake_resolve)
+
+    await list_mcp_tools(
+        request_with(manager=FakeManager(ok=True)),
+        server_ids="abc",
+        include_disabled=True,
+        settings=settings_with(),
+    )
+
+    assert seen["include_disabled"] is True
+
+
+async def test_resolve_picks_the_unfiltered_repo_read_only_when_asked(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The enabled-only guarantee on the chat path is a repo choice, not a flag check."""
+    from app import mcp as mcp_module
+
+    called: list[str] = []
+
+    async def fake_enabled(_pool, ids):
+        called.append("enabled_only")
+        return []
+
+    async def fake_all(_pool, ids):
+        called.append("all")
+        return []
+
+    monkeypatch.setattr(mcp_module, "get_enabled_mcp_servers", fake_enabled)
+    monkeypatch.setattr(mcp_module, "get_mcp_servers", fake_all)
+
+    request = request_with(manager=FakeManager(ok=True))
+
+    await mcp_module.resolve_mcp_tools(request.app, settings_with(), ["abc"])
+    await mcp_module.resolve_mcp_tools(
+        request.app, settings_with(), ["abc"], include_disabled=True
+    )
+
+    assert called == ["enabled_only", "all"]

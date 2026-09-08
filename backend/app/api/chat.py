@@ -24,7 +24,7 @@ from app.api.sse import SSE_HEADERS
 from app.agent.exec_context import ExecutionContext
 from app.core.config import Settings, get_settings
 from app.core.secrets import CredentialCryptoError
-from app.db import memory_repo, project_chat_repo, project_repo
+from app.db import memory_repo, project_chat_repo, project_repo, registry_repo
 from app.projects.execution import resolve_executor
 from app.projects.workspaces import InvalidProjectIdError, settings_for_project
 from app.mcp import resolve_mcp_tools
@@ -201,6 +201,27 @@ async def _prepare_turn(
         except Exception:  # noqa: BLE001 - a chat must not die because memory did
             logger.exception("could not load memory for project %s", project_id)
 
+    # Tools switched off globally on /tools. Same optional-pool discipline, and
+    # the same fail-open posture: an unreachable database restores tools someone
+    # turned off, which is a widening, and that is the deliberate trade. This
+    # list is a preference expressed on an admin page, not a safety boundary
+    # like the MCP fallback in merge_toolsets; failing closed would hand the
+    # model nothing at all whenever DATABASE_URL is unset, which is a supported
+    # configuration. The notice below says so rather than leaving it silent.
+    disabled_tools: set[str] = set()
+    if pool is not None:
+        try:
+            disabled_tools = await registry_repo.list_disabled_tool_names(pool)
+        except Exception:  # noqa: BLE001 - a chat must not die because a preference did
+            logger.exception("could not load the global tool disable list")
+            setup_notices.append(
+                (
+                    "Could not read which tools are switched off on the Tools "
+                    "page, so this turn was given all of them.",
+                    "tool_settings_unavailable",
+                )
+            )
+
     tools: list[Tool] | None
     if payload.mode == "chat":
         # An empty list, not None: None means "the full registry". Nothing is
@@ -224,7 +245,26 @@ async def _prepare_turn(
             tools = merge_toolsets(payload.tool_names, mcp_tools)
         except UnknownToolError as exc:
             raise TurnSetupError(str(exc), "unknown_tool") from exc
+
+        # The global disable list, subtracted from what was resolved -- never
+        # from payload.tool_names before it. Filtering the names first would
+        # turn a preset naming only disabled tools into an empty list, which
+        # merge_toolsets reads as falsy and expands to the ENTIRE registry: a
+        # switch on /tools would widen the turn instead of narrowing it. A
+        # comprehension over the resolved list can only shrink it, and keeps
+        # ALL_TOOLS order, so the cached prompt prefix is disturbed only from
+        # the first removed tool onward.
+        if disabled_tools:
+            tools = [tool for tool in tools if tool.name not in disabled_tools]
+
         if propose_project_tool:
+            # Appended after the disable filter above, and deliberately: these
+            # three are not in ALL_TOOLS, so they never reach /tools and can
+            # never be in the disable list. Filtering them would be a no-op
+            # today and a silent removal of the global chat's own affordances
+            # the day someone registers them. The list governs the registry,
+            # not this route's injected tools.
+            #
             # Appended locally rather than threaded into merge_toolsets: that
             # module is also reused by workflow nodes, which have no concept
             # of a project-scoped chat. [*tools, ...] also guarantees a fresh

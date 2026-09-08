@@ -10,7 +10,9 @@
 
 import {
   Braces,
+  Brain,
   Compass,
+  FolderKanban,
   FolderOpen,
   GitBranch,
   Globe,
@@ -27,6 +29,15 @@ import type { ToolInfo } from "@/lib/workflow-api";
 /** An older harness predates `Tool.group`; those tools land here. */
 export const UNGROUPED = "General";
 
+/**
+ * The prefix backend/app/mcp/tools.py gives every discovered tool's group.
+ *
+ * Declared here rather than in tool-selection.ts because both the composer and
+ * the /tools page need it, and only this module is shared by the two. It had
+ * drifted into three separate copies before that.
+ */
+export const MCP_GROUP_PREFIX = "MCP · ";
+
 export type ToolGroup = {
   name: string;
   tools: ToolInfo[];
@@ -37,6 +48,8 @@ const PRESENTATION: Record<string, { icon: LucideIcon; tone: CardTone }> = {
   Validation: { icon: ShieldCheck, tone: "green" },
   Execution: { icon: Terminal, tone: "amber" },
   "Version Control": { icon: GitBranch, tone: "sky" },
+  Memory: { icon: Brain, tone: "purple" },
+  Project: { icon: FolderKanban, tone: "sky" },
   "Code Intelligence": { icon: Braces, tone: "purple" },
   "Project Insight": { icon: Compass, tone: "green" },
   Web: { icon: Globe, tone: "neutral" },
@@ -46,7 +59,17 @@ const MCP_PRESENTATION = { icon: Plug, tone: "purple" } as const;
 const FALLBACK = { icon: Wrench, tone: "neutral" } as const;
 
 export function groupPresentation(name: string): { icon: LucideIcon; tone: CardTone } {
-  return PRESENTATION[name] ?? (name.startsWith("MCP · ") ? MCP_PRESENTATION : FALLBACK);
+  return (
+    PRESENTATION[name] ??
+    (name.startsWith(MCP_GROUP_PREFIX) ? MCP_PRESENTATION : FALLBACK)
+  );
+}
+
+/** "MCP · github" -> "github". */
+export function serverNameFromGroup(group: string): string {
+  return group.startsWith(MCP_GROUP_PREFIX)
+    ? group.slice(MCP_GROUP_PREFIX.length)
+    : group;
 }
 
 /** The single place a tool's group name is normalized. */

@@ -16,6 +16,11 @@ import { cn } from "@/lib/utils";
  * a project needs Edit and Delete on the card itself, and the alternative — a
  * ProjectCard that forks this file — would drift the moment either side was
  * touched. Pickers pass neither slot and stay safe to wrap in a button.
+ *
+ * `control` is the third, and is distinct from `actions` on purpose: a menu
+ * ABOUT a resource and a switch that CHANGES it are different promises, and
+ * /tools needs the second. Folding a switch into `actions` would have made the
+ * slot mean either thing depending on the caller.
  */
 
 /** Icon-tile tints. Keyed by role, not by page, so two pages showing the same
@@ -57,6 +62,7 @@ export default function ResourceCard({
   selected = false,
   action,
   actions,
+  control,
 }: {
   icon: LucideIcon;
   tone?: CardTone;
@@ -78,6 +84,9 @@ export default function ResourceCard({
   /** Top-right slot, for a row-actions menu. Omitted in pickers for the same
    *  reason as `action`. */
   actions?: React.ReactNode;
+  /** Top-right slot for a control that changes this resource — a switch, not a
+   *  menu. Sits beside `actions`; a card may carry both. */
+  control?: React.ReactNode;
 }) {
   return (
     <div
@@ -104,7 +113,12 @@ export default function ResourceCard({
           >
             <Icon className="size-5" aria-hidden />
           </div>
-          {actions && <div className="-mt-1 -mr-1 shrink-0">{actions}</div>}
+          {(control || actions) && (
+            <div className="-mt-1 -mr-1 flex shrink-0 items-center gap-1">
+              {control}
+              {actions}
+            </div>
+          )}
         </div>
 
         <div className="min-w-0">
