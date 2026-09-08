@@ -18,6 +18,20 @@ class Session:
     # ruled on. The assistant turn holding them is ALREADY in `history`, so a
     # resume only has to append the results.
     pending: list[ToolCallRequest] | None = None
+    # What the tool router chose for this session, and what it held back.
+    #
+    # Stored rather than recomputed because the approve path re-enters
+    # _prepare_turn to rebuild the turn, and routing again there would be both a
+    # wasted call and a correctness bug: `history` above already contains
+    # tool_use blocks naming the ORIGINAL selection, and a second router call is
+    # free to answer differently. A resume replays these instead.
+    #
+    # None means "never routed" -- a session that predates this, or one whose
+    # pool was small enough to use whole. Both are handled as a passthrough,
+    # which is why this is not an empty list by default: [] would be
+    # indistinguishable from "routed, and chose nothing".
+    selected_tool_names: list[str] | None = None
+    reserve_tool_names: list[str] | None = None
 
 
 class SessionStore:
