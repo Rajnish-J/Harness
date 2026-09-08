@@ -35,6 +35,7 @@ import {
   isToolEnabled,
   selectableGroups,
   serverNameFromGroup,
+  type DisabledTools,
   type SelectableGroup,
 } from "@/lib/tool-selection";
 import { cn } from "@/lib/utils";
@@ -111,7 +112,18 @@ export default function CommandMenu() {
   // Groups are always computed from the *whole* catalog so the counts and the
   // switch state describe the real group, not the search result. Searching only
   // narrows which groups are listed and which tools show inside them.
-  const allGroups = selectableGroups(catalog.tools, preset.toolNames);
+  const allGroups = selectableGroups(
+    catalog.tools,
+    preset.toolNames,
+    catalog.disabledTools,
+  );
+
+  // How many of the tools on screen are switched off for everyone. Counted from
+  // the catalog rather than from disabledTools.size, which also holds names for
+  // servers that are not attached right now and tools this harness no longer has.
+  const offHere = catalog.tools.filter((tool) =>
+    catalog.disabledTools.has(tool.name),
+  ).length;
   const groups = allGroups
     .map((group) => ({
       group,
@@ -335,9 +347,15 @@ export default function CommandMenu() {
                     icon={Wrench}
                     label="Tools"
                     count={
-                      toolsOff ? 0 : enabledCount(catalog.tools, preset.toolNames)
+                      toolsOff
+                        ? 0
+                        : enabledCount(
+                            catalog.tools,
+                            preset.toolNames,
+                            catalog.disabledTools,
+                          )
                     }
-                    hint={describeToolCounts(catalog.tools)}
+                    hint={describeToolCounts(catalog.tools, catalog.disabledTools)}
                     href="/tools"
                   />
 
@@ -345,6 +363,17 @@ export default function CommandMenu() {
                     <p className="mx-1 mb-1 rounded-lg bg-muted/50 px-2 py-1.5 text-[11px] text-muted-foreground">
                       Chat mode offers the model no tools. Switch to Auto or
                       Manual to use these.
+                    </p>
+                  )}
+
+                  {/* The other reason a switch here can be inert, and the one
+                      that is not about this turn at all. The heading already
+                      links to /tools, so this does not repeat the link. */}
+                  {!toolsOff && offHere > 0 && (
+                    <p className="mx-1 mb-1 rounded-lg bg-muted/50 px-2 py-1.5 text-[11px] text-muted-foreground">
+                      {offHere} {offHere === 1 ? "tool is" : "tools are"} switched
+                      off for everyone on the Tools page, and cannot be enabled
+                      here.
                     </p>
                   )}
 
@@ -365,6 +394,7 @@ export default function CommandMenu() {
                       onToggleGroup={() => toggleToolGroup(group)}
                       onToggleTool={toggleTool}
                       toolNames={preset.toolNames}
+                      disabledTools={catalog.disabledTools}
                     />
                   ))}
                 </section>
@@ -602,6 +632,11 @@ function Row({
  * One tool group: a switch for the whole group, with the individual tools one
  * click away. The useful question is almost always "may it touch files at all",
  * not "may it call list_directory specifically".
+ *
+ * Every control here is a Switch, including the per-tool ones. They were
+ * checkboxes, which made a nested list of permissions read as a form to submit
+ * rather than a set of things already on or off — and put two different control
+ * languages one indent apart.
  */
 function GroupRow({
   group,
@@ -612,6 +647,7 @@ function GroupRow({
   onToggleGroup,
   onToggleTool,
   toolNames,
+  disabledTools,
 }: {
   group: SelectableGroup;
   /** What to list when expanded — the search result, or the whole group. */
@@ -622,6 +658,8 @@ function GroupRow({
   onToggleGroup: () => void;
   onToggleTool: (name: string) => void;
   toolNames: string[] | null;
+  /** Switched off globally on /tools: shown, struck through, and not toggleable. */
+  disabledTools: DisabledTools;
 }) {
   const { icon: Icon } = groupPresentation(group.name);
 
@@ -649,9 +687,14 @@ function GroupRow({
 
         <Switch
           checked={group.state !== "off"}
-          disabled={disabled}
+          disabled={disabled || group.locked}
           onCheckedChange={onToggleGroup}
           aria-label={`Toggle ${group.name}`}
+          title={
+            group.locked
+              ? "Every tool in this group is switched off on the Tools page."
+              : undefined
+          }
           // A partly-on group reads as on but dimmed, so the switch never
           // claims a state the count contradicts.
           className={group.state === "partial" ? "opacity-60" : ""}
@@ -660,20 +703,46 @@ function GroupRow({
 
       {expanded && (
         <ul className="pb-1 pl-9">
-          {tools.map((tool) => (
-            <li key={tool.name}>
-              <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 transition-colors hover:bg-accent">
-                <input
-                  type="checkbox"
-                  checked={isToolEnabled(tool.name, toolNames)}
-                  disabled={disabled}
-                  onChange={() => onToggleTool(tool.name)}
-                  className="size-3.5 accent-primary"
-                />
-                <span className="truncate font-mono text-[11px]">{tool.name}</span>
-              </label>
-            </li>
-          ))}
+          {tools.map((tool) => {
+            const locked = disabledTools.has(tool.name);
+            return (
+              <li key={tool.name}>
+                {/* Name first, switch pushed right, so the row echoes the group
+                    row above rather than mirroring it. Scaled down because the
+                    kit's Switch has one size and a nested control that matches
+                    its parent's weight stops reading as nested. */}
+                <label
+                  className={cn(
+                    "flex items-center gap-2 rounded px-2 py-1 transition-colors",
+                    disabled || locked
+                      ? "cursor-default"
+                      : "cursor-pointer hover:bg-accent",
+                  )}
+                  title={
+                    locked
+                      ? `${tool.name} is switched off for everyone on the Tools page.`
+                      : undefined
+                  }
+                >
+                  <span
+                    className={cn(
+                      "min-w-0 flex-1 truncate font-mono text-[11px]",
+                      locked && "text-muted-foreground line-through",
+                    )}
+                  >
+                    {tool.name}
+                  </span>
+                  <Switch
+                    checked={isToolEnabled(tool.name, toolNames, disabledTools)}
+                    disabled={disabled || locked}
+                    onCheckedChange={() => onToggleTool(tool.name)}
+                    aria-label={`Toggle ${tool.name}`}
+                    className="scale-75"
+                  />
+                </label>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
