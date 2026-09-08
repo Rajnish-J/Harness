@@ -16,6 +16,7 @@ from app.core.config import Settings
 from app.db.registry_repo import (
     McpServerRow,
     get_enabled_mcp_servers,
+    get_mcp_servers,
     list_enabled_mcp_servers,
 )
 from app.mcp.credentials import resolve_auth
@@ -64,8 +65,16 @@ async def resolve_mcp_tools(
     app: Any,
     settings: Settings,
     server_ids: list[str],
+    include_disabled: bool = False,
 ) -> tuple[list[Tool], list[McpNotice]]:
-    """Tools for the servers attached to this turn, plus any failure notices."""
+    """Tools for the servers attached to this turn, plus any failure notices.
+
+    `include_disabled` is for the /tools page alone, which reports what every
+    configured server offers and must not make a disabled one look empty. It
+    defaults to False so every existing caller -- the chat path above all --
+    keeps reaching only servers that are switched on. Turning it on is a
+    preview: these tools are listed, never attached to a turn.
+    """
     manager = getattr(app.state, "mcp", None)
     if manager is None:
         return [], []
@@ -87,11 +96,12 @@ async def resolve_mcp_tools(
         return [], [McpNotice(message=NO_DATABASE_NOTICE)]
 
     try:
-        servers = (
-            await list_enabled_mcp_servers(pool)
-            if attach_all
-            else await get_enabled_mcp_servers(pool, server_ids)
-        )
+        if attach_all:
+            servers = await list_enabled_mcp_servers(pool)
+        elif include_disabled:
+            servers = await get_mcp_servers(pool, server_ids)
+        else:
+            servers = await get_enabled_mcp_servers(pool, server_ids)
     except Exception as exc:  # noqa: BLE001 - a read failure is not a chat failure
         logger.warning("Could not read mcp_servers: %s", exc)
         return [], [McpNotice(message=f"Could not read the MCP server list: {exc}")]
