@@ -1,13 +1,19 @@
 import logging
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse
 from psycopg_pool import AsyncConnectionPool
 
-from app.agent.llm.catalog import PRICING_AS_OF, default_model, models_for
+from app.agent.llm.catalog import (
+    PRICING_AS_OF,
+    ResolvedCredential,
+    default_model,
+    models_for,
+)
 from app.agent.llm.errors import ProviderSDKMissingError
 from app.agent.llm.resolver import NoCredentialError, client_for_turn, load_credentials
 from app.agent.loop import SYSTEM_PROMPT, run_agent_loop, resume_agent_loop
@@ -19,6 +25,7 @@ from app.agent.tools.project.attach_tools import (
     PROPOSE_ATTACH_PROJECT_TOOL,
 )
 from app.agent.tools.project.project_tools import PROPOSE_CREATE_PROJECT_TOOL
+from app.agent.tools.router import ToolSelection, restore_selection, select_tools
 from app.agent.tools.toolsets import UnknownToolError, merge_toolsets
 from app.api.sse import SSE_HEADERS
 from app.agent.exec_context import ExecutionContext
@@ -30,7 +37,13 @@ from app.projects.workspaces import InvalidProjectIdError, settings_for_project
 from app.mcp import resolve_mcp_tools
 from app.mcp.tools import server_names
 from app.models.chat import ApprovalRequest, ChatRequest, ResetRequest, TurnPreset
-from app.models.events import AgentEvent, DoneEvent, ErrorEvent, sse_comment
+from app.models.events import (
+    AgentEvent,
+    DoneEvent,
+    ErrorEvent,
+    ToolSelectionEvent,
+    sse_comment,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["chat"])
@@ -91,6 +104,15 @@ class Turn:
     #: needs it at tool-dispatch time, for `remember`; _rehydrate and _persist
     #: read app.state themselves, since they are handed the request anyway.
     pool: AsyncConnectionPool | None = None
+    #: Tools the router held back, which `request_tools` can pull back in
+    #: mid-turn. Empty whenever routing did not run.
+    tool_reserve: list[Tool] = field(default_factory=list)
+    #: Emitted ahead of the loop's own events when routing was possible -- which
+    #: includes the fail-open case, so a router that went quiet is visible
+    #: rather than looking like a turn that simply chose everything. Carried on
+    #: the Turn rather than added to the notices tuple because it is a
+    #: transcript item, not an error line.
+    selection_event: ToolSelectionEvent | None = None
 
 
 class TurnSetupError(Exception):
@@ -102,16 +124,62 @@ class TurnSetupError(Exception):
         self.code = code
 
 
+async def _router_client(
+    pool: AsyncConnectionPool | None,
+    settings: Settings,
+    credentials: dict[str, ResolvedCredential] | None,
+    turn_client: object,
+    turn_model: str,
+) -> tuple[object | None, str | None, str | None]:
+    """The client the tool router runs on: `(client, model, note)`.
+
+    With no `tool_router_model` configured, the turn's own client does the
+    routing. That is the honest default -- it always works, and it is the only
+    thing available on a single-key deployment.
+
+    When one IS named and cannot be built, routing is skipped rather than
+    quietly falling back to the turn's model. Falling back would spend Opus
+    tokens on routing on every message, which is precisely the cost the setting
+    exists to avoid, and it would do so silently. Skipping is visible: the note
+    reaches the transcript, so the operator sees their setting is not working.
+    """
+    if not settings.tool_router_model:
+        return turn_client, turn_model, None
+
+    try:
+        client, model = await client_for_turn(
+            pool, settings, settings.tool_router_model, credentials
+        )
+    except Exception as exc:  # noqa: BLE001 - never fatal; the turn still runs
+        logger.warning(
+            "Tool router model %r is unusable: %s", settings.tool_router_model, exc
+        )
+        return (
+            None,
+            None,
+            f"The tool router model ({settings.tool_router_model}) is not "
+            "available, so every tool was offered.",
+        )
+    return client, model, None
+
+
 async def _prepare_turn(
     request: Request,
     payload: TurnPreset,
     settings: Settings,
+    user_message: str | None = None,
 ) -> tuple[Turn, list[tuple[str, str]]]:
     """Resolve a preset into a runnable turn, plus any non-fatal (message, code) notices.
 
     Shared by both routes so a resumed turn is built exactly like the turn that
     paused — a drift here would mean approving a call from one toolset and
     running it under another.
+
+    `user_message` is what separates the two. Only /chat passes it, and only a
+    turn that has one is routed; /approve leaves it None and the selection is
+    replayed from the session instead. Routing a resume would spend a second
+    call and could answer differently, while history already holds tool_use
+    blocks naming the first answer — which is the drift above, in a new place.
     """
     # Per-turn overrides. model_copy skips validators, which is what makes this
     # cheap enough to do per request; same trick app/workflow/nodes/agent_node.py
@@ -152,9 +220,14 @@ async def _prepare_turn(
     # what a single hardcoded code did — would be a lie to the client.
     setup_notices: list[tuple[str, str]] = []
     pool = getattr(request.app.state, "pool", None)
+    # Resolved once and reused for the router's client below. Two calls to
+    # client_for_turn would otherwise mean two passes over model_credentials,
+    # including two decryptions, for one turn.
+    credentials = None
     try:
-        llm_client, _resolved_model = await client_for_turn(
-            pool, turn_settings, payload.model
+        credentials = await load_credentials(pool, turn_settings)
+        llm_client, resolved_model = await client_for_turn(
+            pool, turn_settings, payload.model, credentials
         )
     except NoCredentialError as exc:
         # An operator problem with a specific fix, and the message names it.
@@ -223,9 +296,13 @@ async def _prepare_turn(
             )
 
     tools: list[Tool] | None
+    tool_reserve: list[Tool] = []
+    #: None means routing never came up, so the transcript shows nothing.
+    selection: ToolSelection | None = None
     if payload.mode == "chat":
         # An empty list, not None: None means "the full registry". Nothing is
-        # advertised and nothing can be dispatched.
+        # advertised and nothing can be dispatched. Nothing to route, either --
+        # the router is asked to narrow a toolset, and there isn't one.
         tools = []
         notices: list[tuple[str, str]] = []
         attached_mcp: list[str] = []
@@ -256,6 +333,41 @@ async def _prepare_turn(
         # the first removed tool onward.
         if disabled_tools:
             tools = [tool for tool in tools if tool.name not in disabled_tools]
+
+        # ---- routing ------------------------------------------------------
+        # Everything above decided what this turn MAY call. This decides what it
+        # is actually shown, which is a strict subset -- see
+        # app/agent/tools/router.py. It sits here, after the disable list, so
+        # the router can never re-offer something switched off on /tools, and
+        # before the three project tools below, which are this route's own
+        # affordances and are not the router's to withhold.
+        if user_message is None:
+            # The approve path. Replaying the first turn's selection rather than
+            # routing again: history already holds tool_use blocks naming it,
+            # and a second router call is free to answer differently.
+            selection = restore_selection(
+                tools, session.selected_tool_names, session.reserve_tool_names
+            ) or ToolSelection(tools=tools, pool_size=len(tools))
+        else:
+            router_client, router_model, router_note = await _router_client(
+                pool, turn_settings, credentials, llm_client, resolved_model
+            )
+            selection = await select_tools(
+                pool=tools,
+                user_message=user_message,
+                client=router_client,
+                settings=turn_settings,
+                model=router_model,
+                enabled=payload.auto_select_tools,
+                unavailable_note=router_note,
+            )
+            # Stored for the resume above. Written even when nothing was
+            # narrowed, so a later approve replays this turn exactly.
+            session.selected_tool_names = selection.selected_names
+            session.reserve_tool_names = selection.reserve_names
+
+        tools = selection.tools
+        tool_reserve = selection.reserve
 
         if propose_project_tool:
             # Appended after the disable filter above, and deliberately: these
@@ -302,10 +414,38 @@ async def _prepare_turn(
             project_id=project_id,
             execution_note=execution_note,
             pool=pool,
+            tool_reserve=tool_reserve,
+            selection_event=_selection_event(selection),
         ),
         # Setup notices first: "this chat starts fresh" changes how the reply
         # above it should be read, so it belongs before any MCP grumbling.
         setup_notices + notices,
+    )
+
+
+def _selection_event(selection: ToolSelection | None) -> ToolSelectionEvent | None:
+    """The transcript item for a routing decision, or None if there was none.
+
+    A selection that neither ran nor has anything to say is dropped rather than
+    streamed: below-threshold turns and `mode="chat"` are the common case, and a
+    "chose nothing, for no reason" line in every transcript would be noise. A
+    fail-open always carries a note, so it always survives this.
+    """
+    if selection is None or (not selection.ran and selection.note is None):
+        return None
+
+    return ToolSelectionEvent(
+        # Doubles as the transcript row's tool_call_id, so a reload can fold the
+        # persisted arguments back into the same step.
+        id=f"sel_{uuid4().hex[:12]}",
+        selected=[
+            {"name": tool.name, "group": tool.group} for tool in selection.tools
+        ],
+        pool_size=selection.pool_size,
+        reason=selection.reason,
+        ran=selection.ran,
+        note=selection.note,
+        model=selection.model,
     )
 
 
@@ -407,6 +547,25 @@ def _entry_for(event: AgentEvent) -> project_chat_repo.TranscriptEntry | None:
             content=event.content,
             is_error=event.is_error,
         )
+    if kind == "tool_selection":
+        # Stored as a tool_call row named select_tools rather than as a role of
+        # its own. The chat_role enum lives in Drizzle (frontend/db/schema.ts),
+        # which owns all DDL here -- adding a value would mean a migration for
+        # what is, on the wire, exactly what this is: one call, with arguments,
+        # that shaped the turn. The reader maps the name back.
+        return project_chat_repo.TranscriptEntry(
+            role="tool_call",
+            tool_name="select_tools",
+            tool_call_id=event.id,
+            tool_args={
+                "selected": event.selected,
+                "pool_size": event.pool_size,
+                "reason": event.reason,
+                "ran": event.ran,
+                "note": event.note,
+                "model": event.model,
+            },
+        )
     if kind == "error":
         return project_chat_repo.TranscriptEntry(role="error", content=event.message)
     # approval_request, project_proposal, and done carry no transcript line of
@@ -427,7 +586,9 @@ async def _chat_stream(
     yield sse_comment("stream open")
 
     try:
-        turn, notices = await _prepare_turn(request, payload, settings)
+        turn, notices = await _prepare_turn(
+            request, payload, settings, user_message=payload.message
+        )
     except TurnSetupError as exc:
         for event in _setup_failure(exc):
             yield event.to_sse()
@@ -442,6 +603,14 @@ async def _chat_stream(
         project_chat_repo.TranscriptEntry(role="user", content=payload.message)
     ]
 
+    # Ahead of the loop's first event, because it explains the toolset every
+    # step below was chosen from.
+    if turn.selection_event is not None:
+        entry = _entry_for(turn.selection_event)
+        if entry is not None:
+            entries.append(entry)
+        yield turn.selection_event.to_sse()
+
     async for event in run_agent_loop(
         session=turn.session,
         llm_client=turn.llm_client,
@@ -449,6 +618,7 @@ async def _chat_stream(
         user_message=payload.message,
         is_disconnected=request.is_disconnected,
         tools=turn.tools,
+        tool_reserve=turn.tool_reserve,
         system=turn.system,
         require_approval=turn.require_approval,
         executor=turn.executor,
@@ -491,6 +661,7 @@ async def _approve_stream(
         decisions=decisions,
         is_disconnected=request.is_disconnected,
         tools=turn.tools,
+        tool_reserve=turn.tool_reserve,
         system=turn.system,
         require_approval=turn.require_approval,
         executor=turn.executor,
@@ -747,6 +918,14 @@ async def config(settings: Settings = Depends(get_settings)) -> dict[str, object
             "test": settings.test_command,
             "lint": settings.lint_command,
             "build": settings.build_command,
+        },
+        # What the composer's auto-select switch is defaulting to, so the
+        # Settings page can explain why a turn was or was not narrowed.
+        "tool_router": {
+            "enabled": settings.tool_router_enabled,
+            "model": settings.tool_router_model,
+            "threshold": settings.tool_router_threshold,
+            "max_tools": settings.tool_router_max_tools,
         },
         "workflows": {
             "max_nodes": settings.max_workflow_nodes,

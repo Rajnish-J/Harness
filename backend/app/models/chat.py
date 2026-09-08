@@ -92,6 +92,14 @@ class TurnPreset(BaseModel):
     )
     max_iterations: int | None = Field(default=None, ge=1, le=50)
     mode: ToolMode = "agent"
+    #: Whether the tool router narrows this turn's toolset before it runs.
+    #:
+    #: None follows the server (`tool_router_enabled`, and only above
+    #: `tool_router_threshold`); True forces routing even on a small toolset;
+    #: False skips it. Optional and None-defaulted like every other preset field
+    #: above, so a bare {session_id, message} body still behaves as it always
+    #: did -- see this module's docstring.
+    auto_select_tools: bool | None = None
 
 
 class ChatRequest(TurnPreset):

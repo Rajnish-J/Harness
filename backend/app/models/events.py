@@ -33,6 +33,32 @@ class ToolResultEvent(AgentEvent):
     content: str
 
 
+class ToolSelectionEvent(AgentEvent):
+    """Which tools this turn was narrowed to, and why.
+
+    Emitted once, before the loop's first decision, whenever a turn could have
+    been narrowed -- including when it was not. `ran=False` with a `note` is how
+    a fail-open is made visible: the router going quiet must not look like it
+    simply chose everything.
+
+    `selected` carries the group alongside each name so the transcript can show
+    the same section labels the composer and /tools use, without the client
+    having to re-fetch the catalog to look them up.
+    """
+
+    type: Literal["tool_selection"] = "tool_selection"
+    #: Shared with the transcript row this becomes, so a reload can fold the
+    #: persisted args back into the same step.
+    id: str
+    selected: list[dict[str, str]]
+    pool_size: int
+    reason: str = ""
+    ran: bool = False
+    note: str | None = None
+    #: The model that did the choosing, or None when nothing ran.
+    model: str | None = None
+
+
 class ApprovalRequestEvent(AgentEvent):
     """A tool call the loop will not run until the user says so.
 
