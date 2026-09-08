@@ -50,11 +50,19 @@ def test_mirror_has_no_duplicates():
 
 
 def test_every_injected_kwarg_is_a_real_setting():
-    """Each injected name is either a Settings field or one of the four
+    """Each injected name is either a Settings field or one of the
     loop-scoped extras, so a typo cannot quietly inject None forever."""
     from app.core.config import Settings
 
-    loop_scoped = {"executor", "pool", "project_id", "session_id"}
+    # Resolved per turn rather than read from Settings. tool_reserve_names is
+    # the tool router's held-back set, which only request_tools reads.
+    loop_scoped = {
+        "executor",
+        "pool",
+        "project_id",
+        "session_id",
+        "tool_reserve_names",
+    }
     fields = set(Settings.model_fields)
 
     for name in LOOP_INJECTED_KWARGS:
