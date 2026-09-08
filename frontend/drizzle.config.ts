@@ -34,6 +34,7 @@ export default defineConfig({
     "project_chat_sessions",
     "project_chat_messages",
     "memory_entries",
+    "tool_settings",
   ],
   verbose: true,
   strict: true,

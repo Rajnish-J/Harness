@@ -721,3 +721,41 @@ export const memoryEntries = pgTable(
 );
 
 export type MemoryEntryRow = typeof memoryEntries.$inferSelect;
+
+// ---------------------------------------------------------------- tool settings
+
+/**
+ * Which tools are switched off for every turn, from the /tools page.
+ *
+ * This is a global subtraction, not an allowlist: the composer's per-turn
+ * `tool_names` and an agent's saved `toolNames` still mean what they meant, and
+ * the harness removes anything disabled here after resolving them. See
+ * `_prepare_turn` in backend/app/api/chat.py for the enforcement point -- the
+ * switches on /tools would otherwise be decoration.
+ *
+ * One row per tool rather than a single jsonb array. The unique constraint makes
+ * a write an idempotent upsert, so two tabs toggling at once cannot clobber each
+ * other; an array would be read-modify-write and would lose a toggle.
+ */
+export const toolSettings = pgTable(
+  "tool_settings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /**
+     * A built-in name from Python's ALL_TOOLS, or `mcp__{server}__{tool}`.
+     *
+     * Not a foreign key, and cannot be: the tool registry lives in Python, not
+     * in Postgres. Same discipline as agents.tool_names and
+     * skills.allowed_tools. Renaming an MCP server strands its rows here --
+     * they stop matching any tool and are inert, never a wrong grant.
+     */
+    toolName: text("tool_name").notNull(),
+    /** Only `false` rows carry meaning today. The column exists so a future
+     *  "explicitly allowed" state needs no second migration. */
+    enabled: boolean("enabled").notNull().default(true),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique("tool_settings_tool_name_uq").on(t.toolName)],
+);
+
+export type ToolSettingRow = typeof toolSettings.$inferSelect;
