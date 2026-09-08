@@ -8,12 +8,13 @@
 Every branch in [`Rajnish-J/Harness`](https://github.com/Rajnish-J/Harness) — what it was for, when it
 started, and when it landed. The base branch is `main`.
 
-_Last updated 2026-09-08 (UTC) · 11 merged · 0 open · 0 closed unmerged · 0 without a PR_
+_Last updated 2026-09-08 (UTC) · 12 merged · 0 open · 0 closed unmerged · 0 without a PR_
 
 ## Merged branches
 
 | Branch | PR | Purpose | Created | Merged | Into | Changes |
 | --- | --- | --- | --- | --- | --- | --- |
+| `feat/global-tool-settings` | [#12](https://github.com/Rajnish-J/Harness/pull/12) | Adds a global tool disable list: a switch on /tools takes a tool out of every chat turn, stored in Postgres and enforced server-side in the harness rather than… | 2026-09-08 | 2026-09-08 | `main` | 26 files, +3527 / −165 |
 | `feat/github-mcp-integration` | [#11](https://github.com/Rajnish-J/Harness/pull/11) | Connects the harness to remote MCP servers end to end — credential-backed auth, real connection status in the UI, and a GitHub catalog entry — then builds out… | 2026-09-05 | 2026-09-08 | `main` | 128 files, +10976 / −489 |
 | `feat/provider-key-text-input` | [#10](https://github.com/Rajnish-J/Harness/pull/10) | Adds project scaffolding and a set of chat/project workspace features on top of main, plus a couple of smaller fixes. This is a mixed diff — 54 new files and 4… | 2026-09-04 | 2026-09-05 | `main` | 99 files, +10965 / −384 |
 | `feat/model-credentials-and-provider-keys` | [#9](https://github.com/Rajnish-J/Harness/pull/9) | Adds a Models tab to the existing Credentials page where LLM provider API keys are registered and encrypted at rest, and makes those keys — not LLM_PROVIDER —… | 2026-09-03 | 2026-09-03 | `main` | 43 files, +5573 / −290 |
@@ -37,6 +38,14 @@ _None — every branch on the remote has a pull request._
 ---
 
 ## Details
+
+### `feat/global-tool-settings` → `main` ([#12](https://github.com/Rajnish-J/Harness/pull/12))
+
+**Merged** 2026-09-08 · created 2026-09-08 · by @Rajnish-J · 11 commits · 26 files, +3527 / −165 · branch still on the remote
+
+**feat(tools): switch tools off globally, enforced on every turn**
+
+Adds a global tool disable list: a switch on /tools takes a tool out of every chat turn, stored in Postgres and enforced server-side in the harness rather than only hidden in the UI. On main today /tools is a read-only catalog and the only way to narrow a turn is the composer's per-turn selection, which the model's own preset can widen again.
 
 ### `feat/github-mcp-integration` → `main` ([#11](https://github.com/Rajnish-J/Harness/pull/11))
 
