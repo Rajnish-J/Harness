@@ -102,6 +102,23 @@ class Settings(BaseSettings):
     # not respawned on every single message.
     mcp_retry_cooldown: float = 30.0
 
+    # ---- Tool router -------------------------------------------------------
+    # One cheap call before the turn picks which tools it is shown, because the
+    # whole list is serialized into every request and most turns need a
+    # fraction of it. See app/agent/tools/router.py.
+    tool_router_enabled: bool = True
+    # None reuses the turn's own client. Naming a cheap, fast model here is the
+    # point of the setting: routing on the turn's own model spends exactly the
+    # tokens the router exists to save.
+    tool_router_model: str | None = None
+    # Pools at or under this are used as-is. Below it, a round trip to be told
+    # "keep all six" costs more than it saves, on latency and on tokens.
+    tool_router_threshold: int = 25
+    # A ceiling on the router's own picks. The core floor is added on top and is
+    # never trimmed to honour this.
+    tool_router_max_tools: int = 12
+    tool_router_timeout: float = 20.0
+
     # ---- Web access --------------------------------------------------------
     # The agent's only route off this machine. Off by default: gaining network
     # egress should be a deliberate operator decision, not something that
