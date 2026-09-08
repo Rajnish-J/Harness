@@ -8,6 +8,11 @@ from app.agent.llm.base import LLMClient, ToolCallRequest, ToolResult
 from app.agent.session import Session
 from app.agent.exec_context import ExecutionContext
 from app.agent.tools.base import Tool, ToolExecutionError
+from app.agent.tools.meta.request_tools import (
+    REQUEST_TOOLS_TOOL_NAME,
+    normalize_names,
+    resolve_requested,
+)
 from app.agent.tools.project.attach_tools import PROPOSE_ATTACH_PROJECT_TOOL_NAME
 from app.agent.tools.project.project_tools import PROPOSE_CREATE_PROJECT_TOOL_NAME
 from app.agent.tools.registry import ALL_TOOLS
@@ -90,6 +95,7 @@ async def run_agent_loop(
     user_message: str,
     is_disconnected: Callable[[], Awaitable[bool]] | None = None,
     tools: list[Tool] | None = None,
+    tool_reserve: list[Tool] | None = None,
     system: str | None = None,
     require_approval: bool = False,
     executor: ExecutionContext | None = None,
@@ -108,6 +114,12 @@ async def run_agent_loop(
     gates *dispatch*, not just the advertised schemas, so a hallucinated tool
     name outside the subset is refused and comes back as a normal error result
     the model can recover from.
+
+    `tool_reserve` is what the tool router held back when it narrowed `tools`
+    (app/agent/tools/router.py). Nothing in it is advertised or dispatchable
+    until the model asks for it by name through `request_tools`, at which point
+    the schemas are rebuilt mid-turn. Empty -- the default -- means an unrouted
+    turn, where there is nothing held back and the hatch grants nothing.
 
     `system` replaces the built-in prompt for this turn; None keeps SYSTEM_PROMPT,
     which is exactly today's behaviour. It is passed fresh on every iteration and
@@ -131,6 +143,7 @@ async def run_agent_loop(
         settings=settings,
         is_disconnected=is_disconnected,
         tools=tools,
+        tool_reserve=tool_reserve,
         system=system,
         require_approval=require_approval,
         executor=executor,
@@ -148,6 +161,7 @@ async def resume_agent_loop(
     decisions: dict[str, bool],
     is_disconnected: Callable[[], Awaitable[bool]] | None = None,
     tools: list[Tool] | None = None,
+    tool_reserve: list[Tool] | None = None,
     system: str | None = None,
     require_approval: bool = True,
     executor: ExecutionContext | None = None,
@@ -183,6 +197,10 @@ async def resume_agent_loop(
 
     active_tools = ALL_TOOLS if tools is None else tools
     tools_by_name = {tool.name: tool for tool in active_tools}
+    # request_tools parks for approval like anything else in manual mode, so the
+    # grant has to be applied here as well -- otherwise approving it would widen
+    # nothing and the model would be told it had tools it cannot call.
+    reserve = list(tool_reserve or ())
 
     results: list[tuple[ToolCallRequest, ToolResult]] = []
     for call in pending:
@@ -195,7 +213,15 @@ async def resume_agent_loop(
                 pool=pool,
                 project_id=project_id,
                 session_id=session.session_id,
+                tool_reserve_names={tool.name for tool in reserve},
             )
+            widened, reserve = _apply_tool_request(
+                call, result, active_tools, reserve
+            )
+            if widened is not active_tools:
+                active_tools = widened
+                tools_by_name = {tool.name: tool for tool in active_tools}
+                _remember_widening(session, active_tools, reserve)
         else:
             result = ToolResult(content=DENIED_MESSAGE, is_error=True)
         results.append((call, result))
@@ -211,7 +237,10 @@ async def resume_agent_loop(
         llm_client=llm_client,
         settings=settings,
         is_disconnected=is_disconnected,
-        tools=tools,
+        # active_tools, not `tools`: an approved request_tools above may have
+        # widened it, and _drive must decide against what was actually granted.
+        tools=active_tools,
+        tool_reserve=reserve,
         system=system,
         require_approval=require_approval,
         resolved=results,
@@ -222,6 +251,63 @@ async def resume_agent_loop(
         yield event
 
 
+def _remember_widening(
+    session: Session, active_tools: list[Tool], reserve: list[Tool]
+) -> None:
+    """Record a mid-turn grant on the session, so a later approve replays it.
+
+    Manual mode parks on EVERY tool call, so a routed turn can cross the
+    approve boundary more than once. `_prepare_turn` rebuilds each resume from
+    `session.selected_tool_names`; without this, the second resume would restore
+    the ORIGINAL narrow selection and refuse a tool the first resume had already
+    granted -- with that tool's own tool_use block sitting in history.
+
+    Only written when the session already carries a selection. Writing one for
+    an unrouted turn would pin every later resume to whatever this turn happened
+    to hold, turning a full-registry conversation into a narrowed one.
+    """
+    if session.selected_tool_names is None:
+        return
+    session.selected_tool_names = [tool.name for tool in active_tools]
+    session.reserve_tool_names = [tool.name for tool in reserve]
+
+
+def _apply_tool_request(
+    call: ToolCallRequest,
+    result: ToolResult,
+    active_tools: list[Tool],
+    reserve: list[Tool],
+) -> tuple[list[Tool], list[Tool]]:
+    """Widen a routed turn's toolset after a successful `request_tools` call.
+
+    The tool router (app/agent/tools/router.py) trims what a turn advertises
+    before it starts; this is how the model undoes that trim without having to
+    start over. Every other call returns the same two lists unchanged, and the
+    caller detects "nothing happened" by identity.
+
+    Granted tools are APPENDED rather than merged back into pool order. Order is
+    the cacheable prompt prefix -- the reason registry.py is append-only -- so
+    slotting a tool back into its registry position would shift every schema
+    after it and invalidate the prefix the turn has already been paying to
+    build. Appending leaves every existing index where it was.
+    """
+    if call.name != REQUEST_TOOLS_TOOL_NAME or result.is_error or not reserve:
+        return active_tools, reserve
+
+    granted_names, _unknown = resolve_requested(
+        normalize_names(call.arguments.get("names")),
+        {tool.name for tool in reserve},
+    )
+    if not granted_names:
+        return active_tools, reserve
+
+    granted = set(granted_names)
+    return (
+        [*active_tools, *(tool for tool in reserve if tool.name in granted)],
+        [tool for tool in reserve if tool.name not in granted],
+    )
+
+
 async def _drive(
     *,
     session: Session,
@@ -229,6 +315,7 @@ async def _drive(
     settings: Settings,
     is_disconnected: Callable[[], Awaitable[bool]] | None,
     tools: list[Tool] | None,
+    tool_reserve: list[Tool] | None,
     system: str | None,
     require_approval: bool,
     resolved: list[tuple[ToolCallRequest, ToolResult]] | None = None,
@@ -246,6 +333,10 @@ async def _drive(
     active_system = SYSTEM_PROMPT if system is None else system
     tools_by_name = {tool.name: tool for tool in active_tools}
     tool_schemas = llm_client.tool_schemas(active_tools)
+    # Tools the router held back. All three of the bindings above are rebuilt
+    # from these when the model calls request_tools, which is the only thing in
+    # the turn allowed to change what it may call.
+    reserve = list(tool_reserve or ())
 
     # Accumulated across every LLM call this turn makes — a node can iterate
     # decide->act->observe several times before it's done, so a single call's
@@ -381,7 +472,21 @@ async def _drive(
                     pool=pool,
                     project_id=project_id,
                     session_id=session.session_id,
+                    tool_reserve_names={tool.name for tool in reserve},
                 )
+
+                # A granted request_tools call is the one thing that changes the
+                # turn's toolset mid-flight, so the schemas the next decision
+                # sees are rebuilt here rather than once at the top.
+                widened, reserve = _apply_tool_request(
+                    call, result, active_tools, reserve
+                )
+                if widened is not active_tools:
+                    active_tools = widened
+                    tools_by_name = {tool.name: tool for tool in active_tools}
+                    tool_schemas = llm_client.tool_schemas(active_tools)
+                    _remember_widening(session, active_tools, reserve)
+
                 results.append((call, result))
                 yield ToolResultEvent(
                     id=call.id,
@@ -443,6 +548,7 @@ async def _dispatch_tool(
     pool: AsyncConnectionPool | None = None,
     project_id: str | None = None,
     session_id: str | None = None,
+    tool_reserve_names: set[str] | None = None,
 ) -> ToolResult:
     """Run one tool call, turning every failure into a result the model can read."""
     if call.parse_error:
@@ -494,6 +600,10 @@ async def _dispatch_tool(
             web_allowed_domains=settings.web_allowed_domains,
             web_search_provider=settings.web_search_provider,
             web_search_api_key=settings.web_search_api_key,
+            # Read only by request_tools, so its message can name exactly what
+            # the loop is about to grant; every other tool absorbs it via
+            # **_ignored, same as executor and pool above.
+            tool_reserve_names=tool_reserve_names,
         )
         if inspect.isawaitable(output):
             output = await output
