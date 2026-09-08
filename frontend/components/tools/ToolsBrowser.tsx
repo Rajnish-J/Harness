@@ -2,8 +2,9 @@
 
 import { Plug, Search, Wrench } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { useChatPreset } from "@/components/chat/ChatPresetProvider";
 import EmptyState from "@/components/registry/EmptyState";
 import ResourceCard from "@/components/registry/ResourceCard";
 import SectionHeader from "@/components/registry/SectionHeader";
@@ -15,22 +16,29 @@ import ToolGroupDialog from "@/components/tools/ToolGroupDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { mcpApi } from "@/lib/registry-api";
 import type { McpServerSummary } from "@/lib/registry-types";
 import {
+  MCP_GROUP_PREFIX,
   groupPresentation,
   groupTools,
   toolGroupName,
   type ToolGroup,
 } from "@/lib/tool-groups";
 import {
+  fetchToolSettings,
+  setToolsEnabled,
+} from "@/lib/tool-settings-api";
+import {
   fetchMcpTools,
   fetchTools,
   type ToolInfo,
 } from "@/lib/workflow-api";
+import { cn } from "@/lib/utils";
 
 /**
- * Read-only view of the harness's tool registry, one card per group.
+ * The harness's tool registry, and the one place a tool is turned off for good.
  *
  * Fetched in the browser for the same reason the sidebar's config line is:
  * API_BASE is the harness as the *browser* sees it, and a server-side fetch
@@ -48,9 +56,11 @@ import {
  * from the page — which is the exact moment someone comes looking for it. A
  * server with no tools is now visible and says why.
  *
- * Adding and managing stay on /mcp. This page reports; it does not configure.
+ * What changed when this page became the source of truth: the switches write to
+ * tool_settings, and the harness subtracts that list from every turn. Adding
+ * and configuring MCP servers still lives on /mcp — this page reports on them
+ * and governs which of their tools may be spent.
  */
-const MCP_GROUP_PREFIX = "MCP · ";
 
 /** The tool group a server's tools land in. Mirrors mcp_group() in Python. */
 function groupNameFor(server: { name: string }): string {
@@ -66,34 +76,58 @@ export default function ToolsBrowser() {
     tools: ToolInfo[];
     notices: string[];
   } | null>(null);
+  // null until the disable list lands, so the page never renders a tool as on
+  // before it knows whether it is.
+  const [disabled, setDisabled] = useState<string[] | null>(null);
+  // Names with a write in flight. The switch holds still rather than flicking
+  // back and forth while the round trip runs.
+  const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
+  const [error, setError] = useState<string | null>(null);
+  // Disabled servers the operator has asked to dial. Discovery is a live
+  // connection — for a stdio server, a spawned process — so a server that is
+  // switched off is not contacted until someone asks for it by name.
+  const [previewIds, setPreviewIds] = useState<ReadonlySet<string>>(new Set());
   const [query, setQuery] = useState("");
   const [openGroup, setOpenGroup] = useState<string | null>(null);
+
+  // The composer holds the same list, and would otherwise keep showing tools as
+  // available until a full reload.
+  const { refetchToolSettings } = useChatPreset();
 
   useEffect(() => {
     const controller = new AbortController();
     fetchTools(controller.signal).then(setTools);
-    // Separate origins: tools come from the Python harness, servers from this
-    // app's own route. Either can be down without blanking the other, so the
-    // server list failing just leaves the MCP section empty.
+    // Separate origins: tools come from the Python harness, servers and the
+    // disable list from this app's own routes. Any can be down without blanking
+    // the others, so a failed server list just leaves the MCP section empty.
     mcpApi.list().then(setServers).catch(() => setServers([]));
+    fetchToolSettings(controller.signal).then(({ disabled: off }) =>
+      setDisabled(off),
+    );
     return () => controller.abort();
   }, []);
 
-  // Discovery is a second round trip, made per enabled server, and it is the
-  // only way this page can know a server's tools: GET /api/workflows/tools
-  // returns the built-in registry alone and never contains an mcp__* tool, so
-  // counting them out of `tools` would report zero for every server forever.
-  const enabledIds = (servers ?? [])
-    .filter((server) => server.enabled)
+  const disabledSet = useMemo(() => new Set(disabled ?? []), [disabled]);
+
+  // Discovery is a second round trip, made per server, and it is the only way
+  // this page can know a server's tools: GET /api/workflows/tools returns the
+  // built-in registry alone and never contains an mcp__* tool, so counting them
+  // out of `tools` would report zero for every server forever.
+  //
+  // Enabled servers are dialled automatically; disabled ones only once asked
+  // for, which is what keeps opening this page from spawning processes for
+  // servers deliberately switched off.
+  const discoverIds = (servers ?? [])
+    .filter((server) => server.enabled || previewIds.has(server.id))
     .map((server) => server.id)
     .join(",");
 
   useEffect(() => {
     if (servers === null) return;
     const controller = new AbortController();
-    const ids = enabledIds ? enabledIds.split(",") : [];
+    const ids = discoverIds ? discoverIds.split(",") : [];
 
-    fetchMcpTools(ids, controller.signal)
+    fetchMcpTools(ids, controller.signal, { includeDisabled: true })
       .then(({ tools: found, notices }) => {
         if (controller.signal.aborted) return;
         setDiscovered({ tools: found, notices });
@@ -103,7 +137,50 @@ export default function ToolsBrowser() {
       });
 
     return () => controller.abort();
-  }, [enabledIds, servers]);
+  }, [discoverIds, servers]);
+
+  /**
+   * Write a set of tools on or off.
+   *
+   * Optimistic, then reconciled against what the server reports rather than
+   * against what we assumed: a concurrent change from another tab lands here
+   * too. A rejection rolls the whole batch back and says why, because a switch
+   * that silently springs back is worse than one that explains itself.
+   */
+  const setEnabled = useCallback(
+    async (names: string[], enabled: boolean) => {
+      if (names.length === 0) return;
+
+      const previous = disabled ?? [];
+      setError(null);
+      setPending((prev) => new Set([...prev, ...names]));
+      setDisabled(
+        enabled
+          ? previous.filter((name) => !names.includes(name))
+          : [...new Set([...previous, ...names])].sort(),
+      );
+
+      try {
+        const result = await setToolsEnabled(names, enabled);
+        setDisabled(result.disabled);
+        await refetchToolSettings();
+      } catch (cause) {
+        setDisabled(previous);
+        setError(
+          cause instanceof Error
+            ? cause.message
+            : "Could not save that change.",
+        );
+      } finally {
+        setPending((prev) => {
+          const next = new Set(prev);
+          for (const name of names) next.delete(name);
+          return next;
+        });
+      }
+    },
+    [disabled, refetchToolSettings],
+  );
 
   const groups = useMemo(() => {
     if (!tools) return [];
@@ -158,10 +235,10 @@ export default function ToolsBrowser() {
     [tools, discovered, openGroup],
   );
 
-  // Both fetches must land before the page can tell "nothing here" from "not
-  // asked yet". They resolve independently, and whichever wins the race would
-  // otherwise render its half's empty state as if it were the answer.
-  if (tools === null || servers === null) {
+  // All three must land before the page can tell "nothing here" from "not asked
+  // yet". They resolve independently, and whichever wins the race would
+  // otherwise render its section's empty state as if it were the answer.
+  if (tools === null || servers === null || disabled === null) {
     return (
       <div className="flex flex-col gap-8">
         <Skeleton className="h-9 w-full" />
@@ -200,14 +277,23 @@ export default function ToolsBrowser() {
         />
       </div>
 
+      {error && (
+        <p className="rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs text-red-600 dark:text-red-400">
+          {error}
+        </p>
+      )}
+
       <section className="flex flex-col gap-4">
         <SectionHeader
           title="Built-in Tools"
-          hint="Registered in the Python harness. Every agent can be given any of them from its preset."
+          hint="Registered in the Python harness. A tool switched off here is withheld from every chat and agent turn."
         />
         <GroupGrid
           groups={builtin}
           query={query}
+          disabled={disabledSet}
+          pending={pending}
+          onSetEnabled={setEnabled}
           onManage={setOpenGroup}
           emptyTitle="No built-in tools match"
         />
@@ -246,31 +332,70 @@ export default function ToolsBrowser() {
             </p>
           ))}
           <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {mcpServers.map(({ server, tools: found }) => (
-              <li key={server.id}>
-                <ResourceCard
-                  icon={Plug}
-                  tone="purple"
-                  title={server.name}
-                  kind={server.transport}
-                  meta={server.description ?? server.url ?? server.command}
-                  status={serverStatus(server, found.length, discovering)}
-                  action={
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-full"
-                      disabled={found.length === 0}
-                      onClick={() => setOpenGroup(groupNameFor(server))}
-                    >
-                      {found.length === 0
-                        ? "No tools"
-                        : `View ${found.length} ${found.length === 1 ? "tool" : "tools"}`}
-                    </Button>
-                  }
-                />
-              </li>
-            ))}
+            {mcpServers.map(({ server, tools: found }) => {
+              const asked = server.enabled || previewIds.has(server.id);
+              const off = found.filter((tool) =>
+                disabledSet.has(tool.name),
+              ).length;
+              return (
+                <li key={server.id}>
+                  <ResourceCard
+                    icon={Plug}
+                    tone="purple"
+                    title={server.name}
+                    kind={server.transport}
+                    meta={
+                      off > 0
+                        ? `${found.length} tools · ${off} off`
+                        : (server.description ?? server.url ?? server.command)
+                    }
+                    status={serverStatus(server, found.length, discovering, asked)}
+                    control={
+                      found.length > 0 ? (
+                        <GroupSwitch
+                          name={server.name}
+                          tools={found}
+                          disabled={disabledSet}
+                          pending={pending}
+                          onSetEnabled={setEnabled}
+                        />
+                      ) : undefined
+                    }
+                    action={
+                      found.length > 0 ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full"
+                          onClick={() => setOpenGroup(groupNameFor(server))}
+                        >
+                          View {found.length}{" "}
+                          {found.length === 1 ? "tool" : "tools"}
+                        </Button>
+                      ) : asked ? (
+                        <Button variant="outline" size="sm" className="w-full" disabled>
+                          {discovering ? "Connecting…" : "No tools"}
+                        </Button>
+                      ) : (
+                        // Never dialled: this server is switched off, and
+                        // connecting to it costs a real connection — a spawned
+                        // process, for stdio. Asking is the operator's call.
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full"
+                          onClick={() =>
+                            setPreviewIds((prev) => new Set([...prev, server.id]))
+                          }
+                        >
+                          Discover tools
+                        </Button>
+                      )
+                    }
+                  />
+                </li>
+              );
+            })}
           </ul>
           </>
         )}
@@ -280,6 +405,9 @@ export default function ToolsBrowser() {
         <ToolGroupDialog
           group={openGroup}
           tools={openTools}
+          disabled={disabledSet}
+          pending={pending}
+          onSetTool={(name, enabled) => void setEnabled([name], enabled)}
           open
           onOpenChange={(next) => !next && setOpenGroup(null)}
         />
@@ -295,27 +423,89 @@ export default function ToolsBrowser() {
  * server itself. Without it a server that simply has not answered yet is shown
  * as "No tools discovered" — the same wording as a genuinely broken one, on the
  * page someone opens precisely to find out which they have.
+ *
+ * `asked` separates a third case the two above cannot express: a disabled
+ * server nobody has dialled. It is not broken and it is not connecting; it has
+ * simply never been contacted.
  */
 function serverStatus(
   server: McpServerSummary,
   toolCount: number,
   discovering: boolean,
+  asked: boolean,
 ): { tone: "ok" | "warn" | "idle"; label: string } {
-  if (!server.enabled) return { tone: "idle", label: "Disabled" };
+  if (!server.enabled) {
+    // Listed, never attachable: the harness reads mcp_servers with an enabled
+    // filter on every chat path, so these tools are a preview only.
+    if (toolCount > 0) {
+      return { tone: "idle", label: `Disabled · ${toolCount} tools listed` };
+    }
+    if (!asked) return { tone: "idle", label: "Disabled · not connected" };
+    return discovering
+      ? { tone: "idle", label: "Disabled · connecting…" }
+      : { tone: "warn", label: "Disabled · unreachable" };
+  }
   if (toolCount > 0) return { tone: "ok", label: "Connected" };
   if (discovering) return { tone: "idle", label: "Connecting…" };
   return { tone: "warn", label: "No tools discovered" };
+}
+
+/**
+ * A group's master switch.
+ *
+ * On when anything in the group is on, and dimmed when only some of it is — the
+ * same reading the composer's group switch uses, so the two surfaces never
+ * describe the same half-on group differently. Flipping it writes every tool in
+ * the group in one request, which the unique constraint on tool_name makes
+ * atomic.
+ */
+function GroupSwitch({
+  name,
+  tools,
+  disabled,
+  pending,
+  onSetEnabled,
+}: {
+  name: string;
+  tools: ToolInfo[];
+  disabled: ReadonlySet<string>;
+  pending: ReadonlySet<string>;
+  onSetEnabled: (names: string[], enabled: boolean) => void;
+}) {
+  const names = tools.map((tool) => tool.name);
+  const on = names.filter((toolName) => !disabled.has(toolName)).length;
+  const partial = on > 0 && on < names.length;
+  const busy = names.some((toolName) => pending.has(toolName));
+
+  return (
+    <Switch
+      checked={on > 0}
+      disabled={busy}
+      onCheckedChange={(next) => onSetEnabled(names, next)}
+      aria-label={`Toggle every tool in ${name}`}
+      title={
+        partial ? `${on} of ${names.length} tools in ${name} are on.` : undefined
+      }
+      className={cn(partial && "opacity-60")}
+    />
+  );
 }
 
 /** The built-in section's grid. MCP renders its own cards, one per server. */
 function GroupGrid({
   groups,
   query,
+  disabled,
+  pending,
+  onSetEnabled,
   onManage,
   emptyTitle,
 }: {
   groups: ToolGroup[];
   query: string;
+  disabled: ReadonlySet<string>;
+  pending: ReadonlySet<string>;
+  onSetEnabled: (names: string[], enabled: boolean) => void;
   onManage: (group: string) => void;
   emptyTitle: string;
 }) {
@@ -333,6 +523,9 @@ function GroupGrid({
     <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {groups.map((group) => {
         const { icon, tone } = groupPresentation(group.name);
+        const off = group.tools.filter((tool) =>
+          disabled.has(tool.name),
+        ).length;
         return (
           <li key={group.name}>
             <ResourceCard
@@ -340,7 +533,20 @@ function GroupGrid({
               tone={tone}
               title={group.name}
               kind="Tool group"
-              meta={`${group.tools.length} ${group.tools.length === 1 ? "tool" : "tools"}`}
+              meta={
+                off > 0
+                  ? `${group.tools.length} tools · ${off} off`
+                  : `${group.tools.length} ${group.tools.length === 1 ? "tool" : "tools"}`
+              }
+              control={
+                <GroupSwitch
+                  name={group.name}
+                  tools={group.tools}
+                  disabled={disabled}
+                  pending={pending}
+                  onSetEnabled={onSetEnabled}
+                />
+              }
               action={
                 <Button
                   variant="outline"
