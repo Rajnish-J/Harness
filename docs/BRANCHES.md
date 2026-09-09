@@ -8,12 +8,13 @@
 Every branch in [`Rajnish-J/Harness`](https://github.com/Rajnish-J/Harness) — what it was for, when it
 started, and when it landed. The base branch is `main`.
 
-_Last updated 2026-09-08 (UTC) · 12 merged · 0 open · 0 closed unmerged · 0 without a PR_
+_Last updated 2026-09-09 (UTC) · 13 merged · 0 open · 0 closed unmerged · 1 without a PR_
 
 ## Merged branches
 
 | Branch | PR | Purpose | Created | Merged | Into | Changes |
 | --- | --- | --- | --- | --- | --- | --- |
+| `fix/chat-delete` | [#13](https://github.com/Rajnish-J/Harness/pull/13) | Deleting a chat from the sidebar silently did nothing. The delete feature was fully implemented on main — UI, API client, route, and repository all correct — b… | 2026-09-09 | 2026-09-09 | `main` | 3 files, +81 / −2 |
 | `feat/global-tool-settings` | [#12](https://github.com/Rajnish-J/Harness/pull/12) | Adds a global tool disable list: a switch on /tools takes a tool out of every chat turn, stored in Postgres and enforced server-side in the harness rather than… | 2026-09-08 | 2026-09-08 | `main` | 26 files, +3527 / −165 |
 | `feat/github-mcp-integration` | [#11](https://github.com/Rajnish-J/Harness/pull/11) | Connects the harness to remote MCP servers end to end — credential-backed auth, real connection status in the UI, and a GitHub catalog entry — then builds out… | 2026-09-05 | 2026-09-08 | `main` | 128 files, +10976 / −489 |
 | `feat/provider-key-text-input` | [#10](https://github.com/Rajnish-J/Harness/pull/10) | Adds project scaffolding and a set of chat/project workspace features on top of main, plus a couple of smaller fixes. This is a mixed diff — 54 new files and 4… | 2026-09-04 | 2026-09-05 | `main` | 99 files, +10965 / −384 |
@@ -33,11 +34,21 @@ _None open._
 
 ## Branches without a pull request
 
-_None — every branch on the remote has a pull request._
+| Branch | Purpose | Created | Latest commit |
+| --- | --- | --- | --- |
+| `feat/ai-tool-router` | — | 2026-09-08 | docs: document the tool router |
 
 ---
 
 ## Details
+
+### `fix/chat-delete` → `main` ([#13](https://github.com/Rajnish-J/Harness/pull/13))
+
+**Merged** 2026-09-09 · created 2026-09-09 · by @Rajnish-J · 2 commits · 3 files, +81 / −2 · branch still on the remote
+
+**fix(cors): allow DELETE and PATCH so chat deletion works**
+
+Deleting a chat from the sidebar silently did nothing. The delete feature was fully implemented on main — UI, API client, route, and repository all correct — but the CORS middleware only allowed GET and POST, so the browser's DELETE preflight was rejected before the request ever reached FastAPI.
 
 ### `feat/global-tool-settings` → `main` ([#12](https://github.com/Rajnish-J/Harness/pull/12))
 
