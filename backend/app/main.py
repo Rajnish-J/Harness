@@ -107,7 +107,13 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=False,  # no cookies or auth in this milestone
-    allow_methods=["GET", "POST"],
+    # Every method the routers actually serve. DELETE and PATCH were missing,
+    # which silently blocked chat deletion and the whole memory admin surface:
+    # the browser's preflight was rejected before FastAPI ever saw the request.
+    # Only the clients that call API_BASE cross-origin (api.ts, memory-api.ts)
+    # are affected -- the ones on relative Next routes are same-origin, never
+    # preflight, and so never noticed the gap. No router defines PUT yet.
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type"],
 )
 
