@@ -8,12 +8,13 @@
 Every branch in [`Rajnish-J/Harness`](https://github.com/Rajnish-J/Harness) — what it was for, when it
 started, and when it landed. The base branch is `main`.
 
-_Last updated 2026-09-09 (UTC) · 13 merged · 0 open · 0 closed unmerged · 1 without a PR_
+_Last updated 2026-09-09 (UTC) · 14 merged · 0 open · 0 closed unmerged · 1 without a PR_
 
 ## Merged branches
 
 | Branch | PR | Purpose | Created | Merged | Into | Changes |
 | --- | --- | --- | --- | --- | --- | --- |
+| `feat/pointer-cursors` | [#14](https://github.com/Rajnish-J/Harness/pull/14) | Buttons and other clickable controls showed the default arrow cursor instead of the hand pointer, so nothing in the app felt clickable. Tailwind v4's Preflight… | 2026-09-09 | 2026-09-09 | `main` | 38 files, +166 / −70 |
 | `fix/chat-delete` | [#13](https://github.com/Rajnish-J/Harness/pull/13) | Deleting a chat from the sidebar silently did nothing. The delete feature was fully implemented on main — UI, API client, route, and repository all correct — b… | 2026-09-09 | 2026-09-09 | `main` | 3 files, +81 / −2 |
 | `feat/global-tool-settings` | [#12](https://github.com/Rajnish-J/Harness/pull/12) | Adds a global tool disable list: a switch on /tools takes a tool out of every chat turn, stored in Postgres and enforced server-side in the harness rather than… | 2026-09-08 | 2026-09-08 | `main` | 26 files, +3527 / −165 |
 | `feat/github-mcp-integration` | [#11](https://github.com/Rajnish-J/Harness/pull/11) | Connects the harness to remote MCP servers end to end — credential-backed auth, real connection status in the UI, and a GitHub catalog entry — then builds out… | 2026-09-05 | 2026-09-08 | `main` | 128 files, +10976 / −489 |
@@ -41,6 +42,14 @@ _None open._
 ---
 
 ## Details
+
+### `feat/pointer-cursors` → `main` ([#14](https://github.com/Rajnish-J/Harness/pull/14))
+
+**Merged** 2026-09-09 · created 2026-09-09 · by @Rajnish-J · 5 commits · 38 files, +166 / −70 · branch still on the remote
+
+**fix(ui): show a pointer cursor on every clickable control**
+
+Buttons and other clickable controls showed the default arrow cursor instead of the hand pointer, so nothing in the app felt clickable. Tailwind v4's Preflight sets appearance: button on <button>, which makes the browser render it as a native UI control — and native controls use the arrow. Nothing in the project put the pointer back.
 
 ### `fix/chat-delete` → `main` ([#13](https://github.com/Rajnish-J/Harness/pull/13))
 
