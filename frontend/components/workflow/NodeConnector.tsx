@@ -127,7 +127,7 @@ export default function NodeConnector({
           type="button"
           onClick={connect}
           disabled={!canConnect}
-          className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-30"
+          className="cursor-pointer rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-30"
         >
           Connect
         </button>
@@ -154,7 +154,7 @@ export default function NodeConnector({
                       type="button"
                       onClick={() => onRemoveEdge(e.id)}
                       aria-label="Remove connection"
-                      className="shrink-0 rounded px-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                      className="cursor-pointer shrink-0 rounded px-1 text-muted-foreground hover:bg-accent hover:text-foreground"
                     >
                       ×
                     </button>

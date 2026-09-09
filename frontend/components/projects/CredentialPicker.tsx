@@ -55,7 +55,7 @@ export default function CredentialPicker({
             disabled={disabled}
             aria-pressed={value === option.id}
             onClick={() => onChange(option.id)}
-            className={`rounded-md border px-3 py-1.5 text-xs transition-colors disabled:opacity-50 ${
+            className={`cursor-pointer rounded-md border px-3 py-1.5 text-xs transition-colors disabled:opacity-50 ${
               value === option.id
                 ? "border-primary bg-primary text-primary-foreground"
                 : "hover:bg-accent"

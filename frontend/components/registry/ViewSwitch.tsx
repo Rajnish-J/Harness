@@ -44,7 +44,7 @@ export default function ViewSwitch({
             title={option.label}
             onClick={() => onChange(option.value)}
             className={cn(
-              "grid size-7 place-items-center rounded-md transition-colors outline-none",
+              "cursor-pointer grid size-7 place-items-center rounded-md transition-colors outline-none",
               "focus-visible:ring-[3px] focus-visible:ring-ring/50",
               active
                 ? "bg-background text-foreground shadow-xs"

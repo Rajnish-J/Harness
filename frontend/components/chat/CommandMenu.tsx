@@ -242,7 +242,7 @@ export default function CommandMenu() {
                   onClick={() => setCategory(entry.id)}
                   aria-pressed={active}
                   className={cn(
-                    "flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors",
+                    "cursor-pointer flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors",
                     active ? "bg-accent font-medium" : "hover:bg-accent/60",
                     counts[entry.id] === 0 && !active && "opacity-50",
                   )}
@@ -588,7 +588,7 @@ function Row({
       onClick={onSelect}
       aria-pressed={selected}
       disabled={disabled}
-      className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-accent/60 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-45"
+      className="cursor-pointer flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-accent/60 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-45"
     >
       <Icon className="mt-0.5 size-3.5 shrink-0 opacity-70" />
 
@@ -670,7 +670,7 @@ function GroupRow({
           type="button"
           onClick={onExpand}
           aria-expanded={expanded}
-          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+          className="cursor-pointer flex min-w-0 flex-1 items-center gap-2 text-left"
         >
           <ChevronRight
             className={cn(
@@ -796,7 +796,7 @@ function FooterAction({
     <button
       type="button"
       onClick={onClick}
-      className="flex items-center gap-1 rounded-md px-1.5 py-1 transition-colors hover:bg-accent hover:text-foreground"
+      className="cursor-pointer flex items-center gap-1 rounded-md px-1.5 py-1 transition-colors hover:bg-accent hover:text-foreground"
     >
       <Icon className="size-3" />
       {label}

@@ -82,7 +82,7 @@ export default function NodeConfigPanel({
         <button
           type="button"
           onClick={() => onDelete(node.id)}
-          className="mt-auto rounded-lg border border-red-500/30 px-3 py-1.5 text-sm text-red-600 transition-colors hover:bg-red-500/5 dark:text-red-400"
+          className="cursor-pointer mt-auto rounded-lg border border-red-500/30 px-3 py-1.5 text-sm text-red-600 transition-colors hover:bg-red-500/5 dark:text-red-400"
         >
           Delete node
         </button>
@@ -147,7 +147,7 @@ function AgentConfig({
 
       <div>
         <label className={label}>Tools</label>
-        <label className="mt-1 flex items-center gap-2 text-sm">
+        <label className="mt-1 flex cursor-pointer items-center gap-2 text-sm">
           <input
             type="checkbox"
             checked={allTools}
@@ -160,7 +160,7 @@ function AgentConfig({
         {!allTools && (
           <div className="mt-1 flex flex-col gap-1">
             {tools.map((tool) => (
-              <label key={tool.name} className="flex items-center gap-2 text-sm">
+              <label key={tool.name} className="flex cursor-pointer items-center gap-2 text-sm">
                 <input
                   type="checkbox"
                   checked={selected?.includes(tool.name) ?? false}
@@ -219,7 +219,7 @@ function RefChip({ text, onClick }: { text: string; onClick: () => void }) {
     <button
       type="button"
       onClick={onClick}
-      className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground transition-colors hover:bg-muted-foreground/20"
+      className="cursor-pointer rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground transition-colors hover:bg-muted-foreground/20"
     >
       {text}
     </button>

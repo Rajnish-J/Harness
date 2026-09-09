@@ -66,7 +66,7 @@ export default function TemplatePicker({
             aria-pressed={template.id === value}
             onClick={() => onChange(template.id)}
             className={cn(
-              "rounded-full border px-2.5 py-1 text-xs transition-colors",
+              "cursor-pointer rounded-full border px-2.5 py-1 text-xs transition-colors",
               "disabled:cursor-not-allowed disabled:opacity-50",
               template.id === value
                 ? "border-foreground/30 bg-foreground text-background"

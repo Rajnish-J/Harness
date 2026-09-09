@@ -83,7 +83,7 @@ export function buildEnvVarColumns({
             <button
               type="button"
               onClick={() => onEdit(row.original)}
-              className="font-mono text-xs font-medium hover:underline"
+              className="cursor-pointer font-mono text-xs font-medium hover:underline"
             >
               {row.original.key}
             </button>

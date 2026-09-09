@@ -251,7 +251,7 @@ export default function WorkflowEditor({ workflow }: { workflow: Workflow }) {
         <Link
           href="/workflows"
           aria-label="Back to workflows"
-          className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+          className="cursor-pointer rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
         >
           <ArrowLeft className="size-4" />
         </Link>
@@ -260,7 +260,7 @@ export default function WorkflowEditor({ workflow }: { workflow: Workflow }) {
           onClick={() => setLeftPanelOpen((v) => !v)}
           aria-pressed={leftPanelOpen}
           aria-label="Toggle node palette"
-          className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+          className="cursor-pointer rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
         >
           <PanelLeft className="size-4" />
         </button>
@@ -271,7 +271,7 @@ export default function WorkflowEditor({ workflow }: { workflow: Workflow }) {
           onClick={() => setRightPanelOpen((v) => !v)}
           aria-pressed={rightPanelOpen}
           aria-label="Toggle run panel"
-          className="ml-auto rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+          className="cursor-pointer ml-auto rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
         >
           <PanelRight className="size-4" />
         </button>
@@ -279,7 +279,7 @@ export default function WorkflowEditor({ workflow }: { workflow: Workflow }) {
           type="button"
           onClick={save}
           disabled={saving || !dirty}
-          className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-30"
+          className="cursor-pointer rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-30"
         >
           {saving ? "Saving…" : "Save"}
         </button>
@@ -295,7 +295,7 @@ export default function WorkflowEditor({ workflow }: { workflow: Workflow }) {
               <button
                 type="button"
                 onClick={() => setLeftTab("configure")}
-                className={`flex-1 px-2 py-1.5 font-medium ${
+                className={`flex-1 cursor-pointer px-2 py-1.5 font-medium ${
                   leftTab === "configure"
                     ? "border-b-2 border-primary text-foreground"
                     : "text-muted-foreground hover:text-foreground"
@@ -306,7 +306,7 @@ export default function WorkflowEditor({ workflow }: { workflow: Workflow }) {
               <button
                 type="button"
                 onClick={() => setLeftTab("connect")}
-                className={`flex-1 px-2 py-1.5 font-medium ${
+                className={`flex-1 cursor-pointer px-2 py-1.5 font-medium ${
                   leftTab === "connect"
                     ? "border-b-2 border-primary text-foreground"
                     : "text-muted-foreground hover:text-foreground"

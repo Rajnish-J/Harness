@@ -154,7 +154,7 @@ export default function GithubRepoPicker({
                   type="button"
                   disabled={disabled}
                   onClick={() => onPick(repo, credentialId)}
-                  className="flex items-start gap-2 rounded px-2 py-2 text-left hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
+                  className="cursor-pointer flex items-start gap-2 rounded px-2 py-2 text-left hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
                 >
                   <GitBranch className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
                   <span className="min-w-0 flex-1">

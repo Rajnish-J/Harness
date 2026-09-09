@@ -11,7 +11,7 @@ Take a finished branch, prove it actually builds and tests green in isolation, d
 
 1. **Never push until the author has granted permission, in this conversation.**
 2. **Never open a PR when a verification check failed.** A red check is the answer; report it and stop.
-3. **Never merge.** Creating the PR and printing its URL is the end of the job. The author reviews and squash-merges in the GitHub UI.
+3. **Never merge.** Creating the PR and printing its URL is the end of the job. The author reviews and merges in the GitHub UI.
 
 ## Project commands
 
@@ -76,7 +76,88 @@ git diff origin/main...HEAD | grep -nE '^\+.*(sk-ant-|sk-[A-Za-z0-9]{20}|ghp_|gh
 
 ---
 
+## Phase A2 — Sync with main
+
+A PR must be opened from a branch that already carries everything on `main`. Phase A only *detects*
+whether a conflict exists; this phase acts on the answer.
+
+It runs **after** Phase A, because it depends on Phase A's clean-tree and secret checks having
+passed, and **before** Phase B, because the worktree must verify the synced `HEAD` rather than a
+stale one.
+
+**The rule that shapes every command here: the branch keeps one straight line.** No
+`Merge branch 'main' into <branch>` commit ever enters the branch. That is why the sync is a
+*rebase* pull and never a plain one.
+
+### Step 1 — is `main` ahead?
+
+```bash
+git fetch origin main --quiet
+git rev-list --count HEAD..origin/main            # commits on main the branch lacks
+git log --oneline HEAD..origin/main               # what they are
+```
+
+**Count is `0`** — already up to date. Report `main sync — up to date (0 new commits)` and fall
+through to Phase B. Do not pull and do not run a no-op rebase; both are noise.
+
+### Step 2 — would syncing conflict? (read-only)
+
+Never answer this by starting something you would have to unwind:
+
+```bash
+git merge-tree --write-tree --name-only origin/main HEAD
+```
+
+Exit `0` means a clean sync. A non-zero exit means conflicts. This writes only to the object
+database — the index, the working tree and `HEAD` are all untouched either way, so a conflict here
+costs nothing to discover.
+
+**Read the output carefully; it is not a bare path list.** On conflict, `--name-only` prints the
+conflicted file block first, then informational lines such as `Auto-merging f.txt` and
+`CONFLICT (content): Merge conflict in f.txt`. Report the *filenames*, not every line — pasting the
+raw block verbatim tells the author that `Auto-merging f.txt` is a file that needs fixing.
+
+### Step 3a — no conflict: sync, then prove the graph stayed clean
+
+```bash
+git pull --rebase origin main
+git log --oneline --merges origin/main..HEAD      # MUST print nothing
+```
+
+The second command is the guard on the one-line rule, not decoration. If it prints anything, a
+merge commit reached the branch: **stop and report it** rather than pushing a branch with a second
+line in it. Report the sync as `rebased onto origin/main (N new commits)` and carry N into the PR
+body's `## Sync with main` section.
+
+Because the rebase rewrites the branch's commits, a branch that was already pushed now has an
+upstream whose history differs. **Do not force-push it** — that is forbidden outright below. Report
+the situation and let the author decide.
+
+### Step 3b — conflict: hand it to the author and stop
+
+Nothing has been started, so there is nothing to unwind. Print the conflicted paths verbatim, state
+plainly that the working tree was left clean and untouched, and stop:
+
+```
+Cannot sync — origin/main and this branch conflict in:
+  <path>
+  <path>
+
+Nothing was started; your tree is clean. Resolve these, then tell me to continue.
+```
+
+Do not start the rebase. Do not resolve the conflict. Do not edit the author's files to make the
+conflict go away. Wait for the author.
+
+When they say to continue, **re-run this entire phase from `git fetch`.** `main` may have moved
+again while they worked, and the earlier probe's answer is stale.
+
+---
+
 ## Phase B — Verify in an isolated worktree
+
+The worktree is created from `HEAD` **after Phase A2 has completed**, so every result below
+describes the synced tree — which is exactly what gets pushed and what GitHub will render.
 
 ```bash
 MAIN="$(git rev-parse --show-toplevel)"
@@ -205,14 +286,16 @@ Derive it from `git log --oneline origin/main..HEAD` — never from the branch n
 - Conventional form `type(scope): subject`, imperative mood, no trailing period, **≤72 characters**.
 - **Type** is the dominant type across the branch, biased to the most significant: `feat` beats `chore` beats `docs`.
 - **Scope** only if the commits genuinely share one. When they span many areas, drop the scope rather than inventing one.
-- **Because squash is the merge method, this title becomes the squash commit's subject on `main`.** That is why the format is a hard rule and not a style preference.
+- **This title becomes the PR's merge-commit subject on `main`.** That is why the format is a hard rule and not a style preference.
 
 ### Body
 
 Write it to a temp file **outside the repo** and pass `--body-file`. Never `--body "$(cat …)"` — the body contains backticks, `$`, and pipe tables that shell quoting mangles.
 
 ````markdown
-<1-2 sentences: what the branch does and why, naming the current state of `main`.>
+## Description
+
+<2-4 sentences: what the branch does and why, naming the current state of `main` it builds on.>
 
 <The derived change-scale sentence.>
 
@@ -226,6 +309,11 @@ Write it to a temp file **outside the repo** and pass `--body-file`. Never `--bo
 
 ### Tooling
 <Prose. Name actual files.>
+
+## Sync with main
+
+<One line, from Phase A2. Either `Already level with `origin/main` — no sync needed.` or
+`Rebased onto `origin/main` (N new commits); no merge commit created.`>
 
 ## Verification
 
@@ -274,7 +362,8 @@ notes: `docs/PRODUCTION_READINESS.md`.
 
 - <honest caveats: stale docs, missing scripts, deprecated deps, tooling gaps>
 
-Merge with **Squash and merge** — this branch's N commits land on `main` as one commit.
+Merge with **Create a merge commit** — this branch's N commits land on `main` individually,
+which is how every PR in this repo has been merged.
 ````
 
 **Every cell must come from output you actually saw in this run.** Never a remembered constant, never a number carried over from a previous conversation.
@@ -340,7 +429,9 @@ gh pr create --base main --head <current-branch> \
   --title "<title>" --body-file /tmp/pr-body-$$.md
 ```
 
-Print the URL. Report both job names the author should wait on. **Then stop.** Do not poll to merge, do not offer to merge, do not merge.
+**Print the PR URL in the chat reply itself**, as a clickable link on its own line — not left
+buried in raw command output the author has to go hunting through. Report both job names the author
+should wait on. **Then stop.** Do not poll to merge, do not offer to merge, do not merge.
 
 If the author wants to watch the checks: `gh pr checks <number> --watch`, and `gh run view --log-failed` on a red run.
 
@@ -352,7 +443,10 @@ Never run any of these:
 
 - `git push --force` / `--force-with-lease` — on any branch, for any reason, including after a workflow-scope rejection
 - `gh pr merge` in any form — no `--auto`, no `--admin`, no `--squash`
-- `git merge`, `git rebase`, `git cherry-pick` against the working tree — use `git merge-tree --write-tree` to answer conflict questions
+- `git merge`, `git cherry-pick` against the working tree, or `git merge origin/main` into the branch — use `git merge-tree --write-tree` to answer conflict questions, and Phase A2's rebase pull to sync
+- `git pull` **without** `--rebase`, on any branch — a plain pull creates the `Merge branch 'main' into <branch>` commit that puts a second line in the branch's graph
+- `git rebase` in any form other than Phase A2's `git pull --rebase origin main` — never `git rebase -i`, which needs an interactive editor this tool cannot drive
+- `git rebase --continue` / `--skip` / `--abort` on a rebase the author is resolving — that state belongs to them
 - `git reset --hard`, `git checkout -- <file>`, `git clean`, `git stash drop`, `git stash clear`
 - `rm -rf` on a worktree path — always `git worktree remove --force` then `git worktree prune`
 - `npm ci` or `npm install` inside a worktree whose `node_modules` is a symlink
@@ -362,6 +456,8 @@ Never run any of these:
 Never:
 
 - push without explicit permission granted in the current conversation
+- begin a sync after `git merge-tree` reported a conflict, or resolve a conflict on the author's behalf — Phase A2 hands conflicts back and waits
+- force-push to reconcile a branch whose history the Phase A2 rebase rewrote — report it and let the author decide
 - open a PR when any check failed, or when a skipped check would let the table imply it passed
 - stage, commit, copy, `source`, or echo `backend/.env`, or put a real API key or `DATABASE_URL` anywhere
 - edit source, weaken a lint rule, or add `@ts-expect-error` to make a check pass

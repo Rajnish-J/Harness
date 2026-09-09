@@ -177,7 +177,7 @@ export default function EditModelCredentialDialog({
                                   .join(", "),
                           )
                         }
-                        className="rounded-md bg-muted px-1.5 py-0.5 font-mono transition-colors hover:bg-accent"
+                        className="cursor-pointer rounded-md bg-muted px-1.5 py-0.5 font-mono transition-colors hover:bg-accent"
                       >
                         {model}
                       </button>
@@ -202,7 +202,7 @@ export default function EditModelCredentialDialog({
               />
             </div>
 
-            <label className="flex items-center justify-between gap-3 pt-1">
+            <label className="flex cursor-pointer items-center justify-between gap-3 pt-1">
               <span className="text-xs font-medium">Enabled</span>
               <Switch
                 checked={enabled}

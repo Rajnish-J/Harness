@@ -243,7 +243,7 @@ function ScopeButton({
       type="button"
       aria-pressed={active}
       onClick={onClick}
-      className={`rounded-md border px-3 py-1.5 text-xs transition-colors ${
+      className={`cursor-pointer rounded-md border px-3 py-1.5 text-xs transition-colors ${
         active ? "border-primary bg-primary text-primary-foreground" : "hover:bg-accent"
       }`}
     >

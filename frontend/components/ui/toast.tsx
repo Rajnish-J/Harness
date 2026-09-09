@@ -110,7 +110,7 @@ function ToastItem({ record }: { record: ToastRecord }) {
               : record.title
           }
           onClick={record.actionProps.onClick}
-          className="shrink-0 rounded-md border px-2 py-1 text-xs font-medium hover:bg-accent hover:text-accent-foreground"
+          className="cursor-pointer shrink-0 rounded-md border px-2 py-1 text-xs font-medium hover:bg-accent hover:text-accent-foreground"
         >
           {record.actionProps.children}
         </ToastPrimitive.Action>
@@ -119,7 +119,7 @@ function ToastItem({ record }: { record: ToastRecord }) {
       <ToastPrimitive.Close
         data-slot="toast-close"
         aria-label="Dismiss"
-        className="absolute top-2 right-2 rounded-md p-1 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:bg-accent hover:text-foreground focus:opacity-100"
+        className="cursor-pointer absolute top-2 right-2 rounded-md p-1 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:bg-accent hover:text-foreground focus:opacity-100"
       >
         <XIcon className="size-3.5" />
       </ToastPrimitive.Close>
