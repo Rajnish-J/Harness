@@ -243,7 +243,7 @@ export default function CatalogWizard({
                 <button
                   type="button"
                   onClick={() => setCreating(true)}
-                  className="self-start text-xs text-muted-foreground hover:underline"
+                  className="cursor-pointer self-start text-xs text-muted-foreground hover:underline"
                 >
                   Or add a new one
                 </button>
@@ -284,7 +284,7 @@ export default function CatalogWizard({
                   <button
                     type="button"
                     onClick={() => setCreating(false)}
-                    className="self-start text-xs text-muted-foreground hover:underline"
+                    className="cursor-pointer self-start text-xs text-muted-foreground hover:underline"
                   >
                     Use a saved token instead
                   </button>

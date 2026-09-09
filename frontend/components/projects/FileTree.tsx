@@ -106,7 +106,7 @@ export default function FileTree({
               <button
                 type="button"
                 onClick={() => toggle(dir.path)}
-                className="flex w-full items-center gap-1 rounded px-2 py-0.5 text-left text-xs hover:bg-accent"
+                className="cursor-pointer flex w-full items-center gap-1 rounded px-2 py-0.5 text-left text-xs hover:bg-accent"
                 style={{ paddingLeft: depth * 12 + 8 }}
               >
                 {expanded ? (
@@ -131,7 +131,7 @@ export default function FileTree({
             title={file.is_binary ? "Binary file — cannot be opened here" : file.path}
             className={`flex w-full items-center gap-1 rounded px-2 py-0.5 text-left text-xs ${
               selected === file.path ? "bg-accent font-medium" : "hover:bg-accent"
-            } ${file.is_binary ? "cursor-not-allowed opacity-40" : ""}`}
+            } ${file.is_binary ? "cursor-not-allowed opacity-40" : "cursor-pointer"}`}
             style={{ paddingLeft: depth * 12 + 20 }}
           >
             {file.is_binary ? (

@@ -220,7 +220,7 @@ export default function NewProjectDialog({ credentials }: { credentials: Credent
 
           {step === "choose" && (
             <div className="grid grid-cols-2 gap-3 py-2">
-              <button type="button" className="text-left" onClick={() => setStep("blank")}>
+              <button type="button" className="cursor-pointer text-left" onClick={() => setStep("blank")}>
                 <ResourceCard
                   icon={FolderPlus}
                   tone="sky"
@@ -229,7 +229,7 @@ export default function NewProjectDialog({ credentials }: { credentials: Credent
                   meta="Git-initialized with a README, opens straight in the editor."
                 />
               </button>
-              <button type="button" className="text-left" onClick={() => setStep("github")}>
+              <button type="button" className="cursor-pointer text-left" onClick={() => setStep("github")}>
                 <ResourceCard
                   icon={ImportIcon}
                   tone="purple"
