@@ -64,7 +64,7 @@ function AgentNodeImpl({ data, selected }: NodeProps) {
             setExpanded((v) => !v);
           }}
           aria-label={expanded ? "Collapse audit info" : "Expand audit info"}
-          className="shrink-0 text-muted-foreground hover:text-foreground"
+          className="cursor-pointer shrink-0 text-muted-foreground hover:text-foreground"
         >
           {expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
         </button>

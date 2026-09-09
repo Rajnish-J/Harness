@@ -111,7 +111,7 @@ export default function ModeSelector() {
                 setMode(entry.id);
                 setOpen(false);
               }}
-              className="flex w-full items-start gap-2.5 rounded-lg px-2 py-2 text-left transition-colors hover:bg-accent"
+              className="cursor-pointer flex w-full items-start gap-2.5 rounded-lg px-2 py-2 text-left transition-colors hover:bg-accent"
             >
               <Icon className="mt-0.5 size-4 shrink-0 opacity-70" />
               <span className="min-w-0 flex-1">

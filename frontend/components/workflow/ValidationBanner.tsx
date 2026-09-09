@@ -45,7 +45,7 @@ export default function ValidationBanner({
                 <button
                   type="button"
                   onClick={() => onFocus(issue.node_id!)}
-                  className="ml-1.5 font-mono text-[10px] text-muted-foreground underline hover:text-foreground"
+                  className="cursor-pointer ml-1.5 font-mono text-[10px] text-muted-foreground underline hover:text-foreground"
                 >
                   {issue.node_id}
                 </button>

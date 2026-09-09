@@ -82,7 +82,7 @@ function Chip({
         type="button"
         onClick={onRemove}
         aria-label={`Remove ${label}`}
-        className="rounded-sm opacity-60 transition-opacity hover:opacity-100"
+        className="cursor-pointer rounded-sm opacity-60 transition-opacity hover:opacity-100"
       >
         <X className="size-3" />
       </button>

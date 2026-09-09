@@ -74,7 +74,7 @@ export default function RunPanel({
           <button
             type="button"
             onClick={onCancel}
-            className="shrink-0 rounded-lg border border-border px-3 py-1.5 text-sm font-medium"
+            className="cursor-pointer shrink-0 rounded-lg border border-border px-3 py-1.5 text-sm font-medium"
           >
             Cancel
           </button>
@@ -82,7 +82,7 @@ export default function RunPanel({
           <button
             type="button"
             onClick={onRun}
-            className="shrink-0 rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground"
+            className="cursor-pointer shrink-0 rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground"
           >
             Run
           </button>
@@ -119,7 +119,7 @@ export default function RunPanel({
                 <button
                   type="button"
                   onClick={() => setOpen(isOpen ? null : nodeId)}
-                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent"
+                  className="cursor-pointer flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent"
                 >
                   <span
                     className={`h-1.5 w-1.5 shrink-0 rounded-full ${

@@ -37,7 +37,7 @@ export default function AgentStepIndicator({ step }: { step: Step }) {
       <button
         type="button"
         onClick={() => setOpen((prev) => !prev)}
-        className="flex w-full items-start gap-2 rounded px-2 py-1 text-left transition-colors hover:bg-accent"
+        className="cursor-pointer flex w-full items-start gap-2 rounded px-2 py-1 text-left transition-colors hover:bg-accent"
         aria-expanded={open}
       >
         <span
