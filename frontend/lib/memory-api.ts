@@ -44,7 +44,16 @@ export type Memory = {
   content: string;
   /** "agent" when the model wrote it via `remember`, "human" from this page. */
   source: string;
+  /** Which conversation wrote it. Provenance on rows of every scope. */
   session_id: string | null;
+  /**
+   * Set = this memory reaches that one conversation and nothing else.
+   *
+   * Not the same question as `session_id`, which is stamped on every
+   * agent-written row whatever its scope -- so this is the only field that
+   * tells the two apart.
+   */
+  scoped_session_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -82,6 +91,7 @@ export type MemoryOverview = {
 /** The `<memories>` block a turn in one scope would actually receive. */
 export type MemoryPreview = {
   project_id: string | null;
+  session_id?: string | null;
   /** Empty when nothing is in scope — there is no block at all then. */
   block: string;
   char_count: number;
@@ -110,18 +120,37 @@ function slugify(title: string): string {
   return slug.slice(0, 80) || "note";
 }
 
+/** Scope as the API takes it: both parts optional, both meaningful. */
+function scopeQuery(projectId?: string | null, sessionId?: string | null): string {
+  const params = new URLSearchParams();
+  if (projectId) params.set("project_id", projectId);
+  if (sessionId) params.set("session_id", sessionId);
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
 export const memoryApi = {
   /**
    * Active memory in scope. Global rows always come back; a `projectId` adds
    * that project's on top — the same union the agent's system prompt gets.
    */
-  list: async (projectId?: string | null, signal?: AbortSignal): Promise<Memory[]> => {
+  list: async (
+    projectId?: string | null,
+    sessionId?: string | null,
+    signal?: AbortSignal,
+  ): Promise<Memory[]> => {
     if (flags.mockMemory) {
-      return byUpdatedAtDesc(inScope([...mockStore().memory.values()], projectId));
+      return byUpdatedAtDesc(
+        inScope([...mockStore().memory.values()], projectId, sessionId),
+      );
     }
 
-    const query = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
-    return json(await fetch(`${BASE}${query}`, { cache: "no-store", signal }));
+    return json(
+      await fetch(`${BASE}${scopeQuery(projectId, sessionId)}`, {
+        cache: "no-store",
+        signal,
+      }),
+    );
   },
 
   /** Every scope at once, for the insights page. Never used to build a prompt. */
@@ -143,14 +172,19 @@ export const memoryApi = {
   /** The composed `<memories>` block for one scope, as the model receives it. */
   preview: async (
     projectId?: string | null,
+    sessionId?: string | null,
     signal?: AbortSignal,
   ): Promise<MemoryPreview> => {
     if (flags.mockMemory) {
-      return mockPreview([...mockStore().memory.values()], projectId);
+      return mockPreview([...mockStore().memory.values()], projectId, sessionId);
     }
 
-    const query = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
-    return json(await fetch(`${BASE}/preview${query}`, { cache: "no-store", signal }));
+    return json(
+      await fetch(`${BASE}/preview${scopeQuery(projectId, sessionId)}`, {
+        cache: "no-store",
+        signal,
+      }),
+    );
   },
 
   create: async (input: MemoryInput): Promise<Memory> => {
@@ -176,6 +210,7 @@ export const memoryApi = {
         content: input.content,
         source: "human",
         session_id: null,
+        scoped_session_id: null,
         created_at: now,
         updated_at: now,
       };

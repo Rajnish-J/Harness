@@ -19,6 +19,9 @@ logger = logging.getLogger(__name__)
 
 REMEMBER_TOOL_NAME = "remember"
 
+#: Widest first, matching how the description reads them out.
+VALID_SCOPES = ("global", "project", "conversation")
+
 
 async def remember(
     title: str,
@@ -45,11 +48,23 @@ async def remember(
         raise ToolExecutionError(
             f"Unknown kind {kind!r}. Use one of: {', '.join(memory_repo.VALID_KINDS)}."
         )
-    if scope not in ("project", "global"):
-        raise ToolExecutionError("scope must be 'project' or 'global'.")
+    if scope not in VALID_SCOPES:
+        raise ToolExecutionError(f"scope must be one of: {', '.join(VALID_SCOPES)}.")
 
-    project_id = context.get("project_id") if scope == "project" else None
     session_id = context.get("session_id")
+    if scope == "conversation" and not session_id:
+        # A workflow node has no conversation to scope to. Narrowing to the
+        # project is a worse answer than the model asked for but a much better
+        # one than refusing: it asked to remember something, and it will not
+        # get a second chance at this turn.
+        scope = "project"
+
+    # Only this decides the tier. project_id rides along on a conversation row
+    # too, so the insights page can still group it under the right project.
+    scoped_session_id = session_id if scope == "conversation" else None
+    project_id = (
+        context.get("project_id") if scope in ("project", "conversation") else None
+    )
     resolved_slug = slug.strip() or memory_repo.slugify(title)
 
     row = await memory_repo.upsert(
@@ -61,9 +76,15 @@ async def remember(
         content=content,
         source="agent",
         session_id=session_id,
+        scoped_session_id=scoped_session_id,
     )
 
-    where = "globally" if row.project_id is None else "for this project"
+    if row.scoped_session_id:
+        where = "in this conversation only"
+    elif row.project_id is None:
+        where = "globally"
+    else:
+        where = "for this project"
     return f"Saved memory {row.slug!r} ({row.kind}), applies {where}."
 
 
@@ -83,10 +104,16 @@ REMEMBER_TOOL = Tool(
         "reference (a pointer to where information lives, e.g. an issue "
         "tracker). scope is 'project' (default -- applies only to the "
         "current project; becomes global automatically if no project is "
-        "open, since the top-level chat has no narrower scope to attach to) "
-        "or 'global' (applies to every project and chat -- use for things "
+        "open, since the top-level chat has no narrower scope to attach to), "
+        "'global' (applies to every project and chat -- use for things "
         "true regardless of which project is open, e.g. a preference about "
-        "how the user likes to work)."
+        "how the user likes to work), or 'conversation' (this chat and "
+        "nothing else). Use 'conversation' ONLY for something you would "
+        "lose if this conversation's history went away -- which happens "
+        "when the user switches model provider mid-chat, and when a long "
+        "conversation is truncated. Do NOT use it to restate something "
+        "already said in this conversation: you can already see the "
+        "transcript, so saving it again only costs tokens."
     ),
     input_schema={
         "type": "object",
@@ -117,12 +144,15 @@ REMEMBER_TOOL = Tool(
             },
             "scope": {
                 "type": "string",
-                "enum": ["project", "global"],
+                "enum": list(VALID_SCOPES),
                 "description": (
                     "'project' (default) attaches to the current project; "
                     "becomes global automatically if no project is open. "
                     "'global' applies everywhere -- only use it for something "
-                    "that is true regardless of which project is open."
+                    "that is true regardless of which project is open. "
+                    "'conversation' applies to this chat alone -- only for "
+                    "something that would be lost if this conversation's "
+                    "history were dropped, never for restating it."
                 ),
             },
         },

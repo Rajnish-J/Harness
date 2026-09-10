@@ -63,7 +63,7 @@ export default function MemoryInsights() {
   useEffect(() => {
     const controller = new AbortController();
     memoryApi
-      .preview(previewScope, controller.signal)
+      .preview(previewScope, null, controller.signal)
       .then(setPreview)
       .catch((err: Error) => {
         if (err.name === "AbortError") return;
@@ -86,7 +86,11 @@ export default function MemoryInsights() {
   const memories = useMemo(() => overview?.memories ?? [], [overview]);
 
   const byProject = useMemo<MemoryGroup[]>(() => {
-    const global = memories.filter((m) => m.project_id === null);
+    // The conversation tier is grouped separately below: these rows carry a
+    // project_id too (for exactly this grouping), so listing them here would
+    // show a chat-only memory as something the whole project reads.
+    const broad = memories.filter((m) => m.scoped_session_id === null);
+    const global = broad.filter((m) => m.project_id === null);
     const groups: MemoryGroup[] = [
       {
         id: "__global__",
@@ -103,14 +107,14 @@ export default function MemoryInsights() {
         id: project.id,
         label: project.name,
         caption: "Only this project's conversations",
-        memories: memories.filter((m) => m.project_id === project.id),
+        memories: broad.filter((m) => m.project_id === project.id),
       });
     }
 
     // A memory whose project is gone or unknown to this client still exists
     // and still reaches that project's chats, so it must not vanish here.
     const known = new Set(projects.map((p) => p.id));
-    const orphaned = memories.filter(
+    const orphaned = broad.filter(
       (m) => m.project_id !== null && !known.has(m.project_id),
     );
     if (orphaned.length > 0) {
@@ -123,8 +127,34 @@ export default function MemoryInsights() {
       });
     }
 
+    // The narrowest tier, last: one group per conversation that scopes a
+    // memory. Titled by the chat rather than its uuid where the overview
+    // could resolve it -- "Fixing the auth bug" is the thing an operator
+    // recognises, and a deleted chat leaves the id as the only handle left.
+    const titles = new Map(
+      (overview?.sessions ?? []).map((session) => [session.session_id, session.title]),
+    );
+    const scopedIds = [
+      ...new Set(
+        memories
+          .map((m) => m.scoped_session_id)
+          .filter((id): id is string => id !== null),
+      ),
+    ];
+    for (const sessionId of scopedIds) {
+      groups.push({
+        id: `__chat__${sessionId}`,
+        label: titles.get(sessionId) ?? "Deleted conversation",
+        caption: `This chat only · ${sessionId}`,
+        memories: memories.filter((m) => m.scoped_session_id === sessionId),
+        // A memory scoped to a chat that no longer exists can never be read
+        // again -- it is inert rather than wrong, and reads as spent.
+        muted: !titles.has(sessionId),
+      });
+    }
+
     return groups;
-  }, [memories, projects]);
+  }, [memories, projects, overview]);
 
   const bySession = useMemo<MemoryGroup[]>(() => {
     const sessions = overview?.sessions ?? [];

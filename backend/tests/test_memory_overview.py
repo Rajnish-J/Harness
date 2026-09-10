@@ -136,7 +136,7 @@ async def test_preview_block_is_byte_identical_to_the_composed_prompt(
         _row(slug="a-feedback", kind="feedback", content="First."),
     ]
 
-    async def fake_list_active(_pool, _project_id):
+    async def fake_list_active(_pool, _project_id, _session_id=None):
         return rows
 
     monkeypatch.setattr(memory_api.memory_repo, "list_active", fake_list_active)
@@ -159,7 +159,7 @@ async def test_preview_is_empty_when_nothing_is_in_scope(
 ):
     """No memories means no block at all — not an empty <memories> element."""
 
-    async def fake_list_active(_pool, _project_id):
+    async def fake_list_active(_pool, _project_id, _session_id=None):
         return []
 
     monkeypatch.setattr(memory_api.memory_repo, "list_active", fake_list_active)
@@ -176,7 +176,7 @@ async def test_preview_passes_the_project_scope_through(
 ):
     seen: dict = {}
 
-    async def fake_list_active(_pool, project_id):
+    async def fake_list_active(_pool, project_id, _session_id=None):
         seen["project_id"] = project_id
         return []
 

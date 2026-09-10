@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/accordion";
 import EmptyState from "@/components/registry/EmptyState";
 import type { Memory } from "@/lib/memory-api";
+import { memoryScope, SCOPE_CLASS, SCOPE_SHORT_LABEL } from "@/lib/memory-scope";
 import { relativeTime } from "@/lib/relative-time";
 
 export type MemoryGroup = {
@@ -104,11 +105,9 @@ export default function MemoryGroupList({
   );
 }
 
-/** Scope colour matches /memory's cards: sky = global, purple = project. */
+/** Scope colour matches /memory's cards. */
 function MemoryRow({ memory }: { memory: Memory }) {
-  const scopeClass = memory.project_id
-    ? "bg-purple-50 text-purple-700 dark:bg-purple-500/15 dark:text-purple-300"
-    : "bg-sky-50 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300";
+  const scopeClass = SCOPE_CLASS[memoryScope(memory)];
 
   return (
     <div className="rounded-lg border border-border px-3 py-2">
@@ -123,7 +122,7 @@ function MemoryRow({ memory }: { memory: Memory }) {
       </div>
       <p className="mt-1 text-xs leading-snug text-muted-foreground">{memory.content}</p>
       <p className="mt-1 text-[10px] text-muted-foreground/80">
-        {memory.project_id ? "Project" : "Global"} ·{" "}
+        {SCOPE_SHORT_LABEL[memoryScope(memory)]} ·{" "}
         {memory.source === "agent" ? "written by the agent" : "added by hand"} ·{" "}
         {relativeTime(memory.updated_at)}
       </p>

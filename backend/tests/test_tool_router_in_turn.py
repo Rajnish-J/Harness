@@ -135,7 +135,7 @@ async def test_routing_cannot_re_offer_a_globally_disabled_tool(
     async def _disabled(_pool):
         return {"git_commit"}
 
-    async def _no_memories(_pool, _project_id):
+    async def _no_memories(_pool, _project_id, _session_id=None):
         return []
 
     monkeypatch.setattr("app.db.registry_repo.list_disabled_tool_names", _disabled)

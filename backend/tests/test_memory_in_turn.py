@@ -62,7 +62,7 @@ async def test_a_memory_written_elsewhere_reaches_this_turns_prompt(
 ):
     """The cross-session guarantee: this session never saw that conversation."""
 
-    async def fake_list(_pool, _project_id):
+    async def fake_list(_pool, _project_id, _session_id=None):
         return [_row()]
 
     monkeypatch.setattr(chat_api.memory_repo, "list_active", fake_list)
@@ -77,13 +77,14 @@ async def test_a_memory_written_elsewhere_reaches_this_turns_prompt(
     assert '<memory kind="preference" slug="tabs-over-spaces">' in turn.system
 
 
-async def test_the_project_scope_is_passed_to_the_repo(
+async def test_the_project_and_session_scope_are_passed_to_the_repo(
     settings, request_with_pool, monkeypatch: pytest.MonkeyPatch
 ):
     seen: dict = {}
 
-    async def fake_list(_pool, project_id):
+    async def fake_list(_pool, project_id, session_id=None):
         seen["project_id"] = project_id
+        seen["session_id"] = session_id
         return []
 
     async def fake_resolve_executor(_settings, _project_id):
@@ -101,6 +102,9 @@ async def test_the_project_scope_is_passed_to_the_repo(
     )
 
     assert seen["project_id"] == PROJECT_ID
+    # The conversation is half the scope now: which memories a turn sees
+    # depends on which chat it is, not only which project.
+    assert seen["session_id"] == "s"
 
 
 async def test_a_memory_failure_does_not_fail_the_turn(
@@ -108,7 +112,7 @@ async def test_a_memory_failure_does_not_fail_the_turn(
 ):
     """Memory is an enhancement, not a prerequisite — same contract as history."""
 
-    async def exploding_list(_pool, _project_id):
+    async def exploding_list(_pool, _project_id, _session_id=None):
         raise RuntimeError("postgres went away")
 
     monkeypatch.setattr(chat_api.memory_repo, "list_active", exploding_list)
@@ -139,7 +143,7 @@ async def test_the_pool_and_scope_are_carried_on_the_turn(
 ):
     """What the `remember` tool needs at dispatch time, resolved once here."""
 
-    async def fake_list(_pool, _project_id):
+    async def fake_list(_pool, _project_id, _session_id=None):
         return []
 
     monkeypatch.setattr(chat_api.memory_repo, "list_active", fake_list)

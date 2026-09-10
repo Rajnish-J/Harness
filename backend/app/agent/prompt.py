@@ -29,7 +29,12 @@ class SkillLike(Protocol):
 
 
 class MemoryLike(Protocol):
-    """Structural type so this module does not import app.db.memory_repo."""
+    """Structural type so this module does not import app.db.memory_repo.
+
+    `scoped_session_id` is read with getattr rather than declared here: a
+    workflow node composes prompts from its own row shape, and requiring a new
+    attribute would break every such caller for a marker they cannot set.
+    """
 
     kind: str
     slug: str
@@ -80,6 +85,11 @@ def _skill_block(skill: SkillLike) -> str:
 
 def _memory_block(memory: MemoryLike) -> str:
     attrs = f'kind="{_escape(memory.kind, "memory")}" slug="{_escape(memory.slug, "memory")}"'
+    # Only the narrowest tier is marked. The other two are the default and
+    # would spend tokens saying so on every row; "this one is just for this
+    # conversation" is the part the model cannot infer and might act on.
+    if getattr(memory, "scoped_session_id", None):
+        attrs += ' scope="conversation"'
     parts = [f"<memory {attrs}>"]
     if memory.title:
         parts.append(f"<title>{_escape(memory.title, 'memory')}</title>")
@@ -187,7 +197,21 @@ def compose_system_prompt(
 
     usable_memories = [m for m in memories if (m.content or "").strip()]
     if usable_memories:
-        ordered_memories = sorted(usable_memories, key=lambda m: (m.kind, m.slug))
+        # One block, not two. A second <memories-for-this-conversation> section
+        # would turn one total order into two lists, so a chat's first
+        # conversation memory would insert a whole new section rather than a
+        # row; with a per-entry marker the ordering stays deterministic and two
+        # chats holding the same memories compose identical bytes.
+        #
+        # Conversation rows sort last -- narrowest scope nearest the message.
+        # This does mean two chats in one project no longer share a byte
+        # identical system prompt once either has a conversation memory. That
+        # is the unavoidable cost of the tier; the prefix up to <memories> is
+        # untouched, and memories were already the final section.
+        ordered_memories = sorted(
+            usable_memories,
+            key=lambda m: (bool(getattr(m, "scoped_session_id", None)), m.kind, m.slug),
+        )
         memory_blocks = "\n".join(_memory_block(memory) for memory in ordered_memories)
         sections.append(f"<memories>\n{memory_blocks}\n</memories>")
 

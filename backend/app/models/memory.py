@@ -27,6 +27,9 @@ class MemoryOut(BaseModel):
     content: str
     source: str
     session_id: str | None
+    #: Set = this memory reaches one conversation only. Distinct from
+    #: `session_id` above, which is provenance on rows of every tier.
+    scoped_session_id: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -41,6 +44,7 @@ class MemoryOut(BaseModel):
             content=row.content,
             source=row.source,
             session_id=row.session_id,
+            scoped_session_id=row.scoped_session_id,
             created_at=row.created_at,
             updated_at=row.updated_at,
         )
@@ -84,6 +88,10 @@ class MemoryPreviewOut(BaseModel):
     """
 
     project_id: str | None
+    #: Which conversation was previewed, if one was. Scope is (project,
+    #: session) now, so a preview that ignored this would disagree with the
+    #: real prompt for any chat holding a conversation-tier memory.
+    session_id: str | None = None
     #: Empty string when nothing is in scope — there is no block at all then.
     block: str
     char_count: int
