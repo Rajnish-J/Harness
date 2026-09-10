@@ -1,6 +1,7 @@
 "use client";
 
 import { ClipboardCopy, FolderPlus, Link2, MoreVertical, Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
 import { useChatSession } from "@/components/chat/ChatSessionProvider";
@@ -17,6 +18,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "@/components/ui/toast";
 import { deleteChatSession } from "@/lib/api";
+import { chatPath } from "@/lib/chat-routes";
 import { copyWithToast } from "@/lib/copy-with-toast";
 import { transcriptToMarkdown } from "@/lib/transcript-markdown";
 import { workspaceChanges } from "@/lib/workspace-changes";
@@ -37,6 +39,7 @@ import { cn } from "@/lib/utils";
  */
 export default function ChatActionsMenu() {
   const { sessionId, items, newChat } = useChatSession();
+  const router = useRouter();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
@@ -51,7 +54,7 @@ export default function ChatActionsMenu() {
     // every route and touching `window` in a render body is a hydration crash.
     // origin rather than a hardcoded host, so the link follows whatever domain
     // this is served from later.
-    const link = `${window.location.origin}/?session=${encodeURIComponent(sessionId)}`;
+    const link = `${window.location.origin}${chatPath(sessionId)}`;
     void copyWithToast(link, "Chat link");
   }
 
@@ -72,7 +75,11 @@ export default function ChatActionsMenu() {
     // Only after the row is gone: newChat rotates to a fresh id and clears the
     // transcript, so doing it first would strand the operator on a blank chat
     // if the delete then failed.
-    newChat();
+    //
+    // The URL still names the deleted chat, so it has to move too, or a
+    // refresh adopts the dead id straight back. replace, so the Back button
+    // cannot return to it either.
+    router.replace(chatPath(newChat()));
     toast.success({ title: "Chat deleted" });
   }
 
