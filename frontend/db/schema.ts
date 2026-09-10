@@ -699,6 +699,29 @@ export const memoryEntries = pgTable(
     source: text("source").notNull().default("agent"),
     /** Which session produced this, for provenance -- never used to scope reads. */
     sessionId: text("session_id"),
+    /**
+     * Set = this memory applies to ONE conversation and nothing else.
+     *
+     * Deliberately not `session_id` above, which is provenance and is stamped
+     * on every agent-written row whatever its scope. Overloading it would
+     * silently demote every existing global and project memory to the chat
+     * that happened to write it, and no backfill could undo that: "written in
+     * session X, applies globally" and "applies to session X" were never
+     * distinguishable on disk. Null here means "scoped by project_id", i.e.
+     * the two tiers that existed before this column -- so every existing row
+     * keeps its exact meaning with no migration of data at all.
+     *
+     * A third tier is worth having only because history can be LOST while a
+     * conversation continues: switch_provider drops it outright on a mid-chat
+     * provider change, truncation eats the early turns, and attaching a chat
+     * to a project resets the in-memory session. In the happy path the model
+     * can already see the transcript.
+     *
+     * Not a foreign key, matching project_chat_messages.session_id: sessions
+     * are Python-owned and clear_session hard-deletes them, so this can
+     * dangle -- and a dangling conversation memory is inert, never wrong.
+     */
+    scopedSessionId: text("scoped_session_id"),
     /** Soft delete, same discipline as projects.archivedAt. */
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -710,13 +733,28 @@ export const memoryEntries = pgTable(
     // constraint, so a plain one would silently allow duplicate slugs across
     // global rows. A unique INDEX can carry a WHERE clause; a unique
     // CONSTRAINT cannot -- which is why this uses uniqueIndex, not unique().
+    //
+    // All three carry `scoped_session_id` in their predicate, and the first
+    // two must: without it a conversation memory with slug `s` would collide
+    // with the project-tier `s` under the second index, and upsert's
+    // ON CONFLICT would silently overwrite one tier's row with the other's.
+    // Postgres infers ON CONFLICT against the index predicate, so the three
+    // conflict targets in memory_repo.upsert have to match these exactly.
     uniqueIndex("memory_entries_global_slug_uq")
       .on(t.slug)
-      .where(sql`${t.projectId} is null`),
+      .where(sql`${t.projectId} is null and ${t.scopedSessionId} is null`),
     uniqueIndex("memory_entries_project_slug_uq")
       .on(t.projectId, t.slug)
-      .where(sql`${t.projectId} is not null`),
+      .where(sql`${t.projectId} is not null and ${t.scopedSessionId} is null`),
+    // Keyed on the session alone: a session belongs to at most one project
+    // (project_chat_sessions.session_id is globally unique), so the session id
+    // already determines the scope and adding project_id would only let the
+    // same slug exist twice for one conversation.
+    uniqueIndex("memory_entries_session_slug_uq")
+      .on(t.scopedSessionId, t.slug)
+      .where(sql`${t.scopedSessionId} is not null`),
     index("memory_entries_project_archived_idx").on(t.projectId, t.archivedAt),
+    index("memory_entries_session_archived_idx").on(t.scopedSessionId, t.archivedAt),
   ],
 );
 

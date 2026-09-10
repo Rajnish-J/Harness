@@ -26,6 +26,14 @@ class FakeMemory:
     content: str = ""
 
 
+@dataclass
+class ScopedMemory(FakeMemory):
+    """A conversation-tier row. Separate from FakeMemory on purpose: that one
+    stands in for the shapes with no such attribute at all."""
+
+    scoped_session_id: str | None = None
+
+
 def test_no_preset_is_byte_identical_to_the_base_prompt():
     """The un-preset chat path must behave exactly as it did before presets."""
     assert compose_system_prompt(base=SYSTEM_PROMPT) == SYSTEM_PROMPT.strip()
@@ -145,6 +153,50 @@ def test_empty_memories_do_not_emit_a_block():
 def test_memories_are_omitted_when_none_are_given():
     assert compose_system_prompt(base=SYSTEM_PROMPT) == SYSTEM_PROMPT.strip()
     assert "<memories>" not in compose_system_prompt(base=SYSTEM_PROMPT, memories=[])
+
+
+def test_a_row_without_the_scope_attribute_still_composes():
+    """FakeMemory has no `scoped_session_id`, exactly like the row shapes a
+    workflow node composes from. The getattr fallback is what keeps them
+    working rather than raising on a marker they cannot set."""
+    composed = compose_system_prompt(
+        base=SYSTEM_PROMPT,
+        memories=[FakeMemory(kind="fact", slug="f", title="F", content="A fact.")],
+    )
+
+    assert '<memory kind="fact" slug="f">' in composed
+    assert "scope=" not in composed
+
+
+def test_only_a_conversation_memory_is_marked():
+    """The other two tiers are the default and would spend tokens saying so."""
+    broad = FakeMemory(kind="fact", slug="broad", title="B", content="Broad.")
+    narrow = ScopedMemory(
+        kind="fact", slug="narrow", title="N", content="Narrow.",
+        scoped_session_id="sess-1",
+    )
+
+    composed = compose_system_prompt(base=SYSTEM_PROMPT, memories=[broad, narrow])
+
+    assert '<memory kind="fact" slug="broad">' in composed
+    assert '<memory kind="fact" slug="narrow" scope="conversation">' in composed
+
+
+def test_conversation_memories_sort_last_whatever_order_they_arrive_in():
+    """Narrowest scope nearest the message, and still one total order -- two
+    chats holding the same memories must compose identical bytes."""
+    broad = FakeMemory(kind="fact", slug="zzz-broad", title="B", content="Broad.")
+    narrow = ScopedMemory(
+        kind="fact", slug="aaa-narrow", title="N", content="Narrow.",
+        scoped_session_id="sess-1",
+    )
+
+    forwards = compose_system_prompt(base=SYSTEM_PROMPT, memories=[broad, narrow])
+    backwards = compose_system_prompt(base=SYSTEM_PROMPT, memories=[narrow, broad])
+
+    assert forwards == backwards
+    # Despite sorting after it alphabetically, the broad row comes first.
+    assert forwards.index("zzz-broad") < forwards.index("aaa-narrow")
 
 
 def test_memory_truncation_is_bounded_and_marked():

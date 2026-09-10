@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/components/ui/toast";
+import { memoryScope, SCOPE_LABEL } from "@/lib/memory-scope";
 import { memoryApi, type Memory } from "@/lib/memory-api";
 import { projectsApi } from "@/lib/project-api";
 import type { Project } from "@/lib/project-types";
@@ -53,7 +54,10 @@ export default function MemoryBrowser() {
   useEffect(() => {
     const controller = new AbortController();
     memoryApi
-      .list(projectId, controller.signal)
+      // No session: this page browses what a chat-independent scope
+      // holds. Conversation-tier rows are shown via the overview instead,
+      // which returns every scope at once.
+      .list(projectId, null, controller.signal)
       .then((rows) => {
         setMemories(rows);
         setError(null);
@@ -178,7 +182,7 @@ export default function MemoryBrowser() {
                       {memory.content}
                     </span>
                     <span className="text-[11px] text-muted-foreground">
-                      {memory.project_id ? "This project" : "Global"} ·{" "}
+                      {SCOPE_LABEL[memoryScope(memory)]} ·{" "}
                       {memory.source === "agent" ? "written by the agent" : "added by hand"}{" "}
                       · {relativeTime(memory.updated_at)}
                     </span>

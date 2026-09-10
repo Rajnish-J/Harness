@@ -53,7 +53,7 @@ async def test_list_passes_the_project_scope_through(
 ):
     seen: dict = {}
 
-    async def fake_list(_pool, project_id):
+    async def fake_list(_pool, project_id, _session_id=None):
         seen["project_id"] = project_id
         return [_row(), _row(project_id=uuid4(), slug="project-fact")]
 
@@ -63,6 +63,47 @@ async def test_list_passes_the_project_scope_through(
 
     assert seen["project_id"] == "proj-1"
     assert [m.slug for m in out] == ["a-fact", "project-fact"]
+
+
+async def test_list_passes_the_session_scope_through(
+    request_with_pool, monkeypatch: pytest.MonkeyPatch
+):
+    """A conversation is half the scope, so the admin list can ask for one."""
+    seen: dict = {}
+
+    async def fake_list(_pool, project_id, session_id=None):
+        seen["project_id"] = project_id
+        seen["session_id"] = session_id
+        return []
+
+    monkeypatch.setattr(memory_api.memory_repo, "list_active", fake_list)
+
+    await memory_api.list_memory(
+        request_with_pool, project_id="proj-1", session_id="sess-1"
+    )
+
+    assert seen == {"project_id": "proj-1", "session_id": "sess-1"}
+
+
+async def test_a_memory_carries_its_scope_on_the_wire(
+    request_with_pool, monkeypatch: pytest.MonkeyPatch
+):
+    """The UI has to tell a conversation-tier row from a broad one, and
+    session_id alone cannot -- every agent-written row carries that."""
+
+    async def fake_list(_pool, _project_id, _session_id=None):
+        return [
+            _row(slug="broad", session_id="wrote-it"),
+            _row(slug="narrow", session_id="wrote-it", scoped_session_id="sess-1"),
+        ]
+
+    monkeypatch.setattr(memory_api.memory_repo, "list_active", fake_list)
+
+    out = {m.slug: m for m in await memory_api.list_memory(request_with_pool)}
+
+    assert out["broad"].scoped_session_id is None
+    assert out["broad"].session_id == "wrote-it"
+    assert out["narrow"].scoped_session_id == "sess-1"
 
 
 async def test_create_derives_a_slug_and_marks_the_source_human(

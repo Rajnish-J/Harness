@@ -270,7 +270,9 @@ async def _prepare_turn(
     memories: list[memory_repo.MemoryRow] = []
     if pool is not None:
         try:
-            memories = await memory_repo.list_active(pool, project_id)
+            memories = await memory_repo.list_active(
+                pool, project_id, payload.session_id
+            )
         except Exception:  # noqa: BLE001 - a chat must not die because memory did
             logger.exception("could not load memory for project %s", project_id)
 

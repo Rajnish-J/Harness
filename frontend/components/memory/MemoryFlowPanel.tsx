@@ -25,9 +25,9 @@ const STEPS = [
   {
     icon: Database,
     label: "Store",
-    title: "One row, in one of two scopes",
+    title: "One row, in one of three scopes",
     detail:
-      "A row with no project is global and reaches every conversation. A project-scoped row reaches only that project's. Re-using a slug edits the existing memory instead of piling up a duplicate.",
+      "A row with no project is global and reaches every conversation. A project-scoped row reaches only that project's. A row with scoped_session_id set reaches one chat and nothing else. Re-using a slug edits the existing memory instead of piling up a duplicate — per scope, so the same slug can exist once in each.",
     where: "memory_entries",
   },
   {
@@ -35,7 +35,7 @@ const STEPS = [
     label: "Compose",
     title: "Every turn re-reads memory and builds a <memories> block",
     detail:
-      "Not cached per session: the read happens on each request, so an edit or a new memory takes effect on the very next turn. Memories are sorted by (kind, slug) so the prompt prefix stays byte-stable and cacheable.",
+      "Not cached per session: the read happens on each request, so an edit or a new memory takes effect on the very next turn. Sorted so chat-scoped rows come last and the rest by (kind, slug), keeping the block byte-stable for a given set.",
     where: "_prepare_turn → compose_system_prompt",
   },
   {
@@ -43,7 +43,7 @@ const STEPS = [
     label: "Read",
     title: "Any session in scope sees it — including ones already open",
     detail:
-      "This is the whole point: a fact learned in one conversation lands in another conversation's next turn, with nothing typed into it and no restart.",
+      "This is the whole point: a fact learned in one conversation lands in another conversation's next turn, with nothing typed into it and no restart. A chat-scoped row is the deliberate exception — it goes nowhere else, and earns its keep only because a conversation can lose its history while continuing, which is what switching model provider mid-chat does.",
     where: "the model's system prompt",
   },
 ] as const;

@@ -65,6 +65,7 @@ export const MOCK_MEMORIES: Memory[] = [
       "editing when it disagrees.",
     source: "agent",
     session_id: SESSION_AUTH,
+    scoped_session_id: null,
     created_at: T.oldest,
     updated_at: T.mid,
   },
@@ -80,6 +81,7 @@ export const MOCK_MEMORIES: Memory[] = [
       "command, not just the file you touched.",
     source: "human",
     session_id: null,
+    scoped_session_id: null,
     created_at: T.old,
     updated_at: T.old,
   },
@@ -94,6 +96,7 @@ export const MOCK_MEMORIES: Memory[] = [
       "a link rather than guessing from the code when intent is unclear.",
     source: "human",
     session_id: null,
+    scoped_session_id: null,
     created_at: T.old,
     updated_at: T.recent,
   },
@@ -108,6 +111,7 @@ export const MOCK_MEMORIES: Memory[] = [
       "so a branch opened against `main` will never ship.",
     source: "agent",
     session_id: SESSION_CLONE,
+    scoped_session_id: null,
     created_at: T.mid,
     updated_at: T.mid,
   },
@@ -123,6 +127,7 @@ export const MOCK_MEMORIES: Memory[] = [
       "dependency and the alternative, then wait.",
     source: "agent",
     session_id: SESSION_AUTH,
+    scoped_session_id: null,
     created_at: T.recent,
     updated_at: T.newest,
   },
@@ -137,6 +142,7 @@ export const MOCK_MEMORIES: Memory[] = [
       "Anything touching auth starts there, not in the request pipeline.",
     source: "agent",
     session_id: SESSION_GONE,
+    scoped_session_id: null,
     created_at: T.oldest,
     updated_at: T.oldest,
   },
@@ -163,10 +169,22 @@ export function byUpdatedAtDesc(rows: Memory[]): Memory[] {
   return [...rows].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
 }
 
-/** Scope exactly as the backend does: global rows always, plus one project's. */
-export function inScope(rows: Memory[], projectId?: string | null): Memory[] {
-  return rows.filter(
-    (row) => row.project_id === null || (!!projectId && row.project_id === projectId),
+/**
+ * Scope exactly as memory_repo.list_active does: three tiers, one filter.
+ *
+ * The `scoped_session_id === null` test on the first two is what keeps the
+ * conversation tier out of them -- without it every conversation memory ever
+ * written would show up in every chat.
+ */
+export function inScope(
+  rows: Memory[],
+  projectId?: string | null,
+  sessionId?: string | null,
+): Memory[] {
+  return rows.filter((row) =>
+    row.scoped_session_id === null
+      ? row.project_id === null || (!!projectId && row.project_id === projectId)
+      : !!sessionId && row.scoped_session_id === sessionId,
   );
 }
 
@@ -180,13 +198,20 @@ export function renderMemoryBlock(rows: Memory[]): string {
   const usable = rows.filter((row) => row.content.trim());
   if (usable.length === 0) return "";
 
+  // Conversation rows last -- narrowest scope nearest the message -- then
+  // (kind, slug), matching compose_system_prompt's sort key exactly.
   const ordered = [...usable].sort(
-    (a, b) => a.kind.localeCompare(b.kind) || a.slug.localeCompare(b.slug),
+    (a, b) =>
+      Number(!!a.scoped_session_id) - Number(!!b.scoped_session_id) ||
+      a.kind.localeCompare(b.kind) ||
+      a.slug.localeCompare(b.slug),
   );
   const blocks = ordered
     .map((row) =>
       [
-        `<memory kind="${row.kind}" slug="${row.slug}">`,
+        `<memory kind="${row.kind}" slug="${row.slug}"` +
+          // Only the narrowest tier is marked; the other two are the default.
+          `${row.scoped_session_id ? ' scope="conversation"' : ""}>`,
         `<title>${row.title}</title>`,
         row.content,
         "</memory>",
@@ -196,11 +221,16 @@ export function renderMemoryBlock(rows: Memory[]): string {
   return `<memories>\n${blocks}\n</memories>`;
 }
 
-export function mockPreview(rows: Memory[], projectId?: string | null): MemoryPreview {
-  const scoped = inScope(rows, projectId);
+export function mockPreview(
+  rows: Memory[],
+  projectId?: string | null,
+  sessionId?: string | null,
+): MemoryPreview {
+  const scoped = inScope(rows, projectId, sessionId);
   const block = renderMemoryBlock(scoped);
   return {
     project_id: projectId ?? null,
+    session_id: sessionId ?? null,
     block,
     char_count: block.length,
     memory_count: scoped.length,
