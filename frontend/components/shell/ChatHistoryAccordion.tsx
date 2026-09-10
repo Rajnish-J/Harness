@@ -1,7 +1,7 @@
 "use client";
 
 import { Link2, MoreHorizontal, Pin, Trash2 } from "lucide-react";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { useChatSession } from "@/components/chat/ChatSessionProvider";
@@ -34,6 +34,7 @@ import {
   setChatSessionPinned,
   type ChatSessionSummary,
 } from "@/lib/api";
+import { chatPath } from "@/lib/chat-routes";
 import { copyWithToast } from "@/lib/copy-with-toast";
 import { cn } from "@/lib/utils";
 
@@ -57,9 +58,8 @@ import { cn } from "@/lib/utils";
  * existing row bumped to the top by `updated_at`.
  */
 export default function ChatHistoryAccordion() {
-  const { sessionId, streaming, openSession, newChat } = useChatSession();
+  const { sessionId, streaming, newChat } = useChatSession();
   const router = useRouter();
-  const pathname = usePathname();
   const [sessions, setSessions] = useState<ChatSessionSummary[] | null>(null);
   // The row awaiting confirmation. One dialog for the whole list rather than
   // one per row: only ever one is open, and a dialog nested inside a row's
@@ -109,7 +109,7 @@ export default function ChatHistoryAccordion() {
   function shareRow(session: ChatSessionSummary) {
     // Read at click time, never in render: the sidebar is server-rendered and
     // touching `window` in a render body is a hydration crash.
-    const link = `${window.location.origin}/?session=${encodeURIComponent(session.session_id)}`;
+    const link = `${window.location.origin}${chatPath(session.session_id)}`;
     void copyWithToast(link, "Chat link");
   }
 
@@ -130,7 +130,11 @@ export default function ChatHistoryAccordion() {
     // The open conversation just lost its rows. Without this the transcript
     // stays on screen backed by nothing, and the next turn would write the
     // whole thing straight back under the same id.
-    if (session.session_id === sessionId) newChat();
+    //
+    // Navigating matters as much as rotating: the URL still names the deleted
+    // chat, so a refresh would adopt it right back. replace, so the dead id
+    // does not sit in history waiting for the Back button.
+    if (session.session_id === sessionId) router.replace(chatPath(newChat()));
 
     toast.success({ title: "Chat deleted" });
   }
@@ -184,10 +188,13 @@ export default function ChatHistoryAccordion() {
   }
 
   function open(id: string) {
-    void openSession(id);
-    // Same reasoning as NewChatButton: a no-op when already on `/`, but a
-    // click from /workflows or /credentials needs to land on the chat.
-    if (pathname !== "/") router.push("/");
+    // Navigating IS opening the chat now: /chat/[id] renders ChatRouteSession,
+    // which adopts the id from the segment. Calling openSession here as well
+    // would load the same transcript a second time.
+    //
+    // push, not replace: clicking back through the history list should walk
+    // back through the conversations you visited.
+    router.push(chatPath(id));
   }
 
   return (

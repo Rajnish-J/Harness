@@ -43,10 +43,19 @@ type ChatSessionValue = {
     preset?: ChatPreset,
   ) => Promise<void>;
   stop: () => void;
-  newChat: () => void;
-  /** Reopen a past conversation from the sidebar's history list. */
+  /** Start a fresh conversation. Returns the new id, so a caller that has to
+   *  navigate to it does not have to read the store back out. */
+  newChat: () => string;
   /** Reopen a past conversation. False when it had no messages to load. */
   openSession: (sessionId: string) => Promise<boolean>;
+  /**
+   * Point this provider at `id` because the URL says so.
+   *
+   * Idempotent, and a no-op when `id` is already open -- unlike openSession,
+   * which always refetches and always overwrites `items`, so a soft
+   * navigation back to the same chat would stomp a live transcript.
+   */
+  adoptSession: (id: string) => void;
 };
 
 const ChatSessionContext = createContext<ChatSessionValue | null>(null);
@@ -71,6 +80,7 @@ export default function ChatSessionProvider({
   scope = null,
   projectId,
   initialItems,
+  initialSessionId,
 }: {
   children: React.ReactNode;
   /** null is the global chat. A project passes its own scope. */
@@ -79,6 +89,16 @@ export default function ChatSessionProvider({
   projectId?: string;
   /** Server-loaded history, so a returning project repaints what it had. */
   initialItems?: TranscriptItem[];
+  /**
+   * Which session `initialItems` belongs to, when the server was told.
+   *
+   * A deep link (`?chat=<id>`) makes the server load THAT session's history
+   * rather than the newest one, and the store still holds whatever this
+   * browser last had open -- a different id. Claiming `hydratedFor` for the
+   * id the items actually came from is what stops `adoptSession` throwing
+   * them away and refetching the same rows over HTTP.
+   */
+  initialSessionId?: string | null;
 }) {
   // Curried so useSyncExternalStore gets stable callbacks: a new function
   // identity every render would resubscribe on every render.
@@ -98,6 +118,11 @@ export default function ChatSessionProvider({
   const [streaming, setStreaming] = useState(false);
   const [pending, setPending] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  // The message currently in flight. An mcp_consent event parks the turn before
+  // anything runs, and approving it means sending this same text again — but
+  // applyEvent only sees the event, so the text is stashed here rather than
+  // threaded through every case of that switch.
+  const inFlightMessage = useRef<string>("");
 
   // Which session id the transcript has already been loaded for.
   //
@@ -111,8 +136,10 @@ export default function ChatSessionProvider({
   // there is nothing to fetch. Claimed during render rather than in an effect
   // so the effect's very first run already sees it -- an effect would leave a
   // window in which the fetch had started.
-  if (sessionId && initialItems && initialItems.length > 0) {
-    if (hydratedFor.current === null) hydratedFor.current = sessionId;
+  if (initialItems && initialItems.length > 0 && hydratedFor.current === null) {
+    // `initialSessionId` when the server was told which conversation to load,
+    // otherwise the store's id -- which is what the server fell back to.
+    hydratedFor.current = initialSessionId ?? sessionId;
   }
 
   // Abort any in-flight stream if the app goes away. Paired with the backend's
@@ -158,6 +185,21 @@ export default function ChatSessionProvider({
               name: event.name,
               description: event.description,
               template: event.template ?? "",
+            },
+          ];
+
+        case "mcp_consent":
+          return [
+            ...prev,
+            {
+              kind: "mcp_consent",
+              id: event.id,
+              servers: event.servers ?? [],
+              reason: event.reason ?? "",
+              missing: event.missing ?? false,
+              // Captured here because approving re-sends the turn rather than
+              // resuming it — the backend parked before writing any history.
+              message: inFlightMessage.current,
             },
           ];
 
@@ -241,6 +283,7 @@ export default function ChatSessionProvider({
       setItems((prev) => [...prev, { kind: "user", id: nextId(), text }]);
       setStreaming(true);
       setPending(false);
+      inFlightMessage.current = text;
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -364,13 +407,17 @@ export default function ChatSessionProvider({
     // Claim the new id so the hydrate effect treats it as handled. A fresh id
     // has no rows server-side, so its empty-result guard would already save us
     // -- claiming just avoids the pointless round trip on every "New chat".
-    hydratedFor.current = rotateSessionId(scope);
+    const created = rotateSessionId(scope);
+    hydratedFor.current = created;
     setItems([]);
     setPending(false);
     // Fire-and-forget: the UI clears immediately, and a stale server session is
     // harmless once we have rotated away from its id. resetSession swallows
     // its own errors.
     if (sessionId) void resetSession(sessionId);
+    // Returned so the caller can navigate to the new chat's URL without
+    // reading the store back out and racing this rotation.
+    return created;
   }, [sessionId, scope]);
 
   const openSession = useCallback(
@@ -394,6 +441,41 @@ export default function ChatSessionProvider({
       // otherwise adopt an empty conversation believing it worked. The deep
       // link uses this to decide whether to clean the URL.
       return messages.length > 0;
+    },
+    [scope],
+  );
+
+  /**
+   * Adopt the session the URL names.
+   *
+   * This is the route's way in, and it deliberately does NOT load anything
+   * itself: it clears the transcript and points the store at `id`, and the
+   * hydrate effect below -- the one load path -- does the fetching. Two
+   * functions racing to fill `items` is exactly the bug `hydratedFor` exists
+   * to prevent, so this adds a caller to that effect rather than a rival.
+   */
+  const adoptSession = useCallback(
+    (id: string) => {
+      // Reads the STORE, not the `sessionId` render value: the store is
+      // updated synchronously by setStoredSessionId below, so this guard is
+      // correct even for a second call inside the same commit (Strict Mode
+      // double-invokes the effect that calls this). It also keeps `sessionId`
+      // out of the deps, so this callback stays stable across a session swap
+      // and the caller's effect fires once per id rather than twice.
+      if (!id || getSessionIdSnapshot(scope) === id) return;
+
+      abortRef.current?.abort();
+      setPending(false);
+      // Already loaded for this id -- server-seeded `initialItems` claimed it
+      // during render -- so those rows ARE this conversation and must survive.
+      // Otherwise clear, which is load-bearing in the other direction: the
+      // hydrate effect refuses to paint over a non-empty transcript
+      // (`prev.length > 0 ? prev : ...`), so leaving the old chat's messages
+      // in place would make its fetch a no-op and strand the wrong transcript.
+      if (hydratedFor.current !== id) setItems([]);
+      setStoredSessionId(scope, id);
+      // No hydratedFor claim: leaving the new id unclaimed is precisely what
+      // hands the load to the hydrate effect.
     },
     [scope],
   );
@@ -445,6 +527,7 @@ export default function ChatSessionProvider({
       stop,
       newChat,
       openSession,
+      adoptSession,
     }),
     [
       sessionId,
@@ -457,6 +540,7 @@ export default function ChatSessionProvider({
       stop,
       newChat,
       openSession,
+      adoptSession,
     ],
   );
 

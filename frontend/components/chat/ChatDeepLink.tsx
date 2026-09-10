@@ -1,14 +1,15 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef } from "react";
 
+import { chatPath } from "@/lib/chat-routes";
+
 import { useChatPreset } from "./ChatPresetProvider";
-import { useChatSession } from "./ChatSessionProvider";
 
 /**
- * Drains a "Use in chat" link: /?agent=slug, /?skill=slug, /?mcp=name, and
- * /?session=id from the chat menu's Share item.
+ * Drains a "Use in chat" link: ?agent=slug, ?skill=slug, ?mcp=name, and the
+ * legacy ?session=id share link, which now redirects to /chat/<id>.
  *
  * A query param rather than a context call before router.push, because that
  * only works for soft navigation — it silently does nothing on a refresh,
@@ -20,8 +21,8 @@ import { useChatSession } from "./ChatSessionProvider";
 export default function ChatDeepLink() {
   const params = useSearchParams();
   const router = useRouter();
+  const pathname = usePathname();
   const { applyFromQuery } = useChatPreset();
-  const { openSession } = useChatSession();
   const applied = useRef<string | null>(null);
 
   useEffect(() => {
@@ -29,23 +30,28 @@ export default function ChatDeepLink() {
     if (!key || applied.current === key) return;
     applied.current = key;
 
-    // A shared conversation link. Handled first and exclusively: it replaces
-    // the whole transcript, so pairing it with preset params in one URL would
-    // be ambiguous about which wins.
+    // A share link from before conversations had their own URLs. Now that
+    // they do, this is purely a redirect to the canonical one -- the route
+    // itself adopts the session. Handled first and exclusively: it names a
+    // whole different conversation, so pairing it with preset params in one
+    // URL would be ambiguous about which wins.
     const session = params.get("session");
     if (session) {
-      void openSession(session).then((ok) => {
-        if (ok) router.replace("/", { scroll: false });
-      });
+      router.replace(chatPath(session), { scroll: false });
       return;
     }
 
     void applyFromQuery(params).then((ok) => {
       // Clean the URL only on success, so a slug that matched nothing stays
       // visible instead of vanishing with no explanation.
-      if (ok) router.replace("/", { scroll: false });
+      //
+      // Back to the CURRENT path, not "/": this route is /chat/<id> now, and
+      // sending it to "/" would hand it to the entry redirect, which resolves
+      // localStorage -- quite possibly a different conversation than the one
+      // the preset was just applied to.
+      if (ok) router.replace(pathname, { scroll: false });
     });
-  }, [params, applyFromQuery, openSession, router]);
+  }, [params, applyFromQuery, pathname, router]);
 
   return null;
 }

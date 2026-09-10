@@ -10,6 +10,13 @@
  * Per-scope listeners matter: rotating a project's session must not re-render
  * the global chat, and vice versa. One shared listener set would wake every
  * mounted chat on any "New chat" press.
+ *
+ * For the GLOBAL scope this is no longer the source of truth -- the URL is,
+ * since conversations live at /chat/<id>. What is left is the pointer that
+ * bare `/` reads to decide which chat to reopen, written on every adoption and
+ * rotation. The project scopes are unchanged and still authoritative: the IDE
+ * rail's conversation is a query param on a page whose identity is the
+ * project, so localStorage is what remembers it between visits.
  */
 
 const BASE_KEY = "harness_session_id";
@@ -33,11 +40,14 @@ function newId(): string {
 }
 
 /**
- * The session id is the only thing tying successive requests to the same
- * server-side conversation history. It lives in localStorage so a refresh keeps
- * the backend conversation.
+ * Read the stored id, or mint and store one.
  *
- * Storage can throw in private-browsing modes, so every access is guarded.
+ * Both halves matter to the chat entry point: "reopen my last conversation"
+ * and "start my first one" are the same call, which is what lets `/` redirect
+ * without first asking whether this browser has been here before.
+ *
+ * Storage can throw in private-browsing modes, so every access is guarded --
+ * the fallback is a real id that simply will not survive the tab.
  */
 export function getOrCreateSessionId(scope: SessionScope = null): string {
   const key = storageKey(scope);
