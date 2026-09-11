@@ -1,5 +1,7 @@
 import inspect
 import logging
+import re
+from uuid import uuid4
 from collections.abc import AsyncIterator, Awaitable, Callable
 
 from psycopg_pool import AsyncConnectionPool
@@ -33,6 +35,18 @@ from app.models.events import (
 )
 
 logger = logging.getLogger(__name__)
+
+def _new_message_uid() -> str:
+    """Mint the stable id an assistant message is known by, everywhere.
+
+    The browser numbers live transcript items with a render-time counter and
+    a reloaded transcript by `seq`, so neither survives as a key across a
+    refresh. This id is generated once here, streamed on the event, and
+    stored on the message row -- which is what lets feedback point at a
+    message and still find it tomorrow.
+    """
+    return f"msg_{uuid4().hex[:16]}"
+
 
 #: The base prompt every turn starts from. compose_system_prompt puts it first
 #: and keeps it constant, so it is the shared cacheable prefix for every request
@@ -334,9 +348,25 @@ async def _drive(
     tools_by_name = {tool.name: tool for tool in active_tools}
     tool_schemas = llm_client.tool_schemas(active_tools)
     # Tools the router held back. All three of the bindings above are rebuilt
-    # from these when the model calls request_tools, which is the only thing in
-    # the turn allowed to change what it may call.
+    # from these when the turn's toolset widens, which happens two ways: the
+    # model calls request_tools, or a provider rejects a held-back name outright
+    # and we grant it (see _unadvertised_tool_name).
     reserve = list(tool_reserve or ())
+
+    def adopt(widened: list[Tool], new_reserve: list[Tool]) -> None:
+        """Take a widened toolset, keeping every derived binding in step.
+
+        The advertised schemas and the dispatch table must never disagree: a
+        tool in one and not the other is either a call the provider refuses or
+        a name the model can reach but not run. Rebuilding them together, in
+        one place, is what makes that impossible.
+        """
+        nonlocal active_tools, tools_by_name, tool_schemas, reserve
+        active_tools = widened
+        reserve = new_reserve
+        tools_by_name = {tool.name: tool for tool in active_tools}
+        tool_schemas = llm_client.tool_schemas(active_tools)
+        _remember_widening(session, active_tools, reserve)
 
     # Accumulated across every LLM call this turn makes — a node can iterate
     # decide->act->observe several times before it's done, so a single call's
@@ -365,16 +395,73 @@ async def _drive(
                 return
 
             # ---- decide -------------------------------------------------
-            try:
-                turn = await llm_client.send(
-                    history=session.history,
-                    tools=tool_schemas,
-                    system=active_system,
+            # Two attempts at most: the second exists only for a provider that
+            # rejected the whole request over a tool the router held back, and
+            # is reached by granting that tool. Bounded three ways -- this
+            # range, the reserve shrinking so one name can never be granted
+            # twice, and max_agent_iterations around all of it.
+            turn = None
+            for _attempt in range(2):
+                try:
+                    turn = await llm_client.send(
+                        history=session.history,
+                        tools=tool_schemas,
+                        system=active_system,
+                    )
+                    break
+                except Exception as exc:  # noqa: BLE001 - classified below
+                    refused = _unadvertised_tool_name(exc)
+                    wanted = next(
+                        (tool for tool in reserve if tool.name == refused), None
+                    )
+                    if wanted is not None:
+                        # The model asked for something real that this turn was
+                        # not shown. That is the router being too tight, not a
+                        # bad request: grant it and let the model try again.
+                        # Appended, never spliced -- order is the cacheable
+                        # prefix, same rule as a request_tools grant.
+                        logger.info(
+                            "Provider refused held-back tool %s; granting it and "
+                            "retrying iteration %d",
+                            refused,
+                            iteration,
+                        )
+                        adopt(
+                            [*active_tools, wanted],
+                            [tool for tool in reserve if tool.name != refused],
+                        )
+                        continue
+                    if refused is not None:
+                        # Not in the reserve, so there is nothing legitimate to
+                        # grant: a hallucinated name, a tool switched off on
+                        # /tools, or a candidate from a server the user has not
+                        # attached. Conjuring any of those would widen the turn
+                        # past what it was allowed to call.
+                        logger.warning(
+                            "Provider refused tool %s, which this turn never "
+                            "held back; not granting it",
+                            refused,
+                        )
+                    message, code = _classify_llm_error(exc)
+                    logger.exception("LLM call failed on iteration %d", iteration)
+                    yield ErrorEvent(message=message, code=code)
+                    yield DoneEvent(reason="error", usage=total_usage)
+                    return
+
+            if turn is None:
+                # Both attempts were refused over a held-back tool. The first
+                # grant did not satisfy the model and a second would be an
+                # unbounded widen, so stop rather than keep buying calls.
+                logger.warning(
+                    "Provider refused a tool call twice on iteration %d", iteration
                 )
-            except Exception as exc:  # noqa: BLE001 - classified below
-                message, code = _classify_llm_error(exc)
-                logger.exception("LLM call failed on iteration %d", iteration)
-                yield ErrorEvent(message=message, code=code)
+                yield ErrorEvent(
+                    message=(
+                        "The provider rejected the request: the model kept "
+                        "calling tools that were not offered to it."
+                    ),
+                    code="bad_request",
+                )
                 yield DoneEvent(reason="error", usage=total_usage)
                 return
 
@@ -390,7 +477,9 @@ async def _drive(
                 # end_turn, or max_tokens with nothing left to act on.
                 llm_client.append_assistant_turn(session.history, turn)
                 if turn.text:
-                    yield AssistantMessageEvent(text=turn.text)
+                    yield AssistantMessageEvent(
+                        text=turn.text, message_uid=_new_message_uid()
+                    )
                 if turn.stop_reason == "max_tokens":
                     yield ErrorEvent(
                         message="Response hit the max_tokens limit and was cut off.",
@@ -405,7 +494,9 @@ async def _drive(
             llm_client.append_assistant_turn(session.history, turn)
             if turn.text:
                 # Models often narrate before calling a tool; surface it.
-                yield AssistantMessageEvent(text=turn.text)
+                yield AssistantMessageEvent(
+                    text=turn.text, message_uid=_new_message_uid()
+                )
 
             proposal_ids = {
                 call.id
@@ -478,14 +569,13 @@ async def _drive(
                 # A granted request_tools call is the one thing that changes the
                 # turn's toolset mid-flight, so the schemas the next decision
                 # sees are rebuilt here rather than once at the top.
-                widened, reserve = _apply_tool_request(
+                widened, new_reserve = _apply_tool_request(
                     call, result, active_tools, reserve
                 )
                 if widened is not active_tools:
-                    active_tools = widened
-                    tools_by_name = {tool.name: tool for tool in active_tools}
-                    tool_schemas = llm_client.tool_schemas(active_tools)
-                    _remember_widening(session, active_tools, reserve)
+                    adopt(widened, new_reserve)
+                else:
+                    reserve = new_reserve
 
                 results.append((call, result))
                 yield ToolResultEvent(
@@ -624,6 +714,34 @@ async def _dispatch_tool(
     except Exception as exc:  # noqa: BLE001 - a tool bug must not kill the loop
         logger.exception("Unexpected failure in tool %s", call.name)
         return ToolResult(content=f"Tool {call.name} failed: {exc}", is_error=True)
+
+
+#: A provider refusing a tool call because the name was not in the request.
+#:
+#: Anchored on `request.tools`, which is the discriminator: no other provider
+#: phrases a rejection that way, so matching the string is both narrower and
+#: more durable than branching on which client was configured -- a Groq
+#: compatible base_url behind some other SDK is still handled.
+_UNADVERTISED_TOOL_RE = re.compile(
+    r"call(?:ed)?\s+tool\s+['\"`]([A-Za-z0-9_\-]+)['\"`][^.]*?not\s+in\s+request\.tools",
+    re.IGNORECASE,
+)
+
+
+def _unadvertised_tool_name(exc: Exception) -> str | None:
+    """The tool a provider refused to call, or None if that is not this error.
+
+    Providers disagree about what calling an unadvertised tool means. Anthropic
+    treats it as one bad call: the turn survives, the model reads the error and
+    asks for the tool through request_tools. Groq rejects the entire request
+    with a 400, so that recovery never gets to happen and a narrowed turn dies
+    on its first wrong guess. Naming the tool here is what lets the caller grant
+    it and try again, making the two providers behave the same way.
+    """
+    if type(exc).__name__ != "BadRequestError":
+        return None
+    match = _UNADVERTISED_TOOL_RE.search(str(exc))
+    return match.group(1) if match else None
 
 
 def _classify_llm_error(exc: Exception) -> tuple[str, str]:

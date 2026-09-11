@@ -262,3 +262,227 @@ async def test_a_hand_picked_toolset_is_below_the_threshold_and_skips_routing(
     assert spy.calls == 0
     assert turn.selection_event is None
     assert "write_file" in names_of(turn)
+
+
+# ------------------------------------------------------- MCP consent parking
+#
+# A server registered on /mcp but not attached here. The router sees it, and a
+# request that needs it stops the turn to ask rather than running a turn that
+# cannot possibly succeed -- which is what produced a confident, wrong refusal.
+
+
+def candidate_tool(name: str, server: str = "github"):
+    from app.agent.tools.base import Tool
+    from app.mcp.tools import mcp_group
+
+    return Tool(
+        name=name,
+        description=f"[{server}] Does {name}.",
+        input_schema={"type": "object", "properties": {}},
+        run=lambda **_: "",
+        group=mcp_group(server),
+    )
+
+
+@pytest.fixture
+def candidates(monkeypatch: pytest.MonkeyPatch):
+    """Pretend an enabled-but-unattached server offers these tools."""
+
+    def _install(tools, ids=None):
+        async def _fake(app, settings, attached_ids, exclude_ids=None):
+            live = [
+                t
+                for t in tools
+                if not (exclude_ids or set())
+                & {(ids or {}).get(t.group.split(" · ")[-1], "")}
+            ]
+            return live, (ids or {"github": "gh-id"})
+
+        monkeypatch.setattr(chat_api, "discover_candidate_tools", _fake)
+
+    return _install
+
+
+async def test_a_turn_that_needs_an_unattached_server_parks(
+    settings, router, candidates
+):
+    candidates([candidate_tool("mcp__github__list_repos")])
+    router('{"tools": ["mcp__github__list_repos"], "reason": "Listing repos."}')
+
+    with pytest.raises(chat_api.McpConsentRequired) as parked:
+        await prepare(
+            request_with(settings), settings, message="what repos do I have"
+        )
+
+    event = parked.value.event
+    assert event.servers == [{"id": "gh-id", "name": "github"}]
+    assert event.reason == "Listing repos."
+    # Nothing may have been written: the turn never ran, so declining must
+    # leave no half-turn behind it.
+    session = session_store.peek("router-test")
+    assert session is None or session.history == []
+
+
+async def test_an_ordinary_turn_is_unaffected_by_a_candidate_server(
+    settings, router, candidates
+):
+    """The common case: a server is registered and simply not relevant."""
+    candidates([candidate_tool("mcp__github__list_repos")])
+    router('{"tools": ["git_commit"], "reason": "Committing."}')
+
+    turn, _ = await prepare(request_with(settings), settings)
+
+    assert "git_commit" in names_of(turn)
+    # And the candidate never reached the turn, in either half.
+    assert "mcp__github__list_repos" not in names_of(turn)
+    assert "mcp__github__list_repos" not in [t.name for t in turn.tool_reserve]
+
+
+async def test_a_declined_server_is_not_offered_again(
+    settings, router, candidates, monkeypatch
+):
+    """Declining must be a decision, not a delay.
+
+    Without this the next message routes again, names the same server again,
+    and the user is asked the same question forever.
+    """
+    seen: dict[str, set] = {}
+
+    async def _fake(app, s, attached_ids, exclude_ids=None):
+        seen["excluded"] = set(exclude_ids or set())
+        if "gh-id" in seen["excluded"]:
+            return [], {}
+        return [candidate_tool("mcp__github__list_repos")], {"github": "gh-id"}
+
+    monkeypatch.setattr(chat_api, "discover_candidate_tools", _fake)
+    router('{"tools": ["mcp__github__list_repos"], "reason": "Listing repos."}')
+
+    with pytest.raises(chat_api.McpConsentRequired):
+        await prepare(request_with(settings), settings, message="list my repos")
+
+    # The user says no, which the decline endpoint records on the session.
+    session = session_store.get_or_create("router-test", "anthropic")
+    session.declined_mcp_server_ids.add("gh-id")
+
+    # The same question, again. It must run this time rather than re-ask.
+    turn, _ = await prepare(request_with(settings), settings, message="list my repos")
+    assert turn is not None
+    assert seen["excluded"] == {"gh-id"}
+
+
+async def test_an_already_attached_server_never_parks_the_turn(
+    settings, router, candidates
+):
+    """Approving must not lead straight back to the same question.
+
+    discover_candidate_tools already excludes attached servers, so reaching
+    this state means that filter regressed -- and the cost of the regression is
+    an infinite loop: the user approves, the turn re-posts with the server
+    attached, and parks on it again. Guarded locally so it cannot happen.
+    """
+    candidates([candidate_tool("mcp__github__list_repos")])
+    router('{"tools": ["mcp__github__list_repos"], "reason": "Listing repos."}')
+
+    turn, _ = await prepare(
+        request_with(settings),
+        settings,
+        message="what repos do I have",
+        mcp_server_ids=["gh-id"],
+    )
+
+    assert turn is not None
+
+
+async def test_a_turn_that_can_proceed_is_not_parked(settings, router, candidates):
+    """A server named ALONGSIDE usable tools is an enhancement, not a blocker.
+
+    Parking here would throw away a selection the router already paid for and
+    interrupt the user for permission they do not need yet.
+    """
+    candidates([candidate_tool("mcp__github__list_repos")])
+    router(
+        '{"tools": ["git_commit", "mcp__github__list_repos"], '
+        '"reason": "Commit, and repos if allowed."}'
+    )
+
+    turn, _ = await prepare(request_with(settings), settings)
+
+    assert "git_commit" in names_of(turn)
+    # Still never granted without consent.
+    assert "mcp__github__list_repos" not in names_of(turn)
+
+
+async def test_the_prompt_names_only_servers_the_turn_can_actually_call(
+    settings, router, monkeypatch
+):
+    """The bug that produced a hard 400 from Groq.
+
+    The prompt told the model the github server was attached and authenticated
+    while the router had held every one of its tools back. The model reached
+    for one, the provider refused the whole request, and the turn died.
+    """
+    from app.agent.tools.base import Tool
+    from app.mcp.tools import mcp_group
+
+    github = Tool(
+        name="mcp__github__get_me",
+        description="[github] Who am I.",
+        input_schema={"type": "object", "properties": {}},
+        run=lambda **_: "",
+        group=mcp_group("github"),
+    )
+
+    async def _resolve(app, settings_, ids):
+        return [github], []
+
+    monkeypatch.setattr(chat_api, "resolve_mcp_tools", _resolve)
+    # Routed to a built-in, so every github tool lands in the reserve.
+    router('{"tools": ["git_commit"], "reason": "Committing."}')
+
+    turn, _ = await prepare(
+        request_with(settings), settings, mcp_server_ids=["gh-id"]
+    )
+
+    assert "mcp__github__get_me" not in names_of(turn)
+    assert "Connected MCP" not in turn.system
+    assert "github" not in turn.system
+
+
+async def test_a_server_whose_tools_survived_is_still_declared_authenticated(
+    settings, router, monkeypatch
+):
+    """The other direction, or the fix would just be "never mention MCP".
+
+    The block exists because a model handed thirty `mcp__github__*` tools with
+    nothing saying they are authenticated asks the user for a token instead of
+    calling one. That has to keep working whenever the tools ARE present.
+    """
+    from app.agent.tools.base import Tool
+    from app.mcp.tools import mcp_group
+
+    github = Tool(
+        name="mcp__github__list_repos",
+        description="[github] List repositories.",
+        input_schema={"type": "object", "properties": {}},
+        run=lambda **_: "",
+        group=mcp_group("github"),
+    )
+
+    async def _resolve(app, settings_, ids):
+        return [github], []
+
+    monkeypatch.setattr(chat_api, "resolve_mcp_tools", _resolve)
+    router('{"tools": ["mcp__github__list_repos"], "reason": "Listing repos."}')
+
+    turn, _ = await prepare(
+        request_with(settings),
+        settings,
+        message="what repos do I have",
+        mcp_server_ids=["gh-id"],
+    )
+
+    assert "mcp__github__list_repos" in names_of(turn)
+    assert "Connected MCP" in turn.system
+    assert "already authenticated" in turn.system
+    # And because the router held other tools back, it says how to get them.
+    assert "request_tools" in turn.system

@@ -22,6 +22,7 @@ from app.agent.tools.meta.request_tools import REQUEST_TOOLS_TOOL_NAME
 from app.agent.tools.router import (
     CORE_TOOL_NAMES,
     ToolSelection,
+    _assemble,
     catalog_lines,
     first_sentence,
     parse_selection,
@@ -372,3 +373,214 @@ def test_restore_of_a_whole_pool_adds_no_escape_hatch():
     restored = restore_selection(POOL, every, [])
     assert restored is not None
     assert REQUEST_TOOLS_TOOL_NAME not in restored.selected_names
+
+
+# ------------------------------------------------- registered-but-unattached
+#
+# Tools from a server the user registered on /mcp but did not attach to this
+# chat. The router is shown them so it can notice a request needs one; it is
+# never allowed to hand one to the model. Naming one asks the user instead.
+
+CANDIDATES = [
+    tool("mcp__github__list_repos", "MCP · github"),
+    tool("mcp__github__create_issue", "MCP · github"),
+    tool("mcp__slack__post", "MCP · slack"),
+]
+
+
+async def test_a_candidate_is_never_selected_only_requested(settings):
+    client = FakeClient(
+        '{"tools": ["mcp__github__list_repos"], "reason": "Listing repos."}'
+    )
+    selection = await route(POOL, client, settings, candidates=CANDIDATES)
+
+    # The whole safety story: it asked for a server, it did not gain a tool.
+    assert selection.needs_servers == ["github"]
+    assert "mcp__github__list_repos" not in selection.selected_names
+    assert "mcp__github__list_repos" not in selection.reserve_names
+    # And it must not have leaked into the reserve either, or request_tools
+    # could pull an unauthorised server's tool in mid-turn.
+    assert all(not name.startswith("mcp__slack__") for name in selection.selected_names)
+
+
+async def test_candidates_are_offered_in_the_catalog_and_marked(settings):
+    client = FakeClient('{"tools": [], "reason": ""}')
+    await route(POOL, client, settings, candidates=CANDIDATES)
+
+    prompt = client.calls[0][0][0]["content"]
+    assert "mcp__github__list_repos (NEEDS PERMISSION)" in prompt
+    # An ordinary pool tool carries no marker, or the distinction is worthless.
+    assert "git_commit (NEEDS PERMISSION)" not in prompt
+
+
+async def test_two_servers_are_both_reported_once_each(settings):
+    client = FakeClient(
+        '{"tools": ["mcp__github__list_repos", "mcp__github__create_issue", '
+        '"mcp__slack__post"], "reason": "Both."}'
+    )
+    selection = await route(POOL, client, settings, candidates=CANDIDATES)
+
+    assert selection.needs_servers == ["github", "slack"]
+
+
+async def test_a_pick_of_only_candidates_still_parks(settings):
+    """The pool has no core tools, so `keep` is empty -- but the answer is real.
+
+    Failing open here would run the turn with every tool and still not be able
+    to do the thing, which is exactly the silent failure this feature ends.
+    """
+    pool = [tool("alpha"), tool("zeta")]
+    client = FakeClient(
+        '{"tools": ["mcp__github__list_repos"], "reason": "Needs GitHub."}'
+    )
+    selection = await select_tools(
+        pool=pool,
+        user_message="what repos do I have",
+        client=client,
+        settings=Settings(workspace_root=settings.workspace_root, tool_router_threshold=1),
+        candidates=CANDIDATES,
+    )
+
+    assert selection.ran is True
+    assert selection.needs_servers == ["github"]
+
+
+async def test_a_router_failure_never_asks_for_a_server(settings):
+    """Fail-open must not become fail-ask: a timeout cannot park a turn."""
+    client = FakeClient(raises=RuntimeError("boom"))
+    selection = await route(POOL, client, settings, candidates=CANDIDATES)
+
+    assert selection.ran is False
+    assert selection.needs_servers == []
+    assert selection.selected_names == [t.name for t in POOL]
+
+
+async def test_candidates_alone_are_worth_a_routing_call_below_threshold(settings):
+    """A small pool still routes when there is a server it might need.
+
+    Below the threshold the router normally does not run at all. That is right
+    for narrowing and wrong here: skipping the call is how the model ends up
+    apologising for a capability the user already registered.
+    """
+    small = [tool("alpha"), tool("read_file")]
+    client = FakeClient(
+        '{"tools": ["mcp__github__list_repos"], "reason": "Needs GitHub."}'
+    )
+    selection = await select_tools(
+        pool=small,
+        user_message="what repos do I have",
+        client=client,
+        settings=settings,  # threshold 4, len(small) is 2
+        candidates=CANDIDATES,
+    )
+
+    assert client.calls, "the router should have been consulted"
+    assert selection.needs_servers == ["github"]
+
+
+async def test_no_candidates_leaves_the_threshold_shortcut_intact(settings):
+    """The other half of the rule above: without candidates, nothing changes."""
+    small = [tool("alpha"), tool("read_file")]
+    client = FakeClient('{"tools": ["alpha"], "reason": "x"}')
+    selection = await route(small, client, settings, candidates=[])
+
+    assert client.calls == [], "a small pool with nothing to ask about must not route"
+    assert selection.ran is False
+
+
+async def test_a_hallucinated_name_is_still_dropped_not_treated_as_a_server(settings):
+    client = FakeClient('{"tools": ["not_a_real_tool"], "reason": "x"}')
+    selection = await route(POOL, client, settings, candidates=CANDIDATES)
+
+    assert selection.needs_servers == []
+    assert "not_a_real_tool" not in selection.selected_names
+
+
+async def test_ordering_survives_candidates(settings):
+    """The pool-order invariant is unaffected by the partition above it."""
+    client = FakeClient(
+        '{"tools": ["zeta", "git_commit", "mcp__github__list_repos"], "reason": "x"}'
+    )
+    selection = await route(POOL, client, settings, candidates=CANDIDATES)
+
+    picked = [n for n in selection.selected_names if n != REQUEST_TOOLS_TOOL_NAME]
+    assert picked == sorted(picked, key=[t.name for t in POOL].index)
+
+
+def test_the_hatch_is_built_with_this_turn_s_reserve_in_its_schema():
+    """The router is what makes the enum useful: it knows what was held back.
+
+    Without this the hatch ships an open-ended string and the model has to
+    guess a name it has never been shown -- which is how a real turn ended up
+    asking for `mcp__github__list_user_repos`, a tool that does not exist.
+    """
+    pool = [
+        tool("read_file"),
+        tool("mcp__github__search_repositories"),
+        tool("mcp__github__list_commits"),
+    ]
+
+    selection = _assemble(pool, {"read_file"}, reason="", model=None)
+
+    hatch = next(t for t in selection.tools if t.name == REQUEST_TOOLS_TOOL_NAME)
+    assert hatch.input_schema["properties"]["names"]["items"]["enum"] == [
+        "mcp__github__list_commits",
+        "mcp__github__search_repositories",
+    ]
+
+
+def test_a_resumed_turn_advertises_the_same_names():
+    """A resume must offer exactly what the first pass did, enum included."""
+    pool = [
+        tool("read_file"),
+        tool("mcp__github__search_repositories"),
+    ]
+
+    restored = restore_selection(
+        pool, ["read_file"], ["mcp__github__search_repositories"]
+    )
+
+    hatch = next(t for t in restored.tools if t.name == REQUEST_TOOLS_TOOL_NAME)
+    assert hatch.input_schema["properties"]["names"]["items"]["enum"] == [
+        "mcp__github__search_repositories"
+    ]
+
+
+async def test_a_mixed_pick_runs_rather_than_parking(settings):
+    """Naming a server AND real tools is not a reason to stop and ask.
+
+    Parking costs the user an interruption and a round trip, so it is worth it
+    only when the turn cannot otherwise proceed. A pick that also named usable
+    tools can make progress: the server is an enhancement, and the right move
+    is to run with what was chosen rather than block on permission for the rest.
+    """
+    client = FakeClient(
+        '{"tools": ["git_commit", "mcp__github__list_repos"], '
+        '"reason": "Commit, and repos if allowed."}'
+    )
+    selection = await route(POOL, client, settings, candidates=CANDIDATES)
+
+    assert selection.needs_servers == []
+    assert "git_commit" in selection.selected_names
+    # Still never granted: not parking must not turn into quietly widening.
+    assert "mcp__github__list_repos" not in selection.selected_names
+    assert "mcp__github__list_repos" not in selection.reserve_names
+
+
+async def test_the_core_floor_alone_is_not_a_reason_to_skip_parking(settings):
+    """The floor is added to every selection, so it proves nothing.
+
+    Counting it as "the turn can proceed" would silently disable parking
+    everywhere, because `keep` is never empty once the floor is in it.
+    """
+    client = FakeClient(
+        '{"tools": ["mcp__github__list_repos"], "reason": "Needs github."}'
+    )
+    selection = await route(POOL, client, settings, candidates=CANDIDATES)
+
+    # The floor IS present...
+    assert {"read_file", "list_directory", "search_files"} <= set(
+        selection.selected_names
+    )
+    # ...and the turn parks anyway.
+    assert selection.needs_servers == ["github"]

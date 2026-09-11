@@ -271,3 +271,41 @@ def test_duplicate_and_blank_server_names_collapse():
         base=SYSTEM_PROMPT, mcp_servers=["github", "github", "", "  "]
     )
     assert once == twice
+
+
+def test_the_block_names_no_specific_identity_tool():
+    """It used to name `get_me`, and that is what broke a live turn.
+
+    The router narrows the toolset, so a tool named in prose may well not be in
+    the request. Groq rejects the whole call for an unadvertised name, so this
+    block was talking turns into a hard 400. The instruction has to describe
+    the shape of the tool, never a name the turn may not be holding.
+    """
+    composed = compose_system_prompt(base=SYSTEM_PROMPT, mcp_servers=["github"])
+
+    for guess in ("get_me", "whoami", "get_authenticated_user"):
+        assert guess not in composed
+    # The behaviour it exists for survives the rewording.
+    assert "identity tool" in composed
+    assert "never ask the user for a username" in composed.lower()
+
+
+def test_a_partial_toolset_points_at_request_tools():
+    """When the router held tools back, say so and name the way to get them."""
+    whole = compose_system_prompt(base=SYSTEM_PROMPT, mcp_servers=["github"])
+    partial = compose_system_prompt(
+        base=SYSTEM_PROMPT, mcp_servers=["github"], mcp_partial=True
+    )
+
+    assert "request_tools" not in whole
+    assert "request_tools" in partial
+    # Only an addition: a turn that kept everything reads exactly as before.
+    assert partial.startswith(whole[: whole.index("credentials.") + len("credentials.")])
+
+
+def test_mcp_partial_is_inert_without_servers():
+    """No servers, no block -- the flag must not conjure one."""
+    assert (
+        compose_system_prompt(base=SYSTEM_PROMPT, mcp_servers=[], mcp_partial=True)
+        == SYSTEM_PROMPT.strip()
+    )
