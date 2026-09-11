@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import logging
 from typing import Any
+from typing import Any
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -141,13 +142,18 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=False,  # no cookies or auth in this milestone
+    # GET/POST is not enough: the browser already calls DELETE
+    # /api/chat/sessions/{id} (deleting a conversation from the sidebar) and
+    # PATCH + DELETE /api/memory/{id} (editing and archiving from /memory).
+    # Without them listed here the preflight fails and those three actions do
+    # nothing at all, with no error the user can see.
     # Every method the routers actually serve. DELETE and PATCH were missing,
     # which silently blocked chat deletion and the whole memory admin surface:
     # the browser's preflight was rejected before FastAPI ever saw the request.
     # Only the clients that call API_BASE cross-origin (api.ts, memory-api.ts)
     # are affected -- the ones on relative Next routes are same-origin, never
     # preflight, and so never noticed the gap. No router defines PUT yet.
-    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS", "PATCH", "DELETE"],
     allow_headers=["Content-Type"],
 )
 
