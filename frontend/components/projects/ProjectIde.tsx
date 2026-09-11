@@ -10,6 +10,7 @@ import ChatPresetProvider from "@/components/chat/ChatPresetProvider";
 import ChatSessionProvider from "@/components/chat/ChatSessionProvider";
 import ChatWindow from "@/components/chat/ChatWindow";
 import ProjectChatSwitcher from "@/components/projects/ide/ProjectChatSwitcher";
+import ProjectChatUrlSync from "@/components/projects/ide/ProjectChatUrlSync";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -73,10 +74,13 @@ const CodeEditor = dynamic(() => import("@/components/projects/CodeEditor"), {
 export default function ProjectIde({
   project,
   initialMessages,
+  initialSessionId,
   credentials,
 }: {
   project: Project;
   initialMessages: TranscriptItem[];
+  /** The conversation `?chat=` asked for, and the one initialMessages holds. */
+  initialSessionId?: string | null;
   credentials: Credential[];
 }) {
   const router = useRouter();
@@ -264,7 +268,15 @@ export default function ProjectIde({
           scope={scopeForProject(project.id)}
           projectId={project.id}
           initialItems={initialMessages}
+          initialSessionId={initialSessionId}
         >
+          {/* Inside the provider so it binds to this project's conversation,
+              and outside the panel group so hiding the chat pane does not stop
+              the URL tracking a chat that is still streaming. */}
+          <ProjectChatUrlSync
+            projectId={project.id}
+            initialSessionId={initialSessionId}
+          />
           <ResizablePanelGroup
             orientation="horizontal"
             className="flex min-h-0 flex-1"

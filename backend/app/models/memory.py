@@ -27,6 +27,9 @@ class MemoryOut(BaseModel):
     content: str
     source: str
     session_id: str | None
+    #: Set = this memory reaches one conversation only. Distinct from
+    #: `session_id` above, which is provenance on rows of every tier.
+    scoped_session_id: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -41,6 +44,7 @@ class MemoryOut(BaseModel):
             content=row.content,
             source=row.source,
             session_id=row.session_id,
+            scoped_session_id=row.scoped_session_id,
             created_at=row.created_at,
             updated_at=row.updated_at,
         )
@@ -84,6 +88,10 @@ class MemoryPreviewOut(BaseModel):
     """
 
     project_id: str | None
+    #: Which conversation was previewed, if one was. Scope is (project,
+    #: session) now, so a preview that ignored this would disagree with the
+    #: real prompt for any chat holding a conversation-tier memory.
+    session_id: str | None = None
     #: Empty string when nothing is in scope — there is no block at all then.
     block: str
     char_count: int
@@ -97,6 +105,14 @@ class MemoryCreate(BaseModel):
     """A human creating a memory by hand from the /memory admin page."""
 
     project_id: str | None = Field(default=None, max_length=64)
+    #: Set = this memory reaches ONE conversation, whatever its project --
+    #: the narrowest of the three tiers memory_repo documents.
+    #:
+    #: Until this existed only the agent's own `remember(scope="conversation")`
+    #: could write that tier, so a person could not record "in this chat,
+    #: do it like so" by hand at all. The column and its partial unique index
+    #: were already there; only the wire contract was missing.
+    scoped_session_id: str | None = Field(default=None, max_length=200)
     kind: MemoryKind = "fact"
     #: Blank derives one from the title, same as the `remember` tool does.
     slug: str = Field(default="", max_length=80)

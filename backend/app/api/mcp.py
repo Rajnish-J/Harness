@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from app.core.config import Settings, get_settings
+from app.db import tool_index_repo
 from app.db.registry_repo import get_enabled_mcp_servers
 from app.mcp import resolve_mcp_tools
 from app.mcp.credentials import resolve_auth
@@ -21,6 +22,56 @@ from app.models.workflow_api import ToolInfo
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["mcp"])
+
+
+class IndexedToolOut(BaseModel):
+    """One row of the tool index, as the /tools page shows it."""
+
+    tool_name: str
+    raw_name: str
+    description: str
+    group: str
+    keywords: list[str]
+    #: None for a harness built-in; an mcp_servers id otherwise.
+    server_id: str | None
+
+
+@router.get("/tools/index")
+async def list_tool_index(request: Request) -> dict[str, object]:
+    """What routing matches against, so a wrong pick is inspectable.
+
+    The index decides a turn's toolset without asking a model, which is what
+    makes it free -- and also what makes it invisible. Without somewhere to
+    read the rows, a tool that never gets picked looks like a bug in the agent
+    rather than a keyword that was never indexed.
+
+    Degrades to an empty list rather than 503ing: this is a read whose failure
+    should show less, not break the page.
+    """
+    pool = getattr(request.app.state, "pool", None)
+    if pool is None:
+        return {"tools": [], "count": 0}
+
+    try:
+        rows = await tool_index_repo.list_all(pool)
+    except Exception:  # noqa: BLE001 - a listing failure is not a page failure
+        logger.exception("could not read the tool index")
+        return {"tools": [], "count": 0}
+
+    return {
+        "count": len(rows),
+        "tools": [
+            IndexedToolOut(
+                tool_name=row.tool_name,
+                raw_name=row.raw_name,
+                description=row.description,
+                group=row.group,
+                keywords=row.keywords,
+                server_id=row.server_id,
+            ).model_dump()
+            for row in rows
+        ],
+    }
 
 
 class McpTestResult(BaseModel):

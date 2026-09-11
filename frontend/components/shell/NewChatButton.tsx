@@ -1,26 +1,31 @@
 "use client";
 
 import { SquarePen } from "lucide-react";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 
 import { useChatPreset } from "@/components/chat/ChatPresetProvider";
 import { useChatSession } from "@/components/chat/ChatSessionProvider";
 import { SidebarMenuButton } from "@/components/ui/sidebar";
+import { chatPath } from "@/lib/chat-routes";
 
 export default function NewChatButton() {
   const { newChat } = useChatSession();
   const { clearAttachments } = useChatPreset();
   const router = useRouter();
-  const pathname = usePathname();
 
   function start() {
-    newChat();
+    const id = newChat();
     // Wired here rather than inside newChat so the session provider does not
     // have to depend on the preset provider.
     clearAttachments();
-    // router.push("/") is a no-op when we're already there, which is exactly
-    // the case that matters most — the epoch bump handles it instead.
-    if (pathname !== "/") router.push("/");
+    // The new chat needs its own URL, from wherever the button was pressed.
+    // newChat has already rotated the store to this id, so ChatRouteSession
+    // mounts, sees it is already the open session, and does nothing -- no
+    // second clear, no pointless fetch.
+    //
+    // push, not replace: "New chat" is a deliberate act, and Back should
+    // return to the conversation it was pressed from.
+    router.push(chatPath(id));
   }
 
   return (

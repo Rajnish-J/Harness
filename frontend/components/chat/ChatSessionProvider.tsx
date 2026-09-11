@@ -11,7 +11,14 @@ import {
   useSyncExternalStore,
 } from "react";
 
-import { fetchChatTranscript, resetSession, streamApproval, streamChat } from "@/lib/api";
+import {
+  fetchChatTranscript,
+  resetSession,
+  setMessageFeedback,
+  streamApproval,
+  streamChat,
+  submitFeedbackNote,
+} from "@/lib/api";
 import type { ChatPreset } from "@/lib/chat-preset";
 import {
   getServerSessionIdSnapshot,
@@ -22,10 +29,38 @@ import {
   type SessionScope,
 } from "@/lib/session";
 import { toTranscript } from "@/lib/transcript";
+import type { MessageFeedback } from "@/lib/project-types";
 import type { AgentEvent, TranscriptItem } from "@/lib/types";
 
 let counter = 0;
 const nextId = () => `item-${++counter}`;
+
+/** Votes keyed the way every consumer reads them: by message. */
+function byMessageUid(votes: MessageFeedback[]): FeedbackMap {
+  return Object.fromEntries(votes.map((vote) => [vote.message_uid, vote]));
+}
+
+export type FeedbackMap = Record<string, MessageFeedback>;
+
+/** A copy without one key. Retracting a vote removes it rather than
+ *  storing a neutral value -- there is no such state to store. */
+function omit(map: FeedbackMap, key: string): FeedbackMap {
+  const next = { ...map };
+  delete next[key];
+  return next;
+}
+
+/**
+ * Extras for `send`, for the one caller that is not a fresh message.
+ *
+ * `replay` re-posts text that is ALREADY on screen. Approving an MCP consent
+ * prompt works by re-sending the parked message (there is no half-finished
+ * tool call to release), and without this the transcript would show the user's
+ * message twice -- once where they typed it, once from the replay. The backend
+ * already takes the matching decision: it persists nothing on a park, so one
+ * stored row is the truth and a reload has always shown a single bubble.
+ */
+export type SendOptions = { replay?: boolean };
 
 export type ApprovalDecision = { id: string; approved: boolean };
 
@@ -37,16 +72,38 @@ type ChatSessionValue = {
   streaming: boolean;
   /** Manual mode: a tool call is parked and the composer is waiting on a verdict. */
   pending: boolean;
-  send: (text: string, preset?: ChatPreset) => Promise<void>;
+  send: (
+    text: string,
+    preset?: ChatPreset,
+    options?: SendOptions,
+  ) => Promise<void>;
   resolveApprovals: (
     decisions: ApprovalDecision[],
     preset?: ChatPreset,
   ) => Promise<void>;
   stop: () => void;
-  newChat: () => void;
-  /** Reopen a past conversation from the sidebar's history list. */
+  /** Start a fresh conversation. Returns the new id, so a caller that has to
+   *  navigate to it does not have to read the store back out. */
+  newChat: () => string;
   /** Reopen a past conversation. False when it had no messages to load. */
   openSession: (sessionId: string) => Promise<boolean>;
+  /**
+   * Point this provider at `id` because the URL says so.
+   *
+   * Idempotent, and a no-op when `id` is already open -- unlike openSession,
+   * which always refetches and always overwrites `items`, so a soft
+   * navigation back to the same chat would stomp a live transcript.
+   */
+  adoptSession: (id: string) => void;
+  /** Thumbs in this conversation, by message_uid. */
+  feedback: FeedbackMap;
+  /** Record, change, or retract a thumb. `null` retracts. */
+  voteMessage: (
+    messageUid: string,
+    vote: "up" | "down" | null,
+  ) => Promise<void>;
+  /** Save what the user expected instead, as a memory this chat reads. */
+  submitNote: (messageUid: string, note: string) => Promise<void>;
 };
 
 const ChatSessionContext = createContext<ChatSessionValue | null>(null);
@@ -71,6 +128,7 @@ export default function ChatSessionProvider({
   scope = null,
   projectId,
   initialItems,
+  initialSessionId,
 }: {
   children: React.ReactNode;
   /** null is the global chat. A project passes its own scope. */
@@ -79,6 +137,16 @@ export default function ChatSessionProvider({
   projectId?: string;
   /** Server-loaded history, so a returning project repaints what it had. */
   initialItems?: TranscriptItem[];
+  /**
+   * Which session `initialItems` belongs to, when the server was told.
+   *
+   * A deep link (`?chat=<id>`) makes the server load THAT session's history
+   * rather than the newest one, and the store still holds whatever this
+   * browser last had open -- a different id. Claiming `hydratedFor` for the
+   * id the items actually came from is what stops `adoptSession` throwing
+   * them away and refetching the same rows over HTTP.
+   */
+  initialSessionId?: string | null;
 }) {
   // Curried so useSyncExternalStore gets stable callbacks: a new function
   // identity every render would resubscribe on every render.
@@ -97,7 +165,13 @@ export default function ChatSessionProvider({
   const [items, setItems] = useState<TranscriptItem[]>(initialItems ?? []);
   const [streaming, setStreaming] = useState(false);
   const [pending, setPending] = useState(false);
+  const [feedback, setFeedback] = useState<FeedbackMap>({});
   const abortRef = useRef<AbortController | null>(null);
+  // The message currently in flight. An mcp_consent event parks the turn before
+  // anything runs, and approving it means sending this same text again — but
+  // applyEvent only sees the event, so the text is stashed here rather than
+  // threaded through every case of that switch.
+  const inFlightMessage = useRef<string>("");
 
   // Which session id the transcript has already been loaded for.
   //
@@ -111,8 +185,10 @@ export default function ChatSessionProvider({
   // there is nothing to fetch. Claimed during render rather than in an effect
   // so the effect's very first run already sees it -- an effect would leave a
   // window in which the fetch had started.
-  if (sessionId && initialItems && initialItems.length > 0) {
-    if (hydratedFor.current === null) hydratedFor.current = sessionId;
+  if (initialItems && initialItems.length > 0 && hydratedFor.current === null) {
+    // `initialSessionId` when the server was told which conversation to load,
+    // otherwise the store's id -- which is what the server fell back to.
+    hydratedFor.current = initialSessionId ?? sessionId;
   }
 
   // Abort any in-flight stream if the app goes away. Paired with the backend's
@@ -124,7 +200,18 @@ export default function ChatSessionProvider({
     setItems((prev) => {
       switch (event.type) {
         case "assistant_message":
-          return [...prev, { kind: "assistant", id: nextId(), text: event.text }];
+          return [
+            ...prev,
+            {
+              kind: "assistant",
+              id: nextId(),
+              text: event.text,
+              // Data, not identity: `id` stays the render-time counter
+              // so React keys are unchanged. This is what feedback keys
+              // on, and it is the same string after a reload.
+              messageUid: event.message_uid,
+            },
+          ];
 
         case "approval_request":
           return [
@@ -158,6 +245,38 @@ export default function ChatSessionProvider({
               name: event.name,
               description: event.description,
               template: event.template ?? "",
+            },
+          ];
+
+        case "mcp_consent":
+          return [
+            ...prev,
+            {
+              kind: "mcp_consent",
+              id: event.id,
+              servers: event.servers ?? [],
+              reason: event.reason ?? "",
+              missing: event.missing ?? false,
+              // Captured here because approving re-sends the turn rather than
+              // resuming it — the backend parked before writing any history.
+              message: inFlightMessage.current,
+            },
+          ];
+
+        case "tool_selection":
+          return [
+            ...prev,
+            {
+              kind: "tool_selection",
+              id: event.id,
+              selected: event.selected,
+              poolSize: event.pool_size,
+              reason: event.reason ?? "",
+              // Optional on the wire so an older harness that does not send
+              // them still renders; absent reads as "it did not run".
+              ran: event.ran ?? false,
+              note: event.note ?? null,
+              model: event.model ?? null,
             },
           ];
 
@@ -209,8 +328,40 @@ export default function ChatSessionProvider({
             },
           ];
 
-        case "done":
-          return prev;
+        case "done": {
+          // Only a turn that actually ENDED gets a summary. An
+          // `awaiting_approval` stream is terminal for the connection
+          // but not for the turn -- summarising here would print
+          // "Completed" mid-turn and then a second one after the resume.
+          // A `disconnected` turn was abandoned and never finished.
+          if (event.reason !== "end_turn" && event.reason !== "max_iterations") {
+            return prev;
+          }
+          if (!event.usage) return prev;
+
+          // Count the work back to the message that started this turn.
+          let steps = 0;
+          for (let i = prev.length - 1; i >= 0; i -= 1) {
+            const item = prev[i]!;
+            if (item.kind === "user") break;
+            if (item.kind === "step") steps += 1;
+          }
+
+          const inputTokens = event.usage.input_tokens ?? 0;
+          const outputTokens = event.usage.output_tokens ?? 0;
+
+          return [
+            ...prev,
+            {
+              kind: "turn_summary",
+              id: nextId(),
+              steps,
+              toolCalls: steps,
+              inputTokens,
+              outputTokens,
+            },
+          ];
+        }
       }
     });
   }, []);
@@ -218,12 +369,18 @@ export default function ChatSessionProvider({
   const send = useCallback(
     // The preset is an argument rather than a closure capture, so toggling a
     // chip does not invalidate this memo and re-render the whole transcript.
-    async (text: string, preset?: ChatPreset) => {
+    async (text: string, preset?: ChatPreset, options?: SendOptions) => {
       if (!sessionId) return;
 
-      setItems((prev) => [...prev, { kind: "user", id: nextId(), text }]);
+      // A replay is text the transcript is already showing -- the MCP
+      // consent card re-sends the parked message rather than resuming a
+      // turn, and appending it again would print the user twice.
+      if (!options?.replay) {
+        setItems((prev) => [...prev, { kind: "user", id: nextId(), text }]);
+      }
       setStreaming(true);
       setPending(false);
+      inFlightMessage.current = text;
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -264,6 +421,10 @@ export default function ChatSessionProvider({
       } finally {
         setStreaming(false);
         abortRef.current = null;
+        // Only meaningful while a stream is open. Left set, it is the text a
+        // later consent card captures and replays -- so a stale value here
+        // re-sends the wrong message entirely.
+        inFlightMessage.current = "";
       }
     },
     [sessionId, projectId, applyEvent],
@@ -329,9 +490,76 @@ export default function ChatSessionProvider({
       } finally {
         setStreaming(false);
         abortRef.current = null;
+        // Only meaningful while a stream is open. Left set, it is the text a
+        // later consent card captures and replays -- so a stale value here
+        // re-sends the wrong message entirely.
+        inFlightMessage.current = "";
       }
     },
     [sessionId, projectId, applyEvent],
+  );
+
+  /**
+   * Record, change, or retract the thumb on one message.
+   *
+   * Optimistic, and rolled back on failure: the thumb has to light up on the
+   * click that caused it, but a vote the server refused must not keep sitting
+   * there looking saved -- the next reload would quietly contradict it.
+   */
+  const voteMessage = useCallback(
+    async (messageUid: string, vote: "up" | "down" | null) => {
+      if (!sessionId) return;
+
+      let previous: MessageFeedback | undefined;
+      setFeedback((prev) => {
+        previous = prev[messageUid];
+        if (vote === null) return omit(prev, messageUid);
+        return {
+          ...prev,
+          [messageUid]: {
+            message_uid: messageUid,
+            vote,
+            // A note outlives the vote it arrived with: switching thumbs
+            // should not discard what the user took the trouble to write.
+            note: prev[messageUid]?.note ?? null,
+            memory_id: prev[messageUid]?.memory_id ?? null,
+          },
+        };
+      });
+
+      try {
+        await setMessageFeedback({ sessionId, messageUid, vote });
+      } catch {
+        setFeedback((prev) =>
+          previous ? { ...prev, [messageUid]: previous } : omit(prev, messageUid),
+        );
+      }
+    },
+    [sessionId],
+  );
+
+  /**
+   * Save what the user expected instead.
+   *
+   * NOT optimistic, unlike the vote above: this one reports "this chat will
+   * remember" when it lands, and that claim is only true once the memory row
+   * exists. Showing it early and withdrawing it would be worse than waiting.
+   */
+  const submitNote = useCallback(
+    async (messageUid: string, note: string) => {
+      if (!sessionId) return;
+      await submitFeedbackNote({ sessionId, messageUid, note, projectId });
+      setFeedback((prev) => ({
+        ...prev,
+        [messageUid]: {
+          message_uid: messageUid,
+          vote: prev[messageUid]?.vote ?? "down",
+          note,
+          memory_id: prev[messageUid]?.memory_id ?? null,
+        },
+      }));
+    },
+    [sessionId, projectId],
   );
 
   const stop = useCallback(() => {
@@ -347,13 +575,18 @@ export default function ChatSessionProvider({
     // Claim the new id so the hydrate effect treats it as handled. A fresh id
     // has no rows server-side, so its empty-result guard would already save us
     // -- claiming just avoids the pointless round trip on every "New chat".
-    hydratedFor.current = rotateSessionId(scope);
+    const created = rotateSessionId(scope);
+    hydratedFor.current = created;
     setItems([]);
     setPending(false);
+    setFeedback({});
     // Fire-and-forget: the UI clears immediately, and a stale server session is
     // harmless once we have rotated away from its id. resetSession swallows
     // its own errors.
     if (sessionId) void resetSession(sessionId);
+    // Returned so the caller can navigate to the new chat's URL without
+    // reading the store back out and racing this rotation.
+    return created;
   }, [sessionId, scope]);
 
   const openSession = useCallback(
@@ -369,14 +602,51 @@ export default function ChatSessionProvider({
       // `newChat` clearing the transcript before its fire-and-forget reset
       // lands. An empty repaint on a failed fetch beats being stuck on the
       // conversation the operator just clicked away from.
-      const messages = await fetchChatTranscript(targetSessionId);
+      const { messages, feedback: votes } =
+        await fetchChatTranscript(targetSessionId);
       setItems(toTranscript(messages));
+      setFeedback(byMessageUid(votes));
       setStoredSessionId(scope, targetSessionId);
       // Reported rather than swallowed: fetchChatTranscript degrades to [] on
       // any failure, so a caller handed an id that does not exist would
       // otherwise adopt an empty conversation believing it worked. The deep
       // link uses this to decide whether to clean the URL.
       return messages.length > 0;
+    },
+    [scope],
+  );
+
+  /**
+   * Adopt the session the URL names.
+   *
+   * This is the route's way in, and it deliberately does NOT load anything
+   * itself: it clears the transcript and points the store at `id`, and the
+   * hydrate effect below -- the one load path -- does the fetching. Two
+   * functions racing to fill `items` is exactly the bug `hydratedFor` exists
+   * to prevent, so this adds a caller to that effect rather than a rival.
+   */
+  const adoptSession = useCallback(
+    (id: string) => {
+      // Reads the STORE, not the `sessionId` render value: the store is
+      // updated synchronously by setStoredSessionId below, so this guard is
+      // correct even for a second call inside the same commit (Strict Mode
+      // double-invokes the effect that calls this). It also keeps `sessionId`
+      // out of the deps, so this callback stays stable across a session swap
+      // and the caller's effect fires once per id rather than twice.
+      if (!id || getSessionIdSnapshot(scope) === id) return;
+
+      abortRef.current?.abort();
+      setPending(false);
+      // Already loaded for this id -- server-seeded `initialItems` claimed it
+      // during render -- so those rows ARE this conversation and must survive.
+      // Otherwise clear, which is load-bearing in the other direction: the
+      // hydrate effect refuses to paint over a non-empty transcript
+      // (`prev.length > 0 ? prev : ...`), so leaving the old chat's messages
+      // in place would make its fetch a no-op and strand the wrong transcript.
+      if (hydratedFor.current !== id) setItems([]);
+      setStoredSessionId(scope, id);
+      // No hydratedFor claim: leaving the new id unclaimed is precisely what
+      // hands the load to the hydrate effect.
     },
     [scope],
   );
@@ -397,12 +667,13 @@ export default function ChatSessionProvider({
     hydratedFor.current = sessionId; // claim BEFORE awaiting
 
     let cancelled = false;
-    void fetchChatTranscript(sessionId).then((messages) => {
+    void fetchChatTranscript(sessionId).then(({ messages, feedback: votes }) => {
       // An empty answer is never painted: a freshly rotated id has no rows, a
       // failed fetch degrades to [], and mock mode always returns [] -- all
       // three would blank a transcript that is already correct.
       if (cancelled || messages.length === 0) return;
       setItems((prev) => (prev.length > 0 ? prev : toTranscript(messages)));
+      setFeedback(byMessageUid(votes));
     });
 
     return () => {
@@ -428,6 +699,10 @@ export default function ChatSessionProvider({
       stop,
       newChat,
       openSession,
+      adoptSession,
+      feedback,
+      voteMessage,
+      submitNote,
     }),
     [
       sessionId,
@@ -440,6 +715,10 @@ export default function ChatSessionProvider({
       stop,
       newChat,
       openSession,
+      adoptSession,
+      feedback,
+      voteMessage,
+      submitNote,
     ],
   );
 

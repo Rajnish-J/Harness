@@ -1,8 +1,9 @@
 "use client";
 
-import { ChevronDown, ChevronRight, File, FileLock2, Folder } from "lucide-react";
+import { File as FileIcon, FileLock2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { File, Folder, Tree } from "@/components/ui/file-tree";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
@@ -33,7 +34,8 @@ async function loadRoot(projectId: string): Promise<Levels> {
  * Levels are fetched on expand rather than all at once: the index makes a
  * single level cheap, and a 5,000-file repo would otherwise send everything to
  * render a dozen visible rows. Once fetched a level is kept, so collapsing and
- * re-expanding costs nothing.
+ * re-expanding costs nothing — components/ui/file-tree.tsx force-mounts its
+ * content so a collapse does not throw the rendered rows away either.
  *
  * Binary files are shown but not selectable — hiding them would make the tree
  * disagree with the repository, and the editor cannot open them anyway.
@@ -48,7 +50,8 @@ export default function FileTree({
   onSelect: (path: string) => void;
 }) {
   const [levels, setLevels] = useState<Levels>({});
-  const [open, setOpen] = useState<Set<string>>(new Set([""]));
+  // The root is always open, and is not a row anyone can collapse.
+  const [expanded, setExpanded] = useState<string[]>([]);
 
   useEffect(() => {
     loadRoot(projectId).then(setLevels);
@@ -70,15 +73,17 @@ export default function FileTree({
     }
   }
 
-  function toggle(dirPath: string) {
-    const isOpen = open.has(dirPath);
-    setOpen((prev) => {
-      const next = new Set(prev);
-      if (isOpen) next.delete(dirPath);
-      else next.add(dirPath);
-      return next;
-    });
-    if (!isOpen && !levels[dirPath]) void expand(dirPath);
+  /**
+   * Radix hands back the whole open set, not the row that changed, so the
+   * newly-opened directories are whatever is in `next` but not in `expanded`.
+   * Only those are fetched, and only if this is their first open — a level
+   * already in `levels` is served from the cache.
+   */
+  function handleExpandedChange(next: string[]) {
+    for (const dirPath of next) {
+      if (!expanded.includes(dirPath) && !levels[dirPath]) void expand(dirPath);
+    }
+    setExpanded(next);
   }
 
   function renderLevel(dirPath: string, depth: number): React.ReactNode {
@@ -99,48 +104,29 @@ export default function FileTree({
 
     return (
       <>
-        {level.directories.map((dir) => {
-          const expanded = open.has(dir.path);
-          return (
-            <div key={dir.path}>
-              <button
-                type="button"
-                onClick={() => toggle(dir.path)}
-                className="cursor-pointer flex w-full items-center gap-1 rounded px-2 py-0.5 text-left text-xs hover:bg-accent"
-                style={{ paddingLeft: depth * 12 + 8 }}
-              >
-                {expanded ? (
-                  <ChevronDown className="size-3 shrink-0 opacity-60" />
-                ) : (
-                  <ChevronRight className="size-3 shrink-0 opacity-60" />
-                )}
-                <Folder className="size-3.5 shrink-0 opacity-70" />
-                <span className="truncate">{dir.name}</span>
-              </button>
-              {expanded && renderLevel(dir.path, depth + 1)}
-            </div>
-          );
-        })}
+        {level.directories.map((dir) => (
+          <Folder key={dir.path} value={dir.path} name={dir.name} depth={depth}>
+            {renderLevel(dir.path, depth + 1)}
+          </Folder>
+        ))}
 
         {level.files.map((file) => (
-          <button
+          <File
             key={file.path}
-            type="button"
+            value={file.path}
+            depth={depth}
             disabled={file.is_binary}
-            onClick={() => onSelect(file.path)}
             title={file.is_binary ? "Binary file — cannot be opened here" : file.path}
-            className={`flex w-full items-center gap-1 rounded px-2 py-0.5 text-left text-xs ${
-              selected === file.path ? "bg-accent font-medium" : "hover:bg-accent"
-            } ${file.is_binary ? "cursor-not-allowed opacity-40" : "cursor-pointer"}`}
-            style={{ paddingLeft: depth * 12 + 20 }}
+            icon={
+              file.is_binary ? (
+                <FileLock2 className="size-3.5 shrink-0 opacity-70" aria-hidden />
+              ) : (
+                <FileIcon className="size-3.5 shrink-0 opacity-70" aria-hidden />
+              )
+            }
           >
-            {file.is_binary ? (
-              <FileLock2 className="size-3.5 shrink-0 opacity-70" />
-            ) : (
-              <File className="size-3.5 shrink-0 opacity-70" />
-            )}
-            <span className="truncate">{file.name}</span>
-          </button>
+            {file.name}
+          </File>
         ))}
       </>
     );
@@ -148,7 +134,17 @@ export default function FileTree({
 
   return (
     <ScrollArea className="h-full">
-      <div className="py-1 pr-1">{renderLevel("", 0)}</div>
+      <div className="py-1 pr-1">
+        <Tree
+          expanded={expanded}
+          onExpandedChange={handleExpandedChange}
+          selectedId={selected}
+          onSelect={onSelect}
+          aria-label="Project files"
+        >
+          {renderLevel("", 0)}
+        </Tree>
+      </div>
     </ScrollArea>
   );
 }

@@ -44,10 +44,13 @@ def _require_pool(request: Request):
 
 
 @router.get("")
-async def list_memory(request: Request, project_id: str | None = None) -> list[MemoryOut]:
-    """Active memory in scope: global rows, plus `project_id`'s if given."""
+async def list_memory(
+    request: Request, project_id: str | None = None, session_id: str | None = None
+) -> list[MemoryOut]:
+    """Active memory in scope: global rows, plus `project_id`'s if given, plus
+    `session_id`'s own if a conversation was named."""
     pool = _require_pool(request)
-    rows = await memory_repo.list_active(pool, project_id)
+    rows = await memory_repo.list_active(pool, project_id, session_id)
     return [MemoryOut.from_row(row) for row in rows]
 
 
@@ -63,7 +66,13 @@ async def memory_overview(request: Request) -> MemoryOverviewOut:
     pool = _require_pool(request)
     rows = await memory_repo.list_all(pool)
 
-    session_ids = sorted({row.session_id for row in rows if row.session_id})
+    # Both columns: a conversation-tier row needs its SCOPE resolved to a
+    # readable title ("applies only in: Fixing the auth bug"), not just the
+    # chat that happened to write it.
+    session_ids = sorted(
+        {row.session_id for row in rows if row.session_id}
+        | {row.scoped_session_id for row in rows if row.scoped_session_id}
+    )
     sessions = await project_chat_repo.list_sessions_by_ids(pool, session_ids)
 
     return MemoryOverviewOut(
@@ -84,6 +93,7 @@ async def memory_overview(request: Request) -> MemoryOverviewOut:
 async def memory_preview(
     request: Request,
     project_id: str | None = None,
+    session_id: str | None = None,
     settings: Settings = Depends(get_settings),
 ) -> MemoryPreviewOut:
     """The `<memories>` block a turn in this scope would receive, verbatim.
@@ -97,9 +107,13 @@ async def memory_preview(
     one preset's budget here would show a truncation that another preset would
     not hit. `max_system_prompt_chars` is reported instead, as the ceiling all
     of it shares.
+
+    `session_id` is part of the scope, not a filter: a turn in a chat that
+    holds conversation-tier memories receives them, so a preview without it
+    would show a block that chat never actually gets.
     """
     pool = _require_pool(request)
-    rows = await memory_repo.list_active(pool, project_id)
+    rows = await memory_repo.list_active(pool, project_id, session_id)
 
     composed = compose_system_prompt(base=SYSTEM_PROMPT, memories=rows)
     marker = composed.find("<memories>")
@@ -107,6 +121,7 @@ async def memory_preview(
 
     return MemoryPreviewOut(
         project_id=project_id,
+        session_id=session_id,
         block=block,
         char_count=len(block),
         memory_count=len(rows),
@@ -127,6 +142,12 @@ async def create_memory(payload: MemoryCreate, request: Request) -> MemoryOut:
         title=payload.title,
         content=payload.content,
         source="human",
+        # Both, and they mean different things: `scoped_session_id` is the
+        # tier (this memory reaches one conversation), `session_id` is
+        # provenance (this is where it came from). The repo keys the upsert
+        # off the former and never reads the latter as a scope.
+        scoped_session_id=payload.scoped_session_id,
+        session_id=payload.scoped_session_id,
     )
     return MemoryOut.from_row(row)
 

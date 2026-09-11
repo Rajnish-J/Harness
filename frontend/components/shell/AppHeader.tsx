@@ -49,7 +49,7 @@ export default function AppHeader() {
             the project IDE, and it sits OUTSIDE that page's nested chat
             provider -- so an ungated menu here would quietly act on the global
             conversation while a project was open. */}
-        {isNavActive("/", pathname) && <ChatActionsMenu />}
+        {isNavActive("/chat", pathname) && <ChatActionsMenu />}
         <ThemeToggle />
       </div>
     </header>

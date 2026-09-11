@@ -33,6 +33,58 @@ class ToolResultEvent(AgentEvent):
     content: str
 
 
+class ToolSelectionEvent(AgentEvent):
+    """Which tools this turn was narrowed to, and why.
+
+    Emitted once, before the loop's first decision, whenever a turn could have
+    been narrowed -- including when it was not. `ran=False` with a `note` is how
+    a fail-open is made visible: the router going quiet must not look like it
+    simply chose everything.
+
+    `selected` carries the group alongside each name so the transcript can show
+    the same section labels the composer and /tools use, without the client
+    having to re-fetch the catalog to look them up.
+    """
+
+    type: Literal["tool_selection"] = "tool_selection"
+    #: Shared with the transcript row this becomes, so a reload can fold the
+    #: persisted args back into the same step.
+    id: str
+    selected: list[dict[str, str]]
+    pool_size: int
+    reason: str = ""
+    ran: bool = False
+    note: str | None = None
+    #: The model that did the choosing, or None when nothing ran.
+    model: str | None = None
+
+
+class McpConsentEvent(AgentEvent):
+    """The turn needs an MCP server it is not allowed to use yet.
+
+    Registering a server on /mcp does not attach it to a chat, so a request
+    that needs one used to reach a model that had never heard of it -- and the
+    model apologised for a capability the user had already set up. The router
+    now sees every enabled server's catalog and says so before the turn runs.
+
+    This parks EARLIER than the proposal events below: nothing has been
+    appended to `session.history` yet, so declining leaves no half-turn behind
+    and the pending message is simply dropped. Approving re-posts the same
+    message with the server attached.
+
+    `missing=True` means nothing registered can serve the request at all. There
+    is then nothing to approve, and the card offers the /mcp catalog instead.
+    """
+
+    type: Literal["mcp_consent"] = "mcp_consent"
+    id: str
+    #: `{"id": ..., "name": ...}` per offered server. Empty when `missing`.
+    servers: list[dict[str, str]] = []
+    #: The router's own justification, shown so the ask is never unexplained.
+    reason: str = ""
+    missing: bool = False
+
+
 class ApprovalRequestEvent(AgentEvent):
     """A tool call the loop will not run until the user says so.
 
@@ -92,6 +144,18 @@ class AttachProposalEvent(AgentEvent):
 class AssistantMessageEvent(AgentEvent):
     type: Literal["assistant_message"] = "assistant_message"
     text: str
+    #: Stable identity for this message, minted by the agent loop.
+    #:
+    #: The browser's own transcript ids are a render-time counter, and a
+    #: reloaded transcript numbers its rows by `seq` instead -- two schemes
+    #: that never agree, so anything keyed on them (a thumbs-up, say) detaches
+    #: the moment the page reloads. This id is generated once, streamed here,
+    #: and persisted alongside the message, so both paths name it identically.
+    #:
+    #: Required, not optional: every emitter is in this repository, and a
+    #: default would let one of them quietly stop sending it and strand the
+    #: feedback that points at it.
+    message_uid: str
 
 
 class ErrorEvent(AgentEvent):
@@ -132,7 +196,9 @@ __all__ = [
     "AgentEvent",
     "ToolCallEvent",
     "ToolResultEvent",
+    "ToolSelectionEvent",
     "ApprovalRequestEvent",
+    "McpConsentEvent",
     "ProjectProposalEvent",
     "AttachProposalEvent",
     "AssistantMessageEvent",

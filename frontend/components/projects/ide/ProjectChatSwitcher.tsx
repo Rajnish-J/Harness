@@ -33,7 +33,7 @@ export default function ProjectChatSwitcher({
 }: {
   projectId: string;
 }) {
-  const { sessionId, streaming, openSession, newChat } = useChatSession();
+  const { sessionId, streaming, adoptSession, newChat } = useChatSession();
   const [sessions, setSessions] = useState<ChatSessionSummary[] | null>(null);
 
   useEffect(() => {
@@ -76,7 +76,10 @@ export default function ProjectChatSwitcher({
             <DropdownMenuItem
               key={session.session_id}
               className="gap-2 text-xs"
-              onSelect={() => void openSession(session.session_id)}
+              // adoptSession, not openSession: ProjectChatUrlSync watches
+              // the store and writes `?chat=` from it, so this one call both
+              // swaps the transcript and updates the URL.
+              onSelect={() => adoptSession(session.session_id)}
             >
               <Check
                 className={

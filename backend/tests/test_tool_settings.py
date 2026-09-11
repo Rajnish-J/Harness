@@ -45,7 +45,7 @@ def request_with(settings: Settings, *, pool: object | None = object()) -> Simpl
 def disable(monkeypatch: pytest.MonkeyPatch):
     """Stub the repo read with a fixed set, and skip memory's own read."""
 
-    async def _no_memories(_pool, _project_id):
+    async def _no_memories(_pool, _project_id, _session_id=None):
         return []
 
     monkeypatch.setattr("app.db.memory_repo.list_active", _no_memories)
@@ -183,7 +183,7 @@ async def test_a_read_failure_is_not_fatal(settings, monkeypatch):
     Changing that posture has to change this test too.
     """
 
-    async def _no_memories(_pool, _project_id):
+    async def _no_memories(_pool, _project_id, _session_id=None):
         return []
 
     async def _raise(_pool):

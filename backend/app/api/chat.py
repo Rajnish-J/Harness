@@ -1,13 +1,20 @@
 import logging
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Literal
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse
 from psycopg_pool import AsyncConnectionPool
 
-from app.agent.llm.catalog import PRICING_AS_OF, default_model, models_for
+from app.agent.llm.catalog import (
+    PRICING_AS_OF,
+    ResolvedCredential,
+    default_model,
+    models_for,
+)
 from app.agent.llm.errors import ProviderSDKMissingError
 from app.agent.llm.resolver import NoCredentialError, client_for_turn, load_credentials
 from app.agent.loop import SYSTEM_PROMPT, run_agent_loop, resume_agent_loop
@@ -19,18 +26,39 @@ from app.agent.tools.project.attach_tools import (
     PROPOSE_ATTACH_PROJECT_TOOL,
 )
 from app.agent.tools.project.project_tools import PROPOSE_CREATE_PROJECT_TOOL
+from app.agent.tools.router import ToolSelection, restore_selection, select_tools
 from app.agent.tools.toolsets import UnknownToolError, merge_toolsets
 from app.api.sse import SSE_HEADERS
 from app.agent.exec_context import ExecutionContext
 from app.core.config import Settings, get_settings
 from app.core.secrets import CredentialCryptoError
-from app.db import memory_repo, project_chat_repo, project_repo, registry_repo
+from app.db import (
+    feedback_repo,
+    memory_repo,
+    project_chat_repo,
+    project_repo,
+    registry_repo,
+    tool_index_repo,
+)
 from app.projects.execution import resolve_executor
 from app.projects.workspaces import InvalidProjectIdError, settings_for_project
-from app.mcp import resolve_mcp_tools
+from app.mcp import discover_candidate_tools, resolve_mcp_tools
 from app.mcp.tools import server_names
-from app.models.chat import ApprovalRequest, ChatRequest, ResetRequest, TurnPreset
-from app.models.events import AgentEvent, DoneEvent, ErrorEvent, sse_comment
+from app.models.chat import (
+    ApprovalRequest,
+    ChatRequest,
+    McpDeclineRequest,
+    ResetRequest,
+    TurnPreset,
+)
+from app.models.events import (
+    AgentEvent,
+    DoneEvent,
+    ErrorEvent,
+    McpConsentEvent,
+    ToolSelectionEvent,
+    sse_comment,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["chat"])
@@ -91,6 +119,15 @@ class Turn:
     #: needs it at tool-dispatch time, for `remember`; _rehydrate and _persist
     #: read app.state themselves, since they are handed the request anyway.
     pool: AsyncConnectionPool | None = None
+    #: Tools the router held back, which `request_tools` can pull back in
+    #: mid-turn. Empty whenever routing did not run.
+    tool_reserve: list[Tool] = field(default_factory=list)
+    #: Emitted ahead of the loop's own events when routing was possible -- which
+    #: includes the fail-open case, so a router that went quiet is visible
+    #: rather than looking like a turn that simply chose everything. Carried on
+    #: the Turn rather than added to the notices tuple because it is a
+    #: transcript item, not an error line.
+    selection_event: ToolSelectionEvent | None = None
 
 
 class TurnSetupError(Exception):
@@ -102,16 +139,77 @@ class TurnSetupError(Exception):
         self.code = code
 
 
+class McpConsentRequired(Exception):
+    """The turn needs an MCP server the user has not allowed for this chat.
+
+    Not an error -- the turn is fine, it is just waiting on a person. Raised
+    rather than returned because it happens deep inside _prepare_turn, which
+    has one return shape, and every caller must stop building the turn at
+    exactly this point: nothing may reach `session.history`, or a declined
+    question would leave a half-turn behind it.
+    """
+
+    def __init__(self, event: McpConsentEvent) -> None:
+        super().__init__("MCP consent required")
+        self.event = event
+
+
+async def _router_client(
+    pool: AsyncConnectionPool | None,
+    settings: Settings,
+    credentials: dict[str, ResolvedCredential] | None,
+    turn_client: object,
+    turn_model: str,
+) -> tuple[object | None, str | None, str | None]:
+    """The client the tool router runs on: `(client, model, note)`.
+
+    With no `tool_router_model` configured, the turn's own client does the
+    routing. That is the honest default -- it always works, and it is the only
+    thing available on a single-key deployment.
+
+    When one IS named and cannot be built, routing is skipped rather than
+    quietly falling back to the turn's model. Falling back would spend Opus
+    tokens on routing on every message, which is precisely the cost the setting
+    exists to avoid, and it would do so silently. Skipping is visible: the note
+    reaches the transcript, so the operator sees their setting is not working.
+    """
+    if not settings.tool_router_model:
+        return turn_client, turn_model, None
+
+    try:
+        client, model = await client_for_turn(
+            pool, settings, settings.tool_router_model, credentials
+        )
+    except Exception as exc:  # noqa: BLE001 - never fatal; the turn still runs
+        logger.warning(
+            "Tool router model %r is unusable: %s", settings.tool_router_model, exc
+        )
+        return (
+            None,
+            None,
+            f"The tool router model ({settings.tool_router_model}) is not "
+            "available, so every tool was offered.",
+        )
+    return client, model, None
+
+
 async def _prepare_turn(
     request: Request,
     payload: TurnPreset,
     settings: Settings,
+    user_message: str | None = None,
 ) -> tuple[Turn, list[tuple[str, str]]]:
     """Resolve a preset into a runnable turn, plus any non-fatal (message, code) notices.
 
     Shared by both routes so a resumed turn is built exactly like the turn that
     paused — a drift here would mean approving a call from one toolset and
     running it under another.
+
+    `user_message` is what separates the two. Only /chat passes it, and only a
+    turn that has one is routed; /approve leaves it None and the selection is
+    replayed from the session instead. Routing a resume would spend a second
+    call and could answer differently, while history already holds tool_use
+    blocks naming the first answer — which is the drift above, in a new place.
     """
     # Per-turn overrides. model_copy skips validators, which is what makes this
     # cheap enough to do per request; same trick app/workflow/nodes/agent_node.py
@@ -152,9 +250,14 @@ async def _prepare_turn(
     # what a single hardcoded code did — would be a lie to the client.
     setup_notices: list[tuple[str, str]] = []
     pool = getattr(request.app.state, "pool", None)
+    # Resolved once and reused for the router's client below. Two calls to
+    # client_for_turn would otherwise mean two passes over model_credentials,
+    # including two decryptions, for one turn.
+    credentials = None
     try:
-        llm_client, _resolved_model = await client_for_turn(
-            pool, turn_settings, payload.model
+        credentials = await load_credentials(pool, turn_settings)
+        llm_client, resolved_model = await client_for_turn(
+            pool, turn_settings, payload.model, credentials
         )
     except NoCredentialError as exc:
         # An operator problem with a specific fix, and the message names it.
@@ -197,7 +300,9 @@ async def _prepare_turn(
     memories: list[memory_repo.MemoryRow] = []
     if pool is not None:
         try:
-            memories = await memory_repo.list_active(pool, project_id)
+            memories = await memory_repo.list_active(
+                pool, project_id, payload.session_id
+            )
         except Exception:  # noqa: BLE001 - a chat must not die because memory did
             logger.exception("could not load memory for project %s", project_id)
 
@@ -223,9 +328,13 @@ async def _prepare_turn(
             )
 
     tools: list[Tool] | None
+    tool_reserve: list[Tool] = []
+    #: None means routing never came up, so the transcript shows nothing.
+    selection: ToolSelection | None = None
     if payload.mode == "chat":
         # An empty list, not None: None means "the full registry". Nothing is
-        # advertised and nothing can be dispatched.
+        # advertised and nothing can be dispatched. Nothing to route, either --
+        # the router is asked to narrow a toolset, and there isn't one.
         tools = []
         notices: list[tuple[str, str]] = []
         attached_mcp: list[str] = []
@@ -236,11 +345,10 @@ async def _prepare_turn(
             request.app, turn_settings, payload.mcp_server_ids
         )
         notices = [(notice.message, "mcp_unavailable") for notice in mcp_notices]
-        # Named in the system prompt below, so the model is told these tools are
-        # already authenticated. Derived from what was actually discovered, not
-        # from payload.mcp_server_ids: a server that failed to connect
-        # contributes no tools and must not be promised to the model.
-        attached_mcp = server_names(mcp_tools)
+        # NOTE: the servers the prompt names are computed AFTER routing, from
+        # the tools this turn actually advertises -- see attached_mcp below.
+        # Naming them from mcp_tools here is what promised the model a whole
+        # server when the router had kept 16 of its 87 tools.
         try:
             tools = merge_toolsets(payload.tool_names, mcp_tools)
         except UnknownToolError as exc:
@@ -256,6 +364,100 @@ async def _prepare_turn(
         # the first removed tool onward.
         if disabled_tools:
             tools = [tool for tool in tools if tool.name not in disabled_tools]
+
+        # ---- routing ------------------------------------------------------
+        # Everything above decided what this turn MAY call. This decides what it
+        # is actually shown, which is a strict subset -- see
+        # app/agent/tools/router.py. It sits here, after the disable list, so
+        # the router can never re-offer something switched off on /tools, and
+        # before the three project tools below, which are this route's own
+        # affordances and are not the router's to withhold.
+        if user_message is None:
+            # The approve path. Replaying the first turn's selection rather than
+            # routing again: history already holds tool_use blocks naming it,
+            # and a second router call is free to answer differently.
+            selection = restore_selection(
+                tools, session.selected_tool_names, session.reserve_tool_names
+            ) or ToolSelection(tools=tools, pool_size=len(tools))
+        else:
+            router_client, router_model, router_note = await _router_client(
+                pool, turn_settings, credentials, llm_client, resolved_model
+            )
+            # Every enabled server the composer did NOT attach. Shown to the
+            # router so a request that needs one is noticed before the turn
+            # runs, rather than ending in an apology for a capability the user
+            # has already registered. These are never executable -- naming one
+            # asks the user, it does not call it.
+            candidate_tools, candidate_ids = await discover_candidate_tools(
+                request.app,
+                turn_settings,
+                payload.mcp_server_ids,
+                exclude_ids=session.declined_mcp_server_ids,
+            )
+            # Read once per turn, in Postgres. This is what replaces the
+            # catalog: rows are matched in Python and never enter a
+            # prompt, so a confident hit costs no billed tokens at all.
+            index_rows: list[tool_index_repo.ToolIndexRow] = []
+            if pool is not None and turn_settings.tool_index_enabled:
+                try:
+                    index_rows = await tool_index_repo.list_all(pool)
+                except Exception:  # noqa: BLE001 - the model can still route
+                    logger.exception("could not read the tool index")
+
+            selection = await select_tools(
+                pool=tools,
+                user_message=user_message,
+                client=router_client,
+                settings=turn_settings,
+                model=router_model,
+                enabled=payload.auto_select_tools,
+                unavailable_note=router_note,
+                candidates=candidate_tools,
+                index_rows=index_rows,
+            )
+            if selection.needs_servers:
+                # A server that is ALREADY attached can never be worth parking
+                # for: approving it would re-post the same message with the same
+                # servers and park again, forever. discover_candidate_tools
+                # already excludes attached ids, so this cannot fire today --
+                # it is kept as a local guard on that loop, so the invariant
+                # holds here rather than only in another module.
+                attached_ids = {str(ident) for ident in payload.mcp_server_ids}
+                wanted = [
+                    name
+                    for name in selection.needs_servers
+                    if name in candidate_ids
+                    and str(candidate_ids[name]) not in attached_ids
+                ]
+                # Park before anything is written to history. The stream ends
+                # here; approving re-posts this same message with the server
+                # attached, and _prepare_turn runs again with it in the pool.
+                consent = McpConsentEvent(
+                    id=f"mcp_{uuid4().hex[:12]}",
+                    servers=[
+                        {"id": candidate_ids[name], "name": name}
+                        for name in wanted
+                    ],
+                    reason=selection.reason,
+                )
+                if consent.servers:
+                    raise McpConsentRequired(consent)
+            # Stored for the resume above. Written even when nothing was
+            # narrowed, so a later approve replays this turn exactly.
+            session.selected_tool_names = selection.selected_names
+            session.reserve_tool_names = selection.reserve_names
+
+        tools = selection.tools
+        tool_reserve = selection.reserve
+
+        # Named in the system prompt below, and derived from the tools this turn
+        # ACTUALLY advertises rather than from everything that resolved. The
+        # prompt tells the model these servers are authenticated and to reach
+        # for their tools; naming a server whose tools the router held back
+        # promises a capability the request does not carry, and the model then
+        # calls a name the provider rejects outright. Groq fails the whole
+        # request for it -- see _unadvertised_tool_name in app/agent/loop.py.
+        attached_mcp = server_names(tools)
 
         if propose_project_tool:
             # Appended after the disable filter above, and deliberately: these
@@ -287,6 +489,9 @@ async def _prepare_turn(
         no_project_open=propose_project_tool,
         project_open=project_id is not None,
         mcp_servers=attached_mcp,
+        # True exactly when request_tools is advertised, so the block can point
+        # at it instead of implying each server's whole toolset is present.
+        mcp_partial=bool(tool_reserve),
         max_chars=turn_settings.max_system_prompt_chars,
     )
 
@@ -302,10 +507,38 @@ async def _prepare_turn(
             project_id=project_id,
             execution_note=execution_note,
             pool=pool,
+            tool_reserve=tool_reserve,
+            selection_event=_selection_event(selection),
         ),
         # Setup notices first: "this chat starts fresh" changes how the reply
         # above it should be read, so it belongs before any MCP grumbling.
         setup_notices + notices,
+    )
+
+
+def _selection_event(selection: ToolSelection | None) -> ToolSelectionEvent | None:
+    """The transcript item for a routing decision, or None if there was none.
+
+    A selection that neither ran nor has anything to say is dropped rather than
+    streamed: below-threshold turns and `mode="chat"` are the common case, and a
+    "chose nothing, for no reason" line in every transcript would be noise. A
+    fail-open always carries a note, so it always survives this.
+    """
+    if selection is None or (not selection.ran and selection.note is None):
+        return None
+
+    return ToolSelectionEvent(
+        # Doubles as the transcript row's tool_call_id, so a reload can fold the
+        # persisted arguments back into the same step.
+        id=f"sel_{uuid4().hex[:12]}",
+        selected=[
+            {"name": tool.name, "group": tool.group} for tool in selection.tools
+        ],
+        pool_size=selection.pool_size,
+        reason=selection.reason,
+        ran=selection.ran,
+        note=selection.note,
+        model=selection.model,
     )
 
 
@@ -391,7 +624,13 @@ def _entry_for(event: AgentEvent) -> project_chat_repo.TranscriptEntry | None:
     """Turn a streamed event into a transcript row, or None if it is not one."""
     kind = getattr(event, "type", None)
     if kind == "assistant_message":
-        return project_chat_repo.TranscriptEntry(role="assistant", content=event.text)
+        return project_chat_repo.TranscriptEntry(
+            role="assistant",
+            content=event.text,
+            # Carried through so the id the browser saw on the stream is the
+            # id it sees again after a reload. Feedback keys on it.
+            message_uid=event.message_uid,
+        )
     if kind == "tool_call":
         return project_chat_repo.TranscriptEntry(
             role="tool_call",
@@ -407,11 +646,62 @@ def _entry_for(event: AgentEvent) -> project_chat_repo.TranscriptEntry | None:
             content=event.content,
             is_error=event.is_error,
         )
+    if kind == "tool_selection":
+        # Stored as a tool_call row named select_tools rather than as a role of
+        # its own. The chat_role enum lives in Drizzle (frontend/db/schema.ts),
+        # which owns all DDL here -- adding a value would mean a migration for
+        # what is, on the wire, exactly what this is: one call, with arguments,
+        # that shaped the turn. The reader maps the name back.
+        return project_chat_repo.TranscriptEntry(
+            role="tool_call",
+            tool_name="select_tools",
+            tool_call_id=event.id,
+            tool_args={
+                "selected": event.selected,
+                "pool_size": event.pool_size,
+                "reason": event.reason,
+                "ran": event.ran,
+                "note": event.note,
+                "model": event.model,
+            },
+        )
     if kind == "error":
         return project_chat_repo.TranscriptEntry(role="error", content=event.message)
     # approval_request, project_proposal, and done carry no transcript line of
-    # their own.
+    # their own. `done` does carry this turn's token totals, but they belong on
+    # a row that already exists rather than on one of its own -- see
+    # _stamp_usage.
     return None
+
+
+def _stamp_usage(
+    entries: list[project_chat_repo.TranscriptEntry],
+    usage: dict[str, int] | None,
+) -> None:
+    """Record a turn's token totals on the assistant message that ended it.
+
+    `done` is where the accumulated usage arrives (the loop sums every LLM call
+    the turn made), but it is not itself a transcript line, and by the time it
+    lands the entry for the final assistant message has already been built. So
+    this reaches back for that entry rather than adding a role for a row with
+    no content -- which would mean a new value in the `chat_role` enum, and
+    that enum lives in Drizzle.
+
+    The LAST assistant entry, not the first: a turn narrates before each tool
+    call, so several assistant rows can share one turn and only the closing one
+    should carry its cost.
+
+    Silent no-op when there is no usage (the first LLM call errored) or no
+    assistant row (the turn ended with an empty final message). Both leave the
+    transcript exactly as it would have been.
+    """
+    if usage is None:
+        return
+    for entry in reversed(entries):
+        if entry.role == "assistant":
+            entry.input_tokens = usage.get("input_tokens")
+            entry.output_tokens = usage.get("output_tokens")
+            return
 
 
 # ------------------------------------------------------------------ streams
@@ -427,10 +717,21 @@ async def _chat_stream(
     yield sse_comment("stream open")
 
     try:
-        turn, notices = await _prepare_turn(request, payload, settings)
+        turn, notices = await _prepare_turn(
+            request, payload, settings, user_message=payload.message
+        )
     except TurnSetupError as exc:
         for event in _setup_failure(exc):
             yield event.to_sse()
+        return
+    except McpConsentRequired as parked:
+        # The turn needs a server the user has not allowed here. Nothing has
+        # been written -- not history, not the transcript -- so declining costs
+        # nothing and approving simply re-posts this message with the server
+        # attached. The user line is deliberately NOT persisted: it is replayed
+        # verbatim on approval, and persisting it here would duplicate it.
+        yield parked.event.to_sse()
+        yield DoneEvent(reason="awaiting_approval").to_sse()
         return
 
     for message, code in notices:
@@ -442,6 +743,14 @@ async def _chat_stream(
         project_chat_repo.TranscriptEntry(role="user", content=payload.message)
     ]
 
+    # Ahead of the loop's first event, because it explains the toolset every
+    # step below was chosen from.
+    if turn.selection_event is not None:
+        entry = _entry_for(turn.selection_event)
+        if entry is not None:
+            entries.append(entry)
+        yield turn.selection_event.to_sse()
+
     async for event in run_agent_loop(
         session=turn.session,
         llm_client=turn.llm_client,
@@ -449,6 +758,7 @@ async def _chat_stream(
         user_message=payload.message,
         is_disconnected=request.is_disconnected,
         tools=turn.tools,
+        tool_reserve=turn.tool_reserve,
         system=turn.system,
         require_approval=turn.require_approval,
         executor=turn.executor,
@@ -458,6 +768,10 @@ async def _chat_stream(
         entry = _entry_for(event)
         if entry is not None:
             entries.append(entry)
+        # `done` is always last, so the assistant row this stamps is
+        # already in `entries` by now.
+        if getattr(event, "type", None) == "done":
+            _stamp_usage(entries, event.usage)
         yield event.to_sse()
 
     await _persist(request, turn, entries)
@@ -476,6 +790,19 @@ async def _approve_stream(
         for event in _setup_failure(exc):
             yield event.to_sse()
         return
+    except McpConsentRequired:  # pragma: no cover - unreachable by construction
+        # /approve passes no user_message, so routing is replayed rather than
+        # re-run and nothing can ask for consent. Caught anyway so a future
+        # change here surfaces as an error rather than a 500 mid-stream.
+        for event in _setup_failure(
+            TurnSetupError(
+                "This turn cannot be resumed because it needs an MCP server. "
+                "Send the message again.",
+                "mcp_consent_required",
+            )
+        ):
+            yield event.to_sse()
+        return
 
     for message, code in notices:
         yield ErrorEvent(message=message, code=code).to_sse()
@@ -491,6 +818,7 @@ async def _approve_stream(
         decisions=decisions,
         is_disconnected=request.is_disconnected,
         tools=turn.tools,
+        tool_reserve=turn.tool_reserve,
         system=turn.system,
         require_approval=turn.require_approval,
         executor=turn.executor,
@@ -500,6 +828,10 @@ async def _approve_stream(
         entry = _entry_for(event)
         if entry is not None:
             entries.append(entry)
+        # `done` is always last, so the assistant row this stamps is
+        # already in `entries` by now.
+        if getattr(event, "type", None) == "done":
+            _stamp_usage(entries, event.usage)
         yield event.to_sse()
 
     await _persist(request, turn, entries)
@@ -512,6 +844,29 @@ async def _approve_stream(
 async def reset_session(payload: ResetRequest) -> dict[str, bool]:
     existed = session_store.reset(payload.session_id)
     return {"ok": True, "existed": existed}
+
+
+@router.post("/chat/mcp-consent/decline")
+async def decline_mcp_consent(payload: McpDeclineRequest) -> dict[str, bool]:
+    """Record that this conversation will not use these servers.
+
+    Without this a decline is only a delay: the next message routes again, the
+    router names the same server again, and the question repeats forever. The
+    ids are held for the life of the session, and attaching the server in the
+    composer is the way back -- that is an explicit yes, so it outranks a
+    remembered no.
+
+    Deliberately not a stream: nothing runs, there is nothing to report, and the
+    turn it declined was never started.
+    """
+    session = session_store.peek(payload.session_id)
+    if session is None:
+        # Nothing to remember it on. The turn was never built, so this is a
+        # no-op rather than an error -- the user still declined successfully.
+        return {"ok": True, "recorded": False}
+
+    session.declined_mcp_server_ids.update(payload.server_ids)
+    return {"ok": True, "recorded": True}
 
 
 # ------------------------------------------------------------------ history
@@ -551,9 +906,24 @@ async def get_chat_session(session_id: str, request: Request) -> dict[str, objec
     """
     pool = getattr(request.app.state, "pool", None)
     if pool is None:
-        return {"messages": []}
+        return {"messages": [], "feedback": []}
     rows = await project_chat_repo.load_transcript_for_session(pool, session_id)
-    return {"messages": rows}
+    # Returned alongside the transcript rather than from a route of its own:
+    # every caller that repaints a conversation needs both, and a second round
+    # trip would let the thumbs land a frame after the messages they belong to.
+    votes = await feedback_repo.list_for_session(pool, session_id)
+    return {
+        "messages": rows,
+        "feedback": [
+            {
+                "message_uid": vote.message_uid,
+                "vote": vote.vote,
+                "note": vote.note,
+                "memory_id": str(vote.memory_id) if vote.memory_id else None,
+            }
+            for vote in votes
+        ],
+    }
 
 
 class AttachSessionRequest(BaseModel):
@@ -683,6 +1053,146 @@ async def delete_chat_session(session_id: str, request: Request) -> dict[str, ob
     return {"ok": True, "session_id": session_id}
 
 
+# ----------------------------------------------------------------- feedback
+#
+# Filed here rather than under /api/memory because these are keyed by session
+# and message: they are part of a conversation, and /api/memory is the admin
+# surface for memories that outlive one. The note a thumbs-down carries does
+# become a memory -- but through this route, not instead of it.
+
+
+class FeedbackRequest(BaseModel):
+    """A thumb on one assistant message. `vote: null` retracts it."""
+
+    session_id: str = Field(min_length=1, max_length=200)
+    message_uid: str = Field(min_length=1, max_length=64)
+    vote: Literal["up", "down"] | None = None
+
+
+class FeedbackNoteRequest(BaseModel):
+    """What the user was expecting instead, behind a thumbs-down."""
+
+    session_id: str = Field(min_length=1, max_length=200)
+    message_uid: str = Field(min_length=1, max_length=64)
+    note: str = Field(min_length=1, max_length=4_000)
+    #: Rides along so the memory is filed under the right project on the
+    #: insights page. It does NOT widen the scope -- scoped_session_id below
+    #: is what decides the tier.
+    project_id: str | None = Field(default=None, max_length=64)
+
+
+class FeedbackOut(BaseModel):
+    message_uid: str
+    vote: str | None
+    note: str | None
+    memory_id: str | None
+
+
+def _require_chat_pool(request: Request) -> AsyncConnectionPool:
+    """503 rather than a cheerful no-op, like the pin and delete routes above.
+
+    A vote that reported success without a database would stay lit until the
+    next reload and then vanish, which is worse than never having been offered.
+    """
+    pool = getattr(request.app.state, "pool", None)
+    if pool is None:
+        raise HTTPException(
+            status_code=503,
+            detail="DATABASE_URL is not configured, so feedback is not stored.",
+        )
+    return pool
+
+
+@router.post("/chat/feedback")
+async def set_message_feedback(
+    payload: FeedbackRequest, request: Request
+) -> FeedbackOut:
+    """Record, change, or retract the vote on one assistant message."""
+    pool = _require_chat_pool(request)
+
+    if payload.vote is None:
+        await feedback_repo.clear_vote(pool, payload.message_uid)
+        # Not a 404 when there was nothing to retract: the user's intent was
+        # "no vote on this message", and that is now true either way.
+        return FeedbackOut(
+            message_uid=payload.message_uid, vote=None, note=None, memory_id=None
+        )
+
+    row = await feedback_repo.set_vote(
+        pool,
+        session_id=payload.session_id,
+        message_uid=payload.message_uid,
+        vote=payload.vote,
+    )
+    return FeedbackOut(
+        message_uid=row.message_uid,
+        vote=row.vote,
+        note=row.note,
+        memory_id=str(row.memory_id) if row.memory_id else None,
+    )
+
+
+@router.post("/chat/feedback/note")
+async def add_feedback_note(
+    payload: FeedbackNoteRequest, request: Request
+) -> FeedbackOut:
+    """Turn "what I expected instead" into a memory this conversation reads.
+
+    The memory is written FIRST and the vote row updated with its id second.
+    If the memory write fails the note is not recorded as attached, which is
+    the honest ordering: the point of the note is the memory, so a note stored
+    without one would claim the model had been told something it had not.
+    """
+    pool = _require_chat_pool(request)
+
+    # Keyed off the message, not the note's text. `upsert` keys on slug, so
+    # slugifying the title would make every note on every message collide on
+    # one row -- the second "be more concise" silently overwriting the first.
+    # Per-message means re-submitting for the SAME message edits its memory,
+    # which is what a correction should do.
+    slug = f"feedback-{payload.message_uid[-8:]}"
+
+    row = await memory_repo.upsert(
+        pool,
+        project_id=payload.project_id,
+        kind="feedback",
+        slug=slug,
+        title="What the user expected instead",
+        # Framed rather than stored raw: `prompt.py` renders memories as
+        # standing context, and a bare sentence in the imperative reads to the
+        # model as a fresh instruction from the user rather than as a note
+        # about a reply it already sent.
+        content=(
+            "The user was unhappy with an earlier reply in this conversation. "
+            f"What they expected instead: {payload.note}"
+        ),
+        source="human",
+        session_id=payload.session_id,
+        scoped_session_id=payload.session_id,
+    )
+
+    attached = await feedback_repo.attach_note(
+        pool,
+        message_uid=payload.message_uid,
+        note=payload.note,
+        memory_id=str(row.id),
+    )
+    if attached is None:
+        # The vote was retracted between the thumb and the note. The memory
+        # stands -- the user did say it -- but there is no row to report.
+        raise HTTPException(
+            status_code=404,
+            detail="That message no longer has a vote to attach a note to.",
+        )
+
+    return FeedbackOut(
+        message_uid=attached.message_uid,
+        vote=attached.vote,
+        note=attached.note,
+        memory_id=str(attached.memory_id) if attached.memory_id else None,
+    )
+
+
 @router.get("/models")
 async def models(
     request: Request, settings: Settings = Depends(get_settings)
@@ -747,6 +1257,14 @@ async def config(settings: Settings = Depends(get_settings)) -> dict[str, object
             "test": settings.test_command,
             "lint": settings.lint_command,
             "build": settings.build_command,
+        },
+        # What the composer's auto-select switch is defaulting to, so the
+        # Settings page can explain why a turn was or was not narrowed.
+        "tool_router": {
+            "enabled": settings.tool_router_enabled,
+            "model": settings.tool_router_model,
+            "threshold": settings.tool_router_threshold,
+            "max_tools": settings.tool_router_max_tools,
         },
         "workflows": {
             "max_nodes": settings.max_workflow_nodes,

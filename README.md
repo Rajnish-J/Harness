@@ -23,6 +23,11 @@ Drizzle owns all the schema.
   sandbox directory and optionally its own container.
 - **Compose the turn** — attach a saved agent preset, skills, an explicit tool
   subset, MCP servers, and a model, per conversation.
+- **Automatic tool selection** — before each turn a cheap model reads the
+  message and picks which of those tools it actually needs, so a large MCP
+  surface no longer costs a full schema dump on every call. The choice is a step
+  in the chat you can expand, and the agent can pull a held-back tool in
+  mid-turn if the pick was too narrow.
 - **Memory** that survives a conversation, at project or global scope, editable
   by hand on `/memory`.
 - **Workflows** — multi-step agent pipelines on a canvas, executed as a
@@ -157,6 +162,26 @@ complete will rename a symbol and leave call sites broken.
 succeeded, so a failure message can say "nothing was applied" and be believed —
 which is what stops a model re-applying the half it thinks got through.
 
+**Why the tool list is chosen by a model, not just by the composer.** The tool
+schemas are serialized into every request and resent on every iteration of the
+loop, so with a couple of MCP servers attached they dominate the prompt — 67
+tools is ~9k tokens of schema *per call*, which on a small-context model crowds
+out the conversation before the user's message is read. So one cheap call runs
+first, reading the message and a compact catalog (name, group, one sentence)
+rather than the schemas, and picks what the task needs. On a four-iteration turn
+over 67 tools that is ~36.6k tokens of schema down to ~6.6k, catalog included.
+
+Three properties make that trade safe, and `tests/test_tool_router.py` pins each
+one. It can only ever *shrink* the set the composer and `/tools` already
+allowed, so a hallucinated name is dropped rather than granted. It preserves
+`ALL_TOOLS` order, for the same reason the registry is append-only. And it fails
+open: a timeout, an unparseable reply or a missing key offers the whole toolset
+rather than none, because unlike the MCP fallback in `merge_toolsets` — where
+widening on a network error would be a real escalation — the failure here is
+"this turn costs what it used to". A pick that turns out too narrow is not a
+dead end either: `request_tools` lets the model pull a held-back tool in
+mid-turn, and the loop rebuilds the schemas around it.
+
 **Why a provider-agnostic `LLMClient` isn't a normalized message format.**
 Anthropic batches every `tool_result` into one user message; OpenAI wants one
 `tool` message per call. Rather than invent a common history format, each client
@@ -188,7 +213,10 @@ psycopg repos, and `tests/test_no_ddl.py` enforces that it never issues DDL.
 - **Web access is check-then-connect**, so it is theoretically vulnerable to DNS
   rebinding. See the module docstring in `agent/tools/web/_fetch.py`.
 - **No stream reconnect.** If SSE drops mid-loop, re-send the message.
-- **43 tools cost input tokens on every request**, cached or not. Narrow the
-  toolset in the composer for cheap conversations.
+- **The tool router adds a call per turn.** It only runs once the toolset is
+  bigger than `TOOL_ROUTER_THRESHOLD` (25), and it fails open, so a routing
+  outage costs tokens rather than the turn — but a wrong pick costs the model a
+  `request_tools` round trip. Switch it off in the composer for turns where you
+  already know the toolset.
 - Milestone-level gaps — container runtime, GitHub push/PR — are tracked in
   [docs/PENDING.md](docs/PENDING.md), which is the authoritative status doc.

@@ -42,6 +42,7 @@ LOOP_INJECTED_KWARGS = (
     "web_allowed_domains",
     "web_search_provider",
     "web_search_api_key",
+    "tool_reserve_names",
 )
 
 

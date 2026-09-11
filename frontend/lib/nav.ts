@@ -59,7 +59,10 @@ export const NAV_GROUPS: NavGroup[] = [
     defaultOpen: true,
     items: [
       {
-        href: "/",
+        // The section, not one conversation: /chat redirects to whichever
+        // chat this browser last had open. A session id here would be baked
+        // into the server-rendered sidebar and would be the same for everyone.
+        href: "/chat",
         label: "Chat",
         blurb: "Talk to the harness agent",
         icon: MessageSquare,
@@ -172,6 +175,10 @@ export const NAV_ITEMS: NavItem[] = NAV_GROUPS.flatMap((group) => group.items);
  * a bare `startsWith` lit up both entries in the sidebar at once.
  */
 export function isNavActive(href: string, pathname: string): boolean {
+  // `/` is the chat entry point: it renders a skeleton and redirects to
+  // /chat/<id>. Without this the rail item goes dark and the header loses its
+  // title for the frame or two that takes.
+  if (href === "/chat" && pathname === "/") return true;
   if (href === "/") return pathname === "/";
   return pathname === href || pathname.startsWith(`${href}/`);
 }

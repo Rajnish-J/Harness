@@ -208,7 +208,9 @@ async def write_project_file(
 
 
 @router.get("/projects/{project_id}/chat/history")
-async def chat_history(project_id: str, request: Request) -> dict[str, object]:
+async def chat_history(
+    project_id: str, request: Request, session_id: str | None = None
+) -> dict[str, object]:
     """The saved transcript, so a returning project repaints what it had.
 
     Read-only and read-once: the page seeds its provider with this on mount and
@@ -216,19 +218,32 @@ async def chat_history(project_id: str, request: Request) -> dict[str, object]:
 
     One conversation, not the project's. A project can hold several chats, and
     returning every session's messages ordered by time interleaved them into a
-    transcript that never happened. The newest session is the one the browser's
-    localStorage almost certainly still points at, and it is the only answer the
-    server can give without being told which id the client holds.
+    transcript that never happened.
+
+    `session_id` is which one. A deep link (`?chat=<id>`) names it outright;
+    without it this still falls back to the newest session, which is what the
+    browser's localStorage almost certainly points at and the only answer the
+    server can give unprompted.
+
+    A session that is not this project's yields an empty transcript rather than
+    a 404: the id came from a URL, so it can be stale or pasted from elsewhere,
+    and the project page must still open. Empty is also what the client already
+    handles -- it is the same answer as a project that has never been chatted
+    in -- whereas a 404 here would take the whole IDE down with it.
     """
     pool = _require_pool(request)
     if await get_project(pool, project_id) is None:
         raise HTTPException(status_code=404, detail="Project not found.")
 
-    recent = await project_chat_repo.list_sessions(pool, project_id, limit=1)
-    if not recent:
+    if session_id is None:
+        recent = await project_chat_repo.list_sessions(pool, project_id, limit=1)
+        if not recent:
+            return {"messages": []}
+        session_id = recent[0].session_id
+    elif not await project_chat_repo.session_belongs_to_project(
+        pool, session_id, project_id
+    ):
         return {"messages": []}
 
-    rows = await project_chat_repo.load_transcript_for_session(
-        pool, recent[0].session_id
-    )
+    rows = await project_chat_repo.load_transcript_for_session(pool, session_id)
     return {"messages": rows}

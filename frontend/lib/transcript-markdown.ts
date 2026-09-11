@@ -67,6 +67,20 @@ function renderItem(item: TranscriptItem): string {
       return header + args;
     }
 
+    case "tool_selection": {
+      // Worth exporting: it is the reason the steps below it are the steps
+      // that ran, and a transcript missing it reads as an agent that
+      // inexplicably ignored half its toolset.
+      const summary = item.ran
+        ? `Selected ${item.selected.length} of ${item.poolSize} tools`
+        : `All ${item.poolSize} tools offered`;
+      const detail = item.note || item.reason;
+      const names = item.selected.length
+        ? `\n\n  ${item.selected.map((tool) => `\`${tool.name}\``).join(", ")}`
+        : "";
+      return `- _${summary}${detail ? ` — ${detail}` : ""}_${names}`;
+    }
+
     case "approval":
       return `- \`${item.name}\` — ${decision(item.decision)}`;
 
@@ -79,6 +93,31 @@ function renderItem(item: TranscriptItem): string {
       return `- Proposed filing this chat under **${item.projectName}** — ${decision(
         item.decision,
       )}${item.reason ? `\n\n  ${item.reason}` : ""}`;
+
+    case "mcp_consent": {
+      // Exported because it explains a gap: without it a declined turn reads as
+      // a message the agent simply never answered.
+      const names = item.servers.map((server) => server.name).join(", ");
+      const verdict =
+        item.decision === "approved"
+          ? "allowed"
+          : item.decision === "declined"
+            ? "declined"
+            : "awaiting a decision";
+      const what = item.missing || !names
+        ? "Asked for an MCP server that is not registered"
+        : `Asked to use the **${names}** MCP ${
+            item.servers.length === 1 ? "server" : "servers"
+          }`;
+      return `- ${what} — ${verdict}${item.reason ? `\n\n  ${item.reason}` : ""}`;
+    }
+
+    case "turn_summary":
+      // Exported as one line rather than a table: what survives a paste into
+      // an issue is the cost, not the breakdown.
+      return `- _Completed in ${item.steps} ${
+        item.steps === 1 ? "step" : "steps"
+      } — ${(item.inputTokens + item.outputTokens).toLocaleString()} tokens (${item.inputTokens.toLocaleString()} in / ${item.outputTokens.toLocaleString()} out)_`;
 
     default: {
       // Exhaustiveness, and the closest thing this file has to a test: a new

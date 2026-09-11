@@ -29,7 +29,12 @@ class SkillLike(Protocol):
 
 
 class MemoryLike(Protocol):
-    """Structural type so this module does not import app.db.memory_repo."""
+    """Structural type so this module does not import app.db.memory_repo.
+
+    `scoped_session_id` is read with getattr rather than declared here: a
+    workflow node composes prompts from its own row shape, and requiring a new
+    attribute would break every such caller for a marker they cannot set.
+    """
 
     kind: str
     slug: str
@@ -80,6 +85,11 @@ def _skill_block(skill: SkillLike) -> str:
 
 def _memory_block(memory: MemoryLike) -> str:
     attrs = f'kind="{_escape(memory.kind, "memory")}" slug="{_escape(memory.slug, "memory")}"'
+    # Only the narrowest tier is marked. The other two are the default and
+    # would spend tokens saying so on every row; "this one is just for this
+    # conversation" is the part the model cannot infer and might act on.
+    if getattr(memory, "scoped_session_id", None):
+        attrs += ' scope="conversation"'
     parts = [f"<memory {attrs}>"]
     if memory.title:
         parts.append(f"<title>{_escape(memory.title, 'memory')}</title>")
@@ -113,18 +123,28 @@ A project can hold several chats, each with its own history. If the user refers 
 #: actual observed failure. The cost is bounded -- the block lands after the
 #: base prompt, so the longest shared prefix in the deployment is untouched, and
 #: the text is stable for a given set of attached servers.
-def _mcp_block(server_names: Sequence[str]) -> str:
+def _mcp_block(server_names: Sequence[str], partial: bool = False) -> str:
     listed = ", ".join(f"`{name}`" for name in server_names)
     many = len(server_names) > 1
     plural = "servers" if many else "server"
     these = "these servers" if many else "this server"
     s = "" if many else "s"
+    # Only when the router actually held something back. The names themselves
+    # are already an enum in the request_tools schema, so listing them here
+    # would cost tokens to repeat what the model can already see.
+    held_back = (
+        "\n\nOnly some of each server's tools are loaded for this turn. If the"
+        " one you need is not in your tool list, call `request_tools` with its"
+        " name -- do not call a name you cannot see."
+        if partial
+        else ""
+    )
     return f"""## Connected MCP {plural}: {listed}
 Tools named `mcp__<server>__<tool>` come from {these}. **They are already authenticated as the user.** The operator configured the credentials in this harness, and every call you make through them acts as the user's own account.
 
-So never ask the user for a username, account name, email, API key, token, or password for {these} -- you already have access, and asking makes it look as though you do not. If a call needs to know who the user is, call that server's own identity tool (`get_me`, `whoami`, `get_authenticated_user`, or whatever it is named here) and read the answer from the result.
+So never ask the user for a username, account name, email, API key, token, or password for {these} -- you already have access, and asking makes it look as though you do not. If a call needs to know who the user is, use that server's identity tool if one is in your tool list, and read the answer from the result.
 
-When a question is about a service {these} cover{s}, call its tool rather than guessing, answering from memory, or reaching for a generic web fetch. If a call fails, say what failed and what the error was -- do not fall back to asking the user for credentials."""
+When a question is about a service {these} cover{s}, call its tool rather than guessing, answering from memory, or reaching for a generic web fetch. If a call fails, say what failed and what the error was -- do not fall back to asking the user for credentials.{held_back}"""
 
 
 def compose_system_prompt(
@@ -137,6 +157,7 @@ def compose_system_prompt(
     no_project_open: bool = False,
     project_open: bool = False,
     mcp_servers: Sequence[str] = (),
+    mcp_partial: bool = False,
     max_chars: int | None = None,
 ) -> str:
     """Build the system prompt for one turn.
@@ -154,7 +175,15 @@ def compose_system_prompt(
     It sits with the project block, among the environment facts, rather than
     with the operator config below it. An empty sequence appends nothing, so
     every caller with no MCP concept -- workflow nodes, the memory preview --
-    keeps composing to `base` byte for byte.
+    keeps composing to `base` byte for byte. It must be derived from what the
+    turn actually ADVERTISES, not from what was resolved before routing: naming
+    a server whose tools were all held back promises a capability the request
+    does not carry, and the model then calls a name the provider rejects.
+
+    `mcp_partial` says the router held some tools back, so the block points at
+    request_tools instead of implying the server's whole toolset is present. A
+    boolean rather than the held-back names, to keep this block's text stable
+    for a given set of servers.
 
     Memories come last, after skills: skills are static, operator-authored
     config, while memories are dynamic and learned -- often from this very
@@ -172,7 +201,7 @@ def compose_system_prompt(
     # B-then-A must produce identical bytes.
     attached = sorted({name.strip() for name in mcp_servers if name and name.strip()})
     if attached:
-        sections.append(_mcp_block(attached))
+        sections.append(_mcp_block(attached, mcp_partial))
 
     agent_prompt = (agent_prompt or "").strip()
     if agent_prompt:
@@ -187,7 +216,21 @@ def compose_system_prompt(
 
     usable_memories = [m for m in memories if (m.content or "").strip()]
     if usable_memories:
-        ordered_memories = sorted(usable_memories, key=lambda m: (m.kind, m.slug))
+        # One block, not two. A second <memories-for-this-conversation> section
+        # would turn one total order into two lists, so a chat's first
+        # conversation memory would insert a whole new section rather than a
+        # row; with a per-entry marker the ordering stays deterministic and two
+        # chats holding the same memories compose identical bytes.
+        #
+        # Conversation rows sort last -- narrowest scope nearest the message.
+        # This does mean two chats in one project no longer share a byte
+        # identical system prompt once either has a conversation memory. That
+        # is the unavoidable cost of the tier; the prefix up to <memories> is
+        # untouched, and memories were already the final section.
+        ordered_memories = sorted(
+            usable_memories,
+            key=lambda m: (bool(getattr(m, "scoped_session_id", None)), m.kind, m.slug),
+        )
         memory_blocks = "\n".join(_memory_block(memory) for memory in ordered_memories)
         sections.append(f"<memories>\n{memory_blocks}\n</memories>")
 

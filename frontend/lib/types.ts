@@ -54,9 +54,62 @@ export type AttachProposalEvent = {
   reason?: string;
 };
 
+/**
+ * Which tools the harness narrowed this turn to, and why.
+ *
+ * Sent once, before the first step, whenever narrowing was possible — including
+ * when it did not happen. `ran: false` with a `note` is a router that failed
+ * open, and must render as such: a silent fallback looks identical to a router
+ * that simply chose everything.
+ */
+export type ToolSelectionEvent = {
+  type: "tool_selection";
+  id: string;
+  /** Group travels with the name so the UI need not re-fetch the catalog. */
+  selected: { name: string; group: string }[];
+  pool_size: number;
+  reason?: string;
+  ran?: boolean;
+  note?: string | null;
+  model?: string | null;
+};
+
+/**
+ * The turn needs an MCP server this chat is not allowed to use yet.
+ *
+ * Registering a server on /mcp does not attach it to a chat, so a request that
+ * needed one used to reach a model that had never heard of it — which then
+ * apologised for a capability the user had already set up. The router sees
+ * every enabled server now and asks before the turn runs.
+ *
+ * Terminal for its stream: nothing ran, and nothing was written. Approving
+ * re-sends the same message with the server attached.
+ */
+export type McpConsentEvent = {
+  type: "mcp_consent";
+  id: string;
+  servers: { id: string; name: string }[];
+  reason?: string;
+  /** Nothing registered can serve this — the card offers the catalog instead. */
+  missing?: boolean;
+};
+
 export type AssistantMessageEvent = {
   type: "assistant_message";
   text: string;
+  /**
+   * The harness's stable id for this message.
+   *
+   * Minted by the agent loop and persisted with the message, so the id a
+   * live message has is the id it still has after a reload -- which is
+   * what lets a thumb stay attached to the reply it was about. The
+   * transcript's own item ids cannot do this: they are a render-time
+   * counter live and `h-<seq>` when rehydrated.
+   *
+   * Optional only for the mock and for an older harness that does not
+   * send it; a message without one simply shows no feedback controls.
+   */
+  message_uid?: string;
 };
 
 export type ErrorEvent = {
@@ -80,6 +133,8 @@ export type DoneEvent = {
 export type AgentEvent =
   | ToolCallEvent
   | ToolResultEvent
+  | ToolSelectionEvent
+  | McpConsentEvent
   | ApprovalRequestEvent
   | ProjectProposalEvent
   | AttachProposalEvent
@@ -94,7 +149,13 @@ export type AgentEvent =
  */
 export type TranscriptItem =
   | { kind: "user"; id: string; text: string }
-  | { kind: "assistant"; id: string; text: string }
+  | {
+      kind: "assistant";
+      id: string;
+      text: string;
+      /** Stable across a reload, unlike `id`. Feedback keys on it. */
+      messageUid?: string;
+    }
   | { kind: "error"; id: string; message: string; code: string }
   | {
       kind: "step";
@@ -129,6 +190,57 @@ export type TranscriptItem =
       description: string;
       template?: string;
       decision?: "approved" | "denied";
+    }
+  /**
+   * The tool router's decision for this turn, rendered as a vertical stepper
+   * above the steps it governs. Not a `step`: it has no call, no result and no
+   * running state, and folding it into one would make it expand into a `pre`
+   * block of JSON rather than a list of tools.
+   */
+  | {
+      kind: "tool_selection";
+      id: string;
+      selected: { name: string; group: string }[];
+      poolSize: number;
+      reason: string;
+      ran: boolean;
+      note?: string | null;
+      model?: string | null;
+    }
+  /**
+   * A request to use an MCP server the user registered but has not attached
+   * here. Unlike an approval this parks before the turn starts, so declining
+   * simply drops the message — there is no half-turn to clean up.
+   */
+  | {
+      kind: "mcp_consent";
+      id: string;
+      servers: { id: string; name: string }[];
+      reason: string;
+      missing: boolean;
+      /** The message to re-send on approval, so the turn can actually resume. */
+      message: string;
+      decision?: "approved" | "declined";
+    }
+  /**
+   * What a finished turn cost, rendered as a collapsed row at its end.
+   *
+   * Derived, never stored: the backend records a turn's token totals on the
+   * assistant message that ended it, and both the live reducer and
+   * `toTranscript` build this from the rows around it. Storing it as a row of
+   * its own would mean a new value in the `chat_role` enum -- and a migration
+   * -- for something every reader can already work out.
+   */
+  | {
+      kind: "turn_summary";
+      id: string;
+      /** Tool calls in this turn. `steps` and `toolCalls` are the same number
+       *  today: every step IS a tool call. Both are rendered because the two
+       *  read differently, not because they can diverge. */
+      steps: number;
+      toolCalls: number;
+      inputTokens: number;
+      outputTokens: number;
     }
   /** An offer to move this conversation into an existing project. */
   | {

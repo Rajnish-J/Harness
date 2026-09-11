@@ -92,6 +92,14 @@ class TurnPreset(BaseModel):
     )
     max_iterations: int | None = Field(default=None, ge=1, le=50)
     mode: ToolMode = "agent"
+    #: Whether the tool router narrows this turn's toolset before it runs.
+    #:
+    #: None follows the server (`tool_router_enabled`, and only above
+    #: `tool_router_threshold`); True forces routing even on a small toolset;
+    #: False skips it. Optional and None-defaulted like every other preset field
+    #: above, so a bare {session_id, message} body still behaves as it always
+    #: did -- see this module's docstring.
+    auto_select_tools: bool | None = None
 
 
 class ChatRequest(TurnPreset):
@@ -113,6 +121,17 @@ class ApprovalRequest(TurnPreset):
     """
 
     decisions: list[ApprovalDecision] = Field(default_factory=list, max_length=50)
+
+
+class McpDeclineRequest(BaseModel):
+    """"No, don't use that server for this chat."
+
+    Recorded on the session so the router stops offering it. Ids only, like
+    every other MCP field here -- see this module's docstring.
+    """
+
+    session_id: str = Field(min_length=1, max_length=200)
+    server_ids: list[str] = Field(default_factory=list, max_length=20)
 
 
 class ResetRequest(BaseModel):
