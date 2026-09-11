@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import TranscriptDisclosure from "./TranscriptDisclosure";
 import type { TranscriptItem } from "@/lib/types";
 
 type Step = Extract<TranscriptItem, { kind: "step" }>;
@@ -29,22 +29,24 @@ function summarizeArgs(args: Record<string, unknown>): string {
 }
 
 export default function AgentStepIndicator({ step }: { step: Step }) {
-  const [open, setOpen] = useState(false);
   const args = summarizeArgs(step.arguments);
 
   return (
-    <div className="my-1 font-mono text-xs">
-      <button
-        type="button"
-        onClick={() => setOpen((prev) => !prev)}
-        className="flex w-full items-start gap-2 rounded px-2 py-1 text-left transition-colors hover:bg-accent"
-        aria-expanded={open}
-      >
+    <TranscriptDisclosure
+      // A step still running has no result to show yet, so it renders without
+      // an expand control rather than with one that opens an empty box.
+      disabled={step.result === undefined}
+      dot={
+        // ring-background, not a plain dot: the rail runs behind it, and the
+        // ring is what makes the line read as passing under each step rather
+        // than colliding with it.
         <span
-          className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${STATUS_DOT[step.status]}`}
+          className={`relative mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ring-2 ring-background ${STATUS_DOT[step.status]}`}
           aria-hidden
         />
-        <span className="min-w-0 flex-1">
+      }
+      summary={
+        <>
           <span
             className={
               step.status === "error"
@@ -54,20 +56,13 @@ export default function AgentStepIndicator({ step }: { step: Step }) {
           >
             {step.name}
           </span>
-          {args && (
-            <span className="text-muted-foreground">({args})</span>
-          )}
-        </span>
-        {step.result !== undefined && (
-          <span className="shrink-0 text-muted-foreground">
-            {open ? "−" : "+"}
-          </span>
-        )}
-      </button>
-
-      {open && step.result !== undefined && (
+          {args && <span className="text-muted-foreground">({args})</span>}
+        </>
+      }
+    >
+      {step.result !== undefined && (
         <ScrollArea
-          className={`mt-1 ml-6 max-h-64 rounded border ${
+          className={`ml-4 max-h-64 rounded border ${
             step.status === "error"
               ? "border-red-500/30 bg-red-500/5 text-red-700 dark:text-red-300"
               : "border bg-muted/50 text-muted-foreground"
@@ -78,6 +73,6 @@ export default function AgentStepIndicator({ step }: { step: Step }) {
           </pre>
         </ScrollArea>
       )}
-    </div>
+    </TranscriptDisclosure>
   );
 }

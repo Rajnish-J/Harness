@@ -13,6 +13,7 @@ import {
   EMPTY_PRESET,
   type AgentAttachment,
   type ChatPreset,
+  type McpAttachment,
   type SkillAttachment,
   type ToolMode,
 } from "@/lib/chat-preset";
@@ -99,7 +100,12 @@ type ChatPresetValue = {
   toggleTool: (name: string) => void;
   toggleToolGroup: (group: SelectableGroup) => void;
   resetTools: () => void;
-  toggleMcp: (server: McpServerSummary) => void;
+  /**
+   * Attach or detach a server. Takes only id+name because that is all the
+   * preset stores -- McpConsentCard has an offer from the wire, not a full
+   * registry row, and requiring one would mean re-fetching to toggle.
+   */
+  toggleMcp: (server: McpAttachment) => void;
   setMode: (mode: ToolMode) => void;
   setAutoSelectTools: (value: boolean | null) => void;
   setModel: (id: string | null) => void;
@@ -387,7 +393,7 @@ export default function ChatPresetProvider({
     setPreset((prev) => ({ ...prev, toolNames: null }));
   }, []);
 
-  const toggleMcp = useCallback((server: McpServerSummary) => {
+  const toggleMcp = useCallback((server: McpAttachment) => {
     setPreset((prev) => ({
       ...prev,
       mcpServers: prev.mcpServers.some((s) => s.id === server.id)
