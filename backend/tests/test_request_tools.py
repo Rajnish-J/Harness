@@ -21,7 +21,9 @@ from app.agent.tools.meta.request_tools import (
     REQUEST_TOOLS_TOOL,
     normalize_names,
     request_tools,
+    request_tools_tool,
     resolve_requested,
+    suggest_for,
 )
 from app.agent.tools.registry import TOOLS_BY_NAME
 from app.core.config import get_settings
@@ -341,3 +343,82 @@ async def test_an_unrouted_turn_never_gains_a_stored_selection(settings, session
 
     assert session.selected_tool_names is None
     assert session.reserve_tool_names is None
+
+
+# ------------------------------------------------- naming the held-back tools
+#
+# The hatch used to send no names at all while telling the model to "ask for
+# the closest one you can guess". A model looking for GitHub repositories
+# guessed `mcp__github__list_user_repos`, missed, and was told the capability
+# was switched off -- when the tool it wanted was in the reserve under another
+# name. These pin both halves of that fix: the names are in the schema, and a
+# miss is a correction rather than a denial.
+
+GITHUB_RESERVE = {
+    "mcp__github__search_repositories",
+    "mcp__github__list_commits",
+    "mcp__github__get_file_contents",
+    "read_file",
+}
+
+
+def test_the_schema_enumerates_what_can_be_asked_for():
+    """The names go in the schema, so a constrained decoder cannot invent one."""
+    tool = request_tools_tool(sorted(GITHUB_RESERVE))
+    items = tool.input_schema["properties"]["names"]["items"]
+    assert items["enum"] == sorted(GITHUB_RESERVE)
+
+
+def test_an_empty_reserve_leaves_the_schema_plain():
+    """Nothing held back means nothing to enumerate -- and an empty enum would
+    be a schema no value can satisfy."""
+    items = request_tools_tool([]).input_schema["properties"]["names"]["items"]
+    assert "enum" not in items
+
+
+def test_the_description_no_longer_invites_guessing():
+    """The instruction to guess is what produced the invented name."""
+    description = request_tools_tool(sorted(GITHUB_RESERVE)).description
+    assert "guess" not in description.lower()
+
+
+def test_a_near_miss_is_answered_with_the_real_names():
+    """The screenshot case: right server, wrong leaf."""
+    reply = request_tools(
+        names=["mcp__github__list_user_repos"], tool_reserve_names=GITHUB_RESERVE
+    )
+    assert "mcp__github__search_repositories" in reply
+    assert "mcp__github__list_commits" in reply
+    # The two claims that made this terminal, and were false for a typo.
+    assert "switched off" not in reply
+    assert "do not ask again" not in reply
+
+
+def test_a_near_miss_does_not_offer_another_server_s_tools():
+    """Suggestions are only useful if they are plausible."""
+    reply = request_tools(
+        names=["mcp__github__list_user_repos"], tool_reserve_names=GITHUB_RESERVE
+    )
+    assert "read_file" not in reply
+
+
+def test_a_genuinely_absent_tool_still_gets_a_terminal_answer():
+    """The anti-retry-loop behaviour must survive: a tool that is really not
+    coming must not invite another attempt."""
+    reply = request_tools(names=["send_email"], tool_reserve_names=GITHUB_RESERVE)
+    assert "do not ask again" in reply
+    assert "Did you mean" not in reply
+
+
+def test_suggestions_prefer_the_same_server():
+    """Same-server names first -- that is the correction the model needs."""
+    suggestions = suggest_for("mcp__github__list_user_repos", GITHUB_RESERVE)
+    assert suggestions
+    assert all(name.startswith("mcp__github__") for name in suggestions)
+
+
+def test_a_correct_name_is_still_granted():
+    reply = request_tools(
+        names=["mcp__github__search_repositories"], tool_reserve_names=GITHUB_RESERVE
+    )
+    assert "Added to this turn" in reply
