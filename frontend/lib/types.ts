@@ -74,9 +74,42 @@ export type ToolSelectionEvent = {
   model?: string | null;
 };
 
+/**
+ * The turn needs an MCP server this chat is not allowed to use yet.
+ *
+ * Registering a server on /mcp does not attach it to a chat, so a request that
+ * needed one used to reach a model that had never heard of it — which then
+ * apologised for a capability the user had already set up. The router sees
+ * every enabled server now and asks before the turn runs.
+ *
+ * Terminal for its stream: nothing ran, and nothing was written. Approving
+ * re-sends the same message with the server attached.
+ */
+export type McpConsentEvent = {
+  type: "mcp_consent";
+  id: string;
+  servers: { id: string; name: string }[];
+  reason?: string;
+  /** Nothing registered can serve this — the card offers the catalog instead. */
+  missing?: boolean;
+};
+
 export type AssistantMessageEvent = {
   type: "assistant_message";
   text: string;
+  /**
+   * The harness's stable id for this message.
+   *
+   * Minted by the agent loop and persisted with the message, so the id a
+   * live message has is the id it still has after a reload -- which is
+   * what lets a thumb stay attached to the reply it was about. The
+   * transcript's own item ids cannot do this: they are a render-time
+   * counter live and `h-<seq>` when rehydrated.
+   *
+   * Optional only for the mock and for an older harness that does not
+   * send it; a message without one simply shows no feedback controls.
+   */
+  message_uid?: string;
 };
 
 export type ErrorEvent = {
@@ -101,6 +134,7 @@ export type AgentEvent =
   | ToolCallEvent
   | ToolResultEvent
   | ToolSelectionEvent
+  | McpConsentEvent
   | ApprovalRequestEvent
   | ProjectProposalEvent
   | AttachProposalEvent
@@ -115,7 +149,13 @@ export type AgentEvent =
  */
 export type TranscriptItem =
   | { kind: "user"; id: string; text: string }
-  | { kind: "assistant"; id: string; text: string }
+  | {
+      kind: "assistant";
+      id: string;
+      text: string;
+      /** Stable across a reload, unlike `id`. Feedback keys on it. */
+      messageUid?: string;
+    }
   | { kind: "error"; id: string; message: string; code: string }
   | {
       kind: "step";
@@ -166,6 +206,41 @@ export type TranscriptItem =
       ran: boolean;
       note?: string | null;
       model?: string | null;
+    }
+  /**
+   * A request to use an MCP server the user registered but has not attached
+   * here. Unlike an approval this parks before the turn starts, so declining
+   * simply drops the message — there is no half-turn to clean up.
+   */
+  | {
+      kind: "mcp_consent";
+      id: string;
+      servers: { id: string; name: string }[];
+      reason: string;
+      missing: boolean;
+      /** The message to re-send on approval, so the turn can actually resume. */
+      message: string;
+      decision?: "approved" | "declined";
+    }
+  /**
+   * What a finished turn cost, rendered as a collapsed row at its end.
+   *
+   * Derived, never stored: the backend records a turn's token totals on the
+   * assistant message that ended it, and both the live reducer and
+   * `toTranscript` build this from the rows around it. Storing it as a row of
+   * its own would mean a new value in the `chat_role` enum -- and a migration
+   * -- for something every reader can already work out.
+   */
+  | {
+      kind: "turn_summary";
+      id: string;
+      /** Tool calls in this turn. `steps` and `toolCalls` are the same number
+       *  today: every step IS a tool call. Both are rendered because the two
+       *  read differently, not because they can diverge. */
+      steps: number;
+      toolCalls: number;
+      inputTokens: number;
+      outputTokens: number;
     }
   /** An offer to move this conversation into an existing project. */
   | {
