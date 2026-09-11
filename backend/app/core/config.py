@@ -119,6 +119,12 @@ class Settings(BaseSettings):
     tool_router_max_tools: int = 12
     tool_router_timeout: float = 20.0
 
+    # Try the persisted tool index before spending a routing call. The
+    # index answers from rows, which costs nothing billable, and defers to
+    # the router whenever it is not confident -- so turning this off
+    # restores the previous behaviour exactly rather than degrading it.
+    tool_index_enabled: bool = True
+
     # ---- Web access --------------------------------------------------------
     # The agent's only route off this machine. Off by default: gaining network
     # egress should be a deliberate operator decision, not something that

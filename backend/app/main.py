@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import logging
+from typing import Any
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -49,6 +50,38 @@ async def _sweep_mcp_idle(manager, idle_timeout: float) -> None:
             logger.exception("MCP idle sweep failed")
 
 
+async def _index_builtin_tools(pool: Any) -> None:
+    """Record the harness's own tools so routing can pick them without a model.
+
+    The built-ins are static -- they are ALL_TOOLS, fixed at import -- so once
+    per boot is exactly often enough, and a replace keeps the table honest when
+    a release adds or removes one.
+
+    Best-effort: an index that failed to write costs a routing call, which is
+    what every turn paid before the index existed. It must never stop the app
+    from starting.
+    """
+    from app.agent.tools.registry import ALL_TOOLS
+    from app.agent.tools.router import first_sentence
+    from app.db import tool_index_repo
+
+    rows = [
+        tool_index_repo.ToolIndexRow(
+            raw_name=tool.name,
+            tool_name=tool.name,
+            description=first_sentence(tool.description),
+            group=tool.group,
+            keywords=tool_index_repo.keywords_for(tool.name, first_sentence(tool.description)),
+            server_id=None,
+        )
+        for tool in ALL_TOOLS
+    ]
+    try:
+        await tool_index_repo.replace_builtins(pool, rows)
+        logger.info("Indexed %d built-in tools", len(rows))
+    except Exception:  # noqa: BLE001 - never fatal at startup
+        logger.exception("could not index the built-in tools")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Open the shared pool and the LangGraph checkpointer, if configured.
@@ -77,6 +110,7 @@ async def lifespan(app: FastAPI):
         app.state.pool = pool
         app.state.checkpointer = await make_checkpointer(pool)
         logger.info("Workflow subsystem ready")
+        await _index_builtin_tools(pool)
     else:
         logger.info("DATABASE_URL unset — workflows disabled, chat available")
 
