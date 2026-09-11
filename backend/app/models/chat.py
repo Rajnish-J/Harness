@@ -123,6 +123,17 @@ class ApprovalRequest(TurnPreset):
     decisions: list[ApprovalDecision] = Field(default_factory=list, max_length=50)
 
 
+class McpDeclineRequest(BaseModel):
+    """"No, don't use that server for this chat."
+
+    Recorded on the session so the router stops offering it. Ids only, like
+    every other MCP field here -- see this module's docstring.
+    """
+
+    session_id: str = Field(min_length=1, max_length=200)
+    server_ids: list[str] = Field(default_factory=list, max_length=20)
+
+
 class ResetRequest(BaseModel):
     session_id: str = Field(min_length=1, max_length=200)
     # Scopes the turn to a project: its checkout becomes the workspace, its

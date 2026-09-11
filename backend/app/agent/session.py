@@ -32,6 +32,14 @@ class Session:
     # indistinguishable from "routed, and chose nothing".
     selected_tool_names: list[str] | None = None
     reserve_tool_names: list[str] | None = None
+    # MCP servers this conversation was offered and turned down, by id.
+    #
+    # Without this, declining is not a decision -- it is a delay. The next
+    # message routes again, the router names the same server again, and the
+    # user is asked the same question forever. Subtracted from the candidate
+    # set so "no" holds for the rest of the conversation; re-attaching the
+    # server in the composer is the way back, which is an explicit yes.
+    declined_mcp_server_ids: set[str] = field(default_factory=set)
 
 
 class SessionStore:
@@ -78,6 +86,15 @@ class SessionStore:
         session = Session(session_id=session_id, provider=provider)
         self._sessions[session_id] = session
         return session
+
+    def peek(self, session_id: str) -> Session | None:
+        """The session if it exists, without creating one.
+
+        get_or_create needs a provider, which a caller that only wants to note
+        a preference has no business inventing -- guessing one would also risk
+        a spurious ProviderMismatchError on the next real turn.
+        """
+        return self._sessions.get(session_id)
 
     def reset(self, session_id: str) -> bool:
         return self._sessions.pop(session_id, None) is not None
