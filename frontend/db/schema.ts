@@ -639,6 +639,19 @@ export const projectChatMessages = pgTable(
     toolName: text("tool_name"),
     /** The provider's id for the call, so a result folds into its own step. */
     toolCallId: text("tool_call_id"),
+    /**
+     * The harness's own stable id for an assistant message.
+     *
+     * Distinct from `toolCallId` above, which is the PROVIDER's id and exists
+     * only on tool rows. This one is minted by the agent loop when it yields
+     * an assistant message, rides the SSE event to the browser, and is stored
+     * here -- so the id a live message has and the id it has after a reload
+     * are the same string by construction. Feedback keys on it.
+     *
+     * Nullable because every row written before this column existed has no
+     * such id, and backfilling one would be inventing history.
+     */
+    messageUid: text("message_uid"),
     toolArgs: jsonb("tool_args").$type<Record<string, unknown>>(),
     isError: boolean("is_error").notNull().default(false),
     inputTokens: integer("input_tokens"),
@@ -648,6 +661,10 @@ export const projectChatMessages = pgTable(
   (t) => [
     index("project_chat_messages_session_seq_idx").on(t.sessionId, t.seq),
     unique("project_chat_messages_session_seq_uq").on(t.sessionId, t.seq),
+    // A unique INDEX, not unique(): Postgres treats NULLs as distinct, and
+    // every historical row is NULL here. A constraint would be equivalent
+    // today but reads as though the column were required, which it is not.
+    uniqueIndex("project_chat_messages_uid_uq").on(t.messageUid),
     // Every other index here keys on session. This one keys on project, for
     // the two queries that ask "what belongs to this project": the IDE's
     // history load, and the UPDATE that re-files a conversation when a
@@ -760,6 +777,60 @@ export const memoryEntries = pgTable(
 
 export type MemoryEntryRow = typeof memoryEntries.$inferSelect;
 
+// ---------------------------------------------------------------------------
+// Message feedback: was that reply any good?
+//
+// Python-owned like the two blocks above -- Next.js only defines the DDL.
+//
+// A thumb is durable UI state that has to repaint on reload; the note a thumbs
+// -down can carry becomes a row in memory_entries instead, scoped to the one
+// conversation, so the next turn's system prompt actually reads it. Those are
+// different lifetimes, which is why this is its own table and not a column on
+// memory_entries: deleting the memory must not erase the vote, and retracting
+// the vote must not un-say what the user typed.
+// ---------------------------------------------------------------------------
+
+export const feedbackVote = pgEnum("feedback_vote", ["up", "down"]);
+
+export const messageFeedback = pgTable(
+  "message_feedback",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** Denormalised from the message so a conversation's votes load in one
+     *  query, without joining a table Python owns. */
+    sessionId: text("session_id").notNull(),
+    /**
+     * project_chat_messages.message_uid.
+     *
+     * Deliberately NOT a foreign key. Those rows are written by the Python
+     * backend and `clear_session` hard-deletes them, so an FK would either
+     * block that delete or silently take votes with it depending on the
+     * action chosen -- and neither is this table's decision to make.
+     */
+    messageUid: text("message_uid").notNull(),
+    vote: feedbackVote("vote").notNull(),
+    /** The note behind a thumbs-down. Null = the user voted and said nothing,
+     *  which is a complete answer and not a half-finished one. */
+    note: text("note"),
+    /** The memory that note produced, so the UI can point at it. Nulled
+     *  rather than cascaded: losing the memory should not lose the vote. */
+    memoryId: uuid("memory_id").references(() => memoryEntries.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One vote per message. There is no auth in this app -- api/chat.py says
+    // the boundary is "whoever can reach this port" -- so "the user" is
+    // singular and a per-user column would be a lie the schema told.
+    unique("message_feedback_message_uq").on(t.messageUid),
+    index("message_feedback_session_idx").on(t.sessionId),
+  ],
+);
+
+export type MessageFeedbackRow = typeof messageFeedback.$inferSelect;
+
 // ---------------------------------------------------------------- tool settings
 
 /**
@@ -797,3 +868,78 @@ export const toolSettings = pgTable(
 );
 
 export type ToolSettingRow = typeof toolSettings.$inferSelect;
+
+// ------------------------------------------------------------------ tool index
+
+/**
+ * Every tool the harness knows about, so a turn can pick without asking a model.
+ *
+ * The router explains the whole catalog to an LLM on every message -- roughly
+ * 2,900 tokens with a couple of MCP servers connected, paid before the first
+ * token of the answer. Matching the same question against rows costs nothing:
+ * the comparison happens in Postgres and Python, and none of it enters a
+ * prompt. This table is what makes that possible.
+ *
+ * Both kinds of tool live here. `server_id` is NULL for the harness's own
+ * built-ins (read_file, git_commit, ...), which are static and indexed once at
+ * startup, and set for an MCP server's, which are re-indexed every time the
+ * harness successfully connects to it. One table because selection asks one
+ * question -- "what can answer this?" -- and splitting it in two would mean
+ * two queries and a merge for no gain.
+ *
+ * Python owns every write, like project chat and memory. Next.js only defines
+ * the DDL here.
+ */
+export const toolIndex = pgTable(
+  "tool_index",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /**
+     * Which MCP server offers this tool, or NULL for a harness built-in.
+     *
+     * Cascades: a deleted server's tools are gone, and a row that outlived its
+     * server would be offered for a tool nothing can run.
+     */
+    serverId: uuid("server_id").references(() => mcpServers.id, {
+      onDelete: "cascade",
+    }),
+    /**
+     * The name the server itself uses, before namespacing.
+     *
+     * The upsert key, with server_id, and deliberately NOT the namespaced name:
+     * `mcp__{server}__{tool}` is derived from the server's NAME, so renaming a
+     * server changes every namespaced name it owns. Keying on the raw name
+     * means a rename rewrites `tool_name` in place instead of orphaning every
+     * row and re-inserting a duplicate set.
+     */
+    rawName: text("raw_name").notNull(),
+    /** What the model actually calls: `mcp__{server}__{tool}`, or the built-in
+     *  name unchanged. Derived from raw_name, and rewritten on a rename. */
+    toolName: text("tool_name").notNull(),
+    /** First sentence only -- the same clip the router's catalog uses. The
+     *  full text is on the Tool object in Python and is not needed to choose. */
+    description: text("description").notNull().default(""),
+    /** Presentation group: "File Operations", "MCP · github", ... */
+    group: text("group").notNull().default("General"),
+    /**
+     * Terms this tool should match, derived from its name and description.
+     *
+     * jsonb rather than text[] so it stays queryable from both sides without a
+     * driver-specific array type, matching how args/env/headers are stored on
+     * mcp_servers above.
+     */
+    keywords: jsonb("keywords").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // Postgres treats NULLs as distinct, so this constraint does NOT cover the
+    // built-ins (server_id IS NULL). The partial index below is what keys those.
+    unique("tool_index_server_raw_uq").on(t.serverId, t.rawName),
+    uniqueIndex("tool_index_builtin_raw_uq")
+      .on(t.rawName)
+      .where(sql`${t.serverId} is null`),
+    index("tool_index_server_idx").on(t.serverId),
+  ],
+);
+
+export type ToolIndexRow = typeof toolIndex.$inferSelect;
