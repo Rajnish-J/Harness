@@ -54,6 +54,10 @@ class TranscriptEntry:
     is_error: bool = False
     input_tokens: int | None = None
     output_tokens: int | None = None
+    #: The harness's stable id for an assistant message, streamed to the
+    #: browser on the event and stored here so a reload can key feedback to the
+    #: same message. None on every other role -- only assistant rows have one.
+    message_uid: str | None = None
 
 
 @dataclass
@@ -165,8 +169,8 @@ async def append_messages(
                     insert into project_chat_messages
                         (project_id, session_id, seq, role, content, tool_name,
                          tool_call_id, tool_args, is_error, input_tokens,
-                         output_tokens)
-                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                         output_tokens, message_uid)
+                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     [
                         (
@@ -181,6 +185,7 @@ async def append_messages(
                             entry.is_error,
                             entry.input_tokens,
                             entry.output_tokens,
+                            entry.message_uid,
                         )
                         for offset, entry in enumerate(entries)
                     ],
@@ -329,6 +334,19 @@ def _derive_title(first_user_message: str | None) -> str:
     return first_line
 
 
+#: The projection both transcript loaders share. Same reasoning as
+#: _SUMMARY_SELECT above: these two queries differ only in their WHERE and
+#: ORDER BY, they have already drifted into character-identical copies once,
+#: and a column added to one and not the other gives half the callers a
+#: transcript missing a field. Static SQL only; every value still arrives
+#: through a %s placeholder.
+_TRANSCRIPT_SELECT = """
+    select session_id, seq, role, content, tool_name, tool_call_id,
+           tool_args, is_error, input_tokens, output_tokens, message_uid
+    from project_chat_messages
+"""
+
+
 async def load_transcript_for_session(
     pool: AsyncConnectionPool, session_id: str, *, limit: int = 500
 ) -> list[dict[str, Any]]:
@@ -344,10 +362,8 @@ async def load_transcript_for_session(
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                """
-                select session_id, seq, role, content, tool_name, tool_call_id,
-                       tool_args, is_error
-                from project_chat_messages
+                _TRANSCRIPT_SELECT
+                + """
                 where session_id = %s
                 order by seq desc
                 limit %s
@@ -370,10 +386,8 @@ async def load_transcript(
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                """
-                select session_id, seq, role, content, tool_name, tool_call_id,
-                       tool_args, is_error
-                from project_chat_messages
+                _TRANSCRIPT_SELECT
+                + """
                 where project_id = %s
                 order by created_at desc, seq desc
                 limit %s
