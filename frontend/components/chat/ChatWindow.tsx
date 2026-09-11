@@ -48,7 +48,12 @@ export default function ChatWindow({
             // strip, and h-full would add the header's height to the parent
             // and overflow it.
             "min-w-0 flex-1"
-          : "mx-auto h-full max-w-4xl",
+          : // Full width, NOT max-w-4xl: the scrollbar belongs at the window's
+            // right edge, and it renders at the edge of whatever box scrolls.
+            // Capping here put it in the middle of the page. The 4rem column
+            // now lives on the content INSIDE the scroller -- see MessageList
+            // and the composer wrapper below.
+            "h-full w-full",
         // Only meaningful while MessageList is content-sized; with a transcript
         // it is flex-1 and there is no free space left to distribute.
         !rail && items.length === 0 && "justify-center",
@@ -56,13 +61,19 @@ export default function ChatWindow({
     >
       <MessageList items={items} streaming={streaming} variant={variant} />
 
-      <MessageInput
-        disabled={streaming || !sessionId}
-        pending={pending}
-        onSubmit={(text) => void send(text, preset)}
-        onStop={stop}
-        variant={variant}
-      />
+      {/* `contents` on the rail so the composer stays a direct flex child of
+          the column above: MessageInput is `shrink-0`, and a real wrapper
+          would take that role and let the textarea squeeze instead. The page
+          variant needs a real box to re-apply the width cap the root gave up. */}
+      <div className={rail ? "contents" : "mx-auto w-full max-w-4xl"}>
+        <MessageInput
+          disabled={streaming || !sessionId}
+          pending={pending}
+          onSubmit={(text) => void send(text, preset)}
+          onStop={stop}
+          variant={variant}
+        />
+      </div>
     </div>
   );
 }

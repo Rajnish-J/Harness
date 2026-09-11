@@ -79,7 +79,7 @@ export default function TranscriptDisclosure({
       )}
     >
       <Rail />
-      <CollapsibleTrigger className="flex w-full items-start gap-2 rounded px-2 py-1 text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
+      <CollapsibleTrigger className="flex w-full cursor-pointer items-start gap-2 rounded px-2 py-1 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50">
         {dot}
         <span className="min-w-0 flex-1">{summary}</span>
         <ChevronDown

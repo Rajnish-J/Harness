@@ -1,4 +1,5 @@
 import Markdown from "@/components/chat/Markdown";
+import MessageActions from "@/components/chat/MessageActions";
 import type { ChatVariant } from "@/components/chat/variant";
 import type { TranscriptItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -65,9 +66,16 @@ export default function MessageBubble({
   // Full width, not max-w-[85%]: an assistant message has no bubble background,
   // so the cap bought no visual grouping and only cramped code blocks and
   // tables. min-w-0 keeps a long code line from widening the flex parent.
+  //
+  // `group` is what lets the feedback buttons stay hidden until this message is
+  // hovered -- they read their visibility off this element, not their own.
   return (
-    <div className="w-full min-w-0 break-words">
+    <div className="group w-full min-w-0 break-words">
       <Markdown compact={compact}>{item.text}</Markdown>
+      {/* Gated on the id, not on the variant: a message from the mock, or from
+          a harness too old to send one, has nothing to attach a vote to and
+          shows no buttons rather than buttons that would 404. */}
+      {item.messageUid && <MessageActions messageUid={item.messageUid} />}
     </div>
   );
 }
