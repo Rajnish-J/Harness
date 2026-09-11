@@ -8,12 +8,13 @@
 Every branch in [`Rajnish-J/Harness`](https://github.com/Rajnish-J/Harness) — what it was for, when it
 started, and when it landed. The base branch is `main`.
 
-_Last updated 2026-09-09 (UTC) · 14 merged · 0 open · 0 closed unmerged · 1 without a PR_
+_Last updated 2026-09-11 (UTC) · 15 merged · 0 open · 0 closed unmerged · 0 without a PR_
 
 ## Merged branches
 
 | Branch | PR | Purpose | Created | Merged | Into | Changes |
 | --- | --- | --- | --- | --- | --- | --- |
+| `feat/ai-tool-router` | [#15](https://github.com/Rajnish-J/Harness/pull/15) | Every turn used to serialize the whole tool list into every request — 43 built-ins plus whatever the attached MCP servers contribute — which on a small-context… | 2026-09-08 | 2026-09-11 | `main` | 97 files, +15226 / −337 |
 | `feat/pointer-cursors` | [#14](https://github.com/Rajnish-J/Harness/pull/14) | Buttons and other clickable controls showed the default arrow cursor instead of the hand pointer, so nothing in the app felt clickable. Tailwind v4's Preflight… | 2026-09-09 | 2026-09-09 | `main` | 38 files, +166 / −70 |
 | `fix/chat-delete` | [#13](https://github.com/Rajnish-J/Harness/pull/13) | Deleting a chat from the sidebar silently did nothing. The delete feature was fully implemented on main — UI, API client, route, and repository all correct — b… | 2026-09-09 | 2026-09-09 | `main` | 3 files, +81 / −2 |
 | `feat/global-tool-settings` | [#12](https://github.com/Rajnish-J/Harness/pull/12) | Adds a global tool disable list: a switch on /tools takes a tool out of every chat turn, stored in Postgres and enforced server-side in the harness rather than… | 2026-09-08 | 2026-09-08 | `main` | 26 files, +3527 / −165 |
@@ -35,13 +36,19 @@ _None open._
 
 ## Branches without a pull request
 
-| Branch | Purpose | Created | Latest commit |
-| --- | --- | --- | --- |
-| `feat/ai-tool-router` | — | 2026-09-08 | docs: document the tool router |
+_None — every branch on the remote has a pull request._
 
 ---
 
 ## Details
+
+### `feat/ai-tool-router` → `main` ([#15](https://github.com/Rajnish-J/Harness/pull/15))
+
+**Merged** 2026-09-11 · created 2026-09-08 · by @Rajnish-J · 46 commits · 97 files, +15226 / −337 · branch still on the remote
+
+**feat(tools): route each turn's toolset and ask before using MCP**
+
+Every turn used to serialize the whole tool list into every request — 43 built-ins plus whatever the attached MCP servers contribute — which on a small-context model crowds out the conversation itself. This branch puts a routing step in front of each turn so a turn only ever sees the tools its message actually needs, adds the escape hatches that make narrowing safe, and gives each conversation its own URL along the way. It builds on main at 4fd5ceb, and carries the fix/chat-delete CORS fix that landed there independently.
 
 ### `feat/pointer-cursors` → `main` ([#14](https://github.com/Rajnish-J/Harness/pull/14))
 
