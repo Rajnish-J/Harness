@@ -127,6 +127,58 @@ async def test_create_derives_a_slug_and_marks_the_source_human(
     assert out.slug == "always-run-tests"
 
 
+async def test_create_can_scope_a_memory_to_one_conversation(
+    request_with_pool, monkeypatch: pytest.MonkeyPatch
+):
+    """A person can now write the narrowest tier by hand.
+
+    Until MemoryCreate carried this field, only the agent's own
+    `remember(scope="conversation")` could reach it -- the column and its
+    partial unique index existed, but nothing on the wire could ask for them.
+    """
+    seen: dict = {}
+
+    async def fake_upsert(_pool, **kwargs):
+        seen.update(kwargs)
+        return _row(slug=kwargs["slug"])
+
+    monkeypatch.setattr(memory_api.memory_repo, "upsert", fake_upsert)
+
+    await memory_api.create_memory(
+        MemoryCreate(
+            title="Be terse here",
+            content="Short answers in this chat.",
+            scoped_session_id="sess-42",
+        ),
+        request_with_pool,
+    )
+
+    # The tier...
+    assert seen["scoped_session_id"] == "sess-42"
+    # ...and the provenance, which is a different column with a different job.
+    assert seen["session_id"] == "sess-42"
+
+
+async def test_create_without_a_session_stays_in_the_broad_tiers(
+    request_with_pool, monkeypatch: pytest.MonkeyPatch
+):
+    """The default must not quietly demote every hand-written memory to
+    whichever chat happened to be open."""
+    seen: dict = {}
+
+    async def fake_upsert(_pool, **kwargs):
+        seen.update(kwargs)
+        return _row(slug=kwargs["slug"])
+
+    monkeypatch.setattr(memory_api.memory_repo, "upsert", fake_upsert)
+
+    await memory_api.create_memory(
+        MemoryCreate(title="A fact", content="Something true."),
+        request_with_pool,
+    )
+    assert seen["scoped_session_id"] is None
+
+
 async def test_update_404s_on_an_unknown_id(
     request_with_pool, monkeypatch: pytest.MonkeyPatch
 ):

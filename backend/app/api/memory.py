@@ -142,6 +142,12 @@ async def create_memory(payload: MemoryCreate, request: Request) -> MemoryOut:
         title=payload.title,
         content=payload.content,
         source="human",
+        # Both, and they mean different things: `scoped_session_id` is the
+        # tier (this memory reaches one conversation), `session_id` is
+        # provenance (this is where it came from). The repo keys the upsert
+        # off the former and never reads the latter as a scope.
+        scoped_session_id=payload.scoped_session_id,
+        session_id=payload.scoped_session_id,
     )
     return MemoryOut.from_row(row)
 

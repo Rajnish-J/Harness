@@ -105,6 +105,14 @@ class MemoryCreate(BaseModel):
     """A human creating a memory by hand from the /memory admin page."""
 
     project_id: str | None = Field(default=None, max_length=64)
+    #: Set = this memory reaches ONE conversation, whatever its project --
+    #: the narrowest of the three tiers memory_repo documents.
+    #:
+    #: Until this existed only the agent's own `remember(scope="conversation")`
+    #: could write that tier, so a person could not record "in this chat,
+    #: do it like so" by hand at all. The column and its partial unique index
+    #: were already there; only the wire contract was missing.
+    scoped_session_id: str | None = Field(default=None, max_length=200)
     kind: MemoryKind = "fact"
     #: Blank derives one from the title, same as the `remember` tool does.
     slug: str = Field(default="", max_length=80)
