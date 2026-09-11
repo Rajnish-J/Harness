@@ -206,6 +206,23 @@ export type StoredMessage = {
   tool_call_id: string | null;
   tool_args: Record<string, unknown> | null;
   is_error: boolean;
+  /** The harness's stable id for an assistant message. Null on every other
+   *  role, and on any row written before the column existed. */
+  message_uid: string | null;
+  /** This turn's token totals, recorded on the assistant message that ended
+   *  it. Null on every mid-turn row -- which is exactly how the transcript
+   *  tells where one turn stopped and the next began. */
+  input_tokens: number | null;
+  output_tokens: number | null;
+};
+
+/** One thumb, and the note behind it. Keyed to a message by `message_uid`. */
+export type MessageFeedback = {
+  message_uid: string;
+  vote: "up" | "down" | null;
+  note: string | null;
+  /** The conversation-scoped memory a note produced, when there was one. */
+  memory_id: string | null;
 };
 
 /** A starter scaffold offered when creating a project. */

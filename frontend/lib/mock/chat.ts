@@ -17,7 +17,30 @@
  */
 
 import type { ToolMode } from "@/lib/chat-preset";
+import { MOCK_MCP_IDS } from "@/lib/mock/registry";
 import type { AgentEvent } from "@/lib/types";
+
+/**
+ * A stable-looking id per mock message, so the feedback controls appear and
+ * behave. The real one is minted by the agent loop (see _new_message_uid in
+ * backend/app/agent/loop.py); nothing here persists, so uniqueness within a
+ * page's lifetime is all this needs.
+ */
+let mockMessages = 0;
+const mockMessageUid = () => `msg_mock_${++mockMessages}`;
+
+/**
+ * Token totals for a finished mock turn.
+ *
+ * Invented, but not round numbers: the turn summary formats with thousands
+ * separators and right-aligns on tabular figures, and 1000/100 would hide
+ * both. Every real `done` carries this, so a mock without it would be the one
+ * path where the summary never renders.
+ */
+const mockUsage = () => ({
+  input_tokens: 11_800 + Math.floor(Math.random() * 900),
+  output_tokens: 280 + Math.floor(Math.random() * 200),
+});
 
 /** Rejects on abort rather than resolving, so the caller unwinds like fetch. */
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -165,6 +188,8 @@ export type MockChatPreset = {
   skillNames?: string[];
   toolNames?: string[];
   mode?: ToolMode;
+  /** Attached servers, so the consent fixture can tell if it is satisfied. */
+  mcpServerIds?: string[];
 };
 
 /**
@@ -222,11 +247,12 @@ export async function streamMockApproval(
   await sleep(600, params.signal);
   onEvent({
     type: "assistant_message",
+    message_uid: mockMessageUid(),
     text: denied
       ? "Understood — I will leave that alone and work without it."
       : pending.closing,
   });
-  onEvent({ type: "done", reason: "end_turn" });
+  onEvent({ type: "done", reason: "end_turn", usage: mockUsage() });
 }
 
 export async function streamMockChat(
@@ -246,6 +272,27 @@ export async function streamMockChat(
 
   // Feels like time-to-first-token rather than an instant reply.
   await sleep(450, params.signal);
+
+  // The bug this feature exists for, reproducible with no backend: ask about
+  // repos with the GitHub server registered but not attached, and the turn
+  // parks for consent instead of apologising for a tool it was never given.
+  // Only when it is NOT already attached, so approving actually resolves.
+  const wantsGithub = /\b(repo|repos|repositor|pull request|issue)/i.test(
+    params.message,
+  );
+  const githubAttached = (preset.mcpServerIds ?? []).includes(
+    MOCK_MCP_IDS.github,
+  );
+  if (preset.mode !== "chat" && wantsGithub && !githubAttached) {
+    onEvent({
+      type: "mcp_consent",
+      id: `mcp_${Date.now().toString(36)}`,
+      servers: [{ id: MOCK_MCP_IDS.github, name: "github" }],
+      reason: "Listing repositories needs the GitHub server.",
+    });
+    onEvent({ type: "done", reason: "awaiting_approval" });
+    return;
+  }
 
   const prefix: string[] = [];
   if (preset.agentName) prefix.push(`Running as **${preset.agentName}**.`);
@@ -273,6 +320,7 @@ export async function streamMockChat(
 
   onEvent({
     type: "assistant_message",
+    message_uid: mockMessageUid(),
     text: prefix.length ? `${prefix.join(" ")}\n\n${script.opening}` : script.opening,
   });
 
@@ -320,6 +368,10 @@ export async function streamMockChat(
   }
 
   await sleep(700, params.signal);
-  onEvent({ type: "assistant_message", text: script.closing });
-  onEvent({ type: "done", reason: "end_turn" });
+  onEvent({
+    type: "assistant_message",
+    text: script.closing,
+    message_uid: mockMessageUid(),
+  });
+  onEvent({ type: "done", reason: "end_turn", usage: mockUsage() });
 }

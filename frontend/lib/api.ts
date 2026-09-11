@@ -2,7 +2,7 @@ import { presetToBody, type ChatPreset } from "./chat-preset";
 import { flags } from "./flags";
 import { streamMockApproval, streamMockChat } from "./mock/chat";
 import { consumeSSE } from "./sse";
-import type { StoredMessage } from "./project-types";
+import type { MessageFeedback, StoredMessage } from "./project-types";
 import type { AgentEvent, HarnessConfig } from "./types";
 
 /** One row in the sidebar's conversation-history list. */
@@ -39,6 +39,7 @@ export async function streamChat(
           skillNames: params.preset.skills.map((skill) => skill.name),
           toolNames: params.preset.toolNames ?? [],
           mode: params.preset.mode,
+          mcpServerIds: params.preset.mcpServers.map((server) => server.id),
         },
       },
       onEvent,
@@ -224,6 +225,31 @@ export async function resetSession(sessionId: string): Promise<void> {
  * silently failed would sit on screen until the next reload contradicted it,
  * which is the failure the endpoint's own 503 exists to prevent.
  */
+/**
+ * Remember that this chat will not use these MCP servers.
+ *
+ * Without it a decline is only a delay: the next message routes again, the
+ * router names the same server again, and the question repeats. Best-effort
+ * like resetSession — failing to record a "no" must not block the user from
+ * carrying on, it only means they may be asked once more.
+ */
+export async function declineMcpServers(
+  sessionId: string,
+  serverIds: string[],
+): Promise<void> {
+  if (flags.mockChat) return;
+
+  try {
+    await fetch(`${API_BASE}/api/chat/mcp-consent/decline`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId, server_ids: serverIds }),
+    });
+  } catch {
+    // See above: the UI has already moved on.
+  }
+}
+
 export async function setChatSessionPinned(
   sessionId: string,
   pinned: boolean,
@@ -298,16 +324,92 @@ export async function fetchChatSessions(
   }
 }
 
-/** The rendered transcript for one past conversation, so it can be reopened. */
-export async function fetchChatTranscript(sessionId: string): Promise<StoredMessage[]> {
-  if (flags.mockChat) return [];
+/**
+ * The rendered transcript for one past conversation, so it can be reopened.
+ *
+ * Returns the votes alongside the messages because the backend answers with
+ * both from one route: a thumb that arrived a round trip after the reply it
+ * belongs to would visibly pop in after the transcript had already painted.
+ *
+ * Degrades to empty on any failure, like the other reads here — a conversation
+ * that reopens without its thumbs is far better than one that will not reopen.
+ */
+export async function fetchChatTranscript(
+  sessionId: string,
+): Promise<{ messages: StoredMessage[]; feedback: MessageFeedback[] }> {
+  if (flags.mockChat) return { messages: [], feedback: [] };
 
   try {
     const res = await fetch(`${API_BASE}/api/chat/sessions/${sessionId}`);
-    if (!res.ok) return [];
-    const body = (await res.json()) as { messages: StoredMessage[] };
-    return body.messages ?? [];
+    if (!res.ok) return { messages: [], feedback: [] };
+    const body = (await res.json()) as {
+      messages?: StoredMessage[];
+      feedback?: MessageFeedback[];
+    };
+    return { messages: body.messages ?? [], feedback: body.feedback ?? [] };
   } catch {
-    return [];
+    return { messages: [], feedback: [] };
+  }
+}
+
+/**
+ * Record, change, or retract the thumb on one assistant message.
+ *
+ * Throws rather than degrading, unlike the reads above and unlike
+ * `declineMcpServers`. This is a user-visible write: the thumb lights up on
+ * click, so a failure that was swallowed here would be contradicted by the
+ * next reload, when it silently goes dark again. Same reasoning as
+ * `setChatSessionPinned`.
+ */
+export async function setMessageFeedback(params: {
+  sessionId: string;
+  messageUid: string;
+  vote: "up" | "down" | null;
+}): Promise<void> {
+  if (flags.mockChat) return;
+
+  const res = await fetch(`${API_BASE}/api/chat/feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      session_id: params.sessionId,
+      message_uid: params.messageUid,
+      vote: params.vote,
+    }),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(detail || `Could not record that feedback (${res.status}).`);
+  }
+}
+
+/**
+ * Save what the user expected instead, as a memory this conversation reads.
+ *
+ * Throws, for the stronger version of the reason above: the note box closes on
+ * success and tells the user this chat will remember. Failing quietly would
+ * leave them believing they had taught the model something they had not.
+ */
+export async function submitFeedbackNote(params: {
+  sessionId: string;
+  messageUid: string;
+  note: string;
+  projectId?: string;
+}): Promise<void> {
+  if (flags.mockChat) return;
+
+  const res = await fetch(`${API_BASE}/api/chat/feedback/note`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      session_id: params.sessionId,
+      message_uid: params.messageUid,
+      note: params.note,
+      ...(params.projectId ? { project_id: params.projectId } : {}),
+    }),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(detail || `Could not save that note (${res.status}).`);
   }
 }
