@@ -153,6 +153,7 @@ def select_from_index(
     reachable_names: set[str],
     candidate_names: set[str],
     max_tools: int,
+    max_server_tools: int | None = None,
 ) -> IndexSelection | None:
     """Choose this turn's tools from the index, or None to ask the model.
 
@@ -165,6 +166,11 @@ def select_from_index(
     Returns None on thin evidence, which is the whole safety story here. The
     caller reads None as "fall through to the LLM router", so a message this
     module cannot read confidently costs exactly what it costs today.
+
+    `max_server_tools` is the ceiling for a server the message names outright,
+    which is a different question from the general one: naming it settles
+    whether to use the server, leaving only which of its tools. Defaults to
+    `max_tools`, so a caller that does not care keeps the old behaviour.
     """
     terms = terms_in(user_message)
     if not terms:
@@ -232,10 +238,42 @@ def select_from_index(
         return None
 
     cutoff = max(2, best * _SCORE_RATIO)
-    kept = sorted(
+    ranked = sorted(
         (row for row, score in usable if score >= cutoff),
         key=lambda row: -_score(row, terms),
-    )[:max_tools]
+    )
+
+    # Servers the message names outright. Only a decisive hit counts -- the
+    # server-name match scores 6, so this is the same bar `decisive` uses, and a
+    # tool that merely shares a word with its server's name cannot raise its own
+    # ceiling.
+    named_servers = {
+        _server_of(row)
+        for row, score in usable
+        if score >= 6 and _server_of(row) and _server_of(row) in terms
+    }
+
+    if named_servers and max_server_tools and max_server_tools > max_tools:
+        # Two ceilings, one pass: a named server's tools are worth more of the
+        # budget than the general cap allows, everything else is not. Score
+        # order is preserved so the concatenation still reads best-first within
+        # each group.
+        kept = []
+        per_server: dict[str, int] = {}
+        others = 0
+        for row in ranked:
+            server = _server_of(row)
+            if server in named_servers:
+                if per_server.get(server, 0) >= max_server_tools:
+                    continue
+                per_server[server] = per_server.get(server, 0) + 1
+            else:
+                if others >= max_tools:
+                    continue
+                others += 1
+            kept.append(row)
+    else:
+        kept = ranked[:max_tools]
 
     servers = sorted({_server_of(row) for row in kept} - {""})
     if servers:

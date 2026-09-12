@@ -19,6 +19,7 @@ from app.agent.loop import resume_agent_loop, run_agent_loop
 from app.agent.session import Session
 from app.agent.tools.meta.request_tools import (
     REQUEST_TOOLS_TOOL,
+    REQUEST_TOOLS_TOOL_NAME,
     normalize_names,
     request_tools,
     request_tools_tool,
@@ -351,8 +352,15 @@ async def test_an_unrouted_turn_never_gains_a_stored_selection(settings, session
 # the closest one you can guess". A model looking for GitHub repositories
 # guessed `mcp__github__list_user_repos`, missed, and was told the capability
 # was switched off -- when the tool it wanted was in the reserve under another
-# name. These pin both halves of that fix: the names are in the schema, and a
-# miss is a correction rather than a denial.
+# name. These pin both halves of that fix: the names are advertised in the
+# description, and a miss is a correction rather than a denial.
+#
+# They were advertised as a schema `enum` first. That looked strictly stronger
+# -- a constrained decoder cannot emit a name that is not in the list -- but it
+# only holds for a provider that constrains generation. Groq validates after the
+# fact and 400s the whole request, so the enum converted a miss that the run body
+# answers in-band into a turn that died before any tool call existed to answer.
+# Hence prose, and hence the tests below assert on the description.
 
 GITHUB_RESERVE = {
     "mcp__github__search_repositories",
@@ -362,18 +370,57 @@ GITHUB_RESERVE = {
 }
 
 
-def test_the_schema_enumerates_what_can_be_asked_for():
-    """The names go in the schema, so a constrained decoder cannot invent one."""
+def test_the_schema_does_not_constrain_names_to_an_enum():
+    """An enum here is fatal on a provider that validates after generating.
+
+    Groq rejects the entire request with a 400 rather than returning a tool call
+    the harness could answer, so a near miss killed the turn instead of earning
+    the correction `suggest_for` was written to give. The names live in the
+    description now; nothing about `names` may constrain the value.
+    """
     tool = request_tools_tool(sorted(GITHUB_RESERVE))
-    items = tool.input_schema["properties"]["names"]["items"]
-    assert items["enum"] == sorted(GITHUB_RESERVE)
+    names = tool.input_schema["properties"]["names"]
+
+    assert "enum" not in names["items"]
+    assert names["items"] == {"type": "string"}
 
 
-def test_an_empty_reserve_leaves_the_schema_plain():
-    """Nothing held back means nothing to enumerate -- and an empty enum would
-    be a schema no value can satisfy."""
-    items = request_tools_tool([]).input_schema["properties"]["names"]["items"]
-    assert "enum" not in items
+def test_the_held_back_names_are_named_in_the_description():
+    """Dropping the enum must not drop the guidance it carried."""
+    description = request_tools_tool(sorted(GITHUB_RESERVE)).description
+
+    for name in GITHUB_RESERVE:
+        assert name in description
+
+
+def test_an_empty_reserve_leaves_the_description_bare():
+    """Nothing held back means nothing to list."""
+    description = request_tools_tool([]).description
+
+    assert "The names you can ask for" not in description
+
+
+def test_a_very_large_reserve_does_not_list_every_name():
+    """A big MCP server would otherwise put hundreds of names in every turn.
+
+    Safe to truncate in a way an enum never was: a name outside the listed
+    subset is still askable, and the run body answers it with the real one.
+    """
+    description = request_tools_tool([f"tool_{i:03d}" for i in range(200)]).description
+
+    assert "tool_000" in description
+    assert "tool_199" not in description
+    assert "140 more" in description
+
+
+def test_the_schema_does_not_forbid_extra_properties():
+    """`additionalProperties: False` is a second way to earn the same 400.
+
+    Nothing needs it -- `request_tools` absorbs unexpected keys via **_ignored.
+    """
+    assert "additionalProperties" not in request_tools_tool(
+        sorted(GITHUB_RESERVE)
+    ).input_schema
 
 
 def test_the_description_no_longer_invites_guessing():
@@ -422,3 +469,79 @@ def test_a_correct_name_is_still_granted():
         names=["mcp__github__search_repositories"], tool_reserve_names=GITHUB_RESERVE
     )
     assert "Added to this turn" in reply
+
+
+# ------------------------------------------------------ rebuilding the hatch
+#
+# The hatch names the reserve in its description, so a grant makes the copy
+# already in the turn's toolset stale -- it would go on offering a name the turn
+# has since handed over. Rebuilt in place rather than re-appended: tool order is
+# the cacheable prompt prefix, and moving the hatch to the end would invalidate
+# the cache from its old position onward.
+
+
+class DescribingClient(FakeClient):
+    """FakeClient, but it records each tool's description too."""
+
+    def tool_schemas(self, tools):
+        return [
+            {"name": tool.name, "description": tool.description} for tool in tools
+        ]
+
+
+def hatch_description(client, index):
+    return next(
+        schema["description"]
+        for schema in client.sent_tools[index]
+        if schema["name"] == REQUEST_TOOLS_TOOL_NAME
+    )
+
+
+async def test_the_hatch_stops_offering_what_it_just_granted(settings, session):
+    """A granted tool is no longer held back, so it must leave the listing."""
+    client = DescribingClient(
+        [tool_use(REQUEST_TOOLS_TOOL_NAME, {"names": ["read_file"]}), answer("Done.")]
+    )
+    # The hatch the ROUTER would have built -- the module-level ACTIVE carries
+    # the zero-reserve form, which names nothing to begin with.
+    active = [TOOLS_BY_NAME["list_directory"], request_tools_tool(["read_file"])]
+
+    await collect(
+        run_agent_loop(
+            session=session,
+            llm_client=client,
+            settings=settings,
+            user_message="go",
+            tools=active,
+            tool_reserve=RESERVE,
+        )
+    )
+
+    assert "read_file" in hatch_description(client, 0)
+    assert "read_file" not in hatch_description(client, 1)
+
+
+async def test_the_hatch_keeps_its_position_after_a_grant(settings, session):
+    """Tool order is the cacheable prefix; rebuilding must not reorder it."""
+    client = DescribingClient(
+        [tool_use(REQUEST_TOOLS_TOOL_NAME, {"names": ["read_file"]}), answer("Done.")]
+    )
+    active = [TOOLS_BY_NAME["list_directory"], request_tools_tool(["read_file"])]
+
+    await collect(
+        run_agent_loop(
+            session=session,
+            llm_client=client,
+            settings=settings,
+            user_message="go",
+            tools=active,
+            tool_reserve=RESERVE,
+        )
+    )
+
+    before = names_sent(client, 0)
+    after = names_sent(client, 1)
+    assert after.index(REQUEST_TOOLS_TOOL_NAME) == before.index(REQUEST_TOOLS_TOOL_NAME)
+    # And the grant still lands after everything that was already there.
+    assert after[: len(before)] == before
+    assert after[-1] == "read_file"

@@ -486,3 +486,110 @@ async def test_a_server_whose_tools_survived_is_still_declared_authenticated(
     assert "already authenticated" in turn.system
     # And because the router held other tools back, it says how to get them.
     assert "request_tools" in turn.system
+
+
+# ------------------------------------------------- the turn that used to 400
+#
+# The reported failure, assembled end to end. A user attaches the github server
+# and asks which repo they have the most commits in; the router keeps a handful
+# of github tools and reserves the rest; the model asks for a name that is not
+# real; Groq rejects the whole request because the hatch's schema carried an
+# enum. Two things had to change for that turn to survive, and both are checked
+# here against a real _prepare_turn rather than a unit fake.
+
+GITHUB_LEAVES = [
+    "search_repositories", "list_commits", "get_me", "list_branches",
+    "list_issues", "search_code", "get_file_contents", "list_pull_requests",
+    "list_tags", "list_releases", "get_label", "get_tag", "search_users",
+    "list_issue_types", "merge_pull_request", "get_teams", "issue_read",
+    "issue_write", "search_issues", "list_repository_collaborators",
+    "get_latest_release", "get_team_members", "pull_request_read",
+    "update_pull_request", "list_issue_fields", "search_pull_requests",
+    "get_release_by_tag", "run_secret_scanning", "sub_issue_write",
+    "request_copilot_review", "pull_request_review_write", "fork_repository",
+    "create_branch", "delete_branch", "star_repository", "list_workflows",
+]
+
+
+def github_toolset():
+    from app.agent.tools.base import Tool
+    from app.mcp.tools import mcp_group
+
+    return [
+        Tool(
+            name=f"mcp__github__{leaf}",
+            description=f"[github] GitHub {leaf.replace('_', ' ')}.",
+            input_schema={"type": "object", "properties": {}},
+            run=lambda **_: "",
+            group=mcp_group("github"),
+        )
+        for leaf in GITHUB_LEAVES
+    ]
+
+
+async def test_the_hatch_in_a_prepared_turn_carries_no_enum(
+    settings, router, monkeypatch
+):
+    """The single assertion that proves the reported 400 cannot recur.
+
+    An enum on `names` is what Groq validated the model's answer against and
+    rejected the entire request over. Nothing in a real assembled turn may carry
+    one.
+    """
+    tools = github_toolset()
+
+    async def _resolve(app, settings_, ids):
+        return tools, []
+
+    monkeypatch.setattr(chat_api, "resolve_mcp_tools", _resolve)
+    router('{"tools": ["git_commit"], "reason": "Committing."}')
+
+    turn, _ = await prepare(
+        request_with(settings), settings, mcp_server_ids=["gh-id"]
+    )
+
+    hatch = next(t for t in turn.tools if t.name == REQUEST_TOOLS_TOOL_NAME)
+    names = hatch.input_schema["properties"]["names"]
+    assert "enum" not in names["items"]
+    assert "additionalProperties" not in hatch.input_schema
+    # The guidance the enum used to carry has to survive somewhere.
+    assert "mcp__github__" in hatch.description
+
+
+async def test_the_prepared_turn_survives_the_groq_serializer(
+    settings, router, monkeypatch
+):
+    """Layer 3: render the turn's tools as the wire payload Groq validated.
+
+    `tool_schemas` is pure and the client makes no network call at construction,
+    so the exact JSON that produced the 400 can be built and inspected without a
+    provider or a key.
+    """
+    import json
+
+    from app.agent.llm.groq_client import GroqClient
+
+    tools = github_toolset()
+
+    async def _resolve(app, settings_, ids):
+        return tools, []
+
+    monkeypatch.setattr(chat_api, "resolve_mcp_tools", _resolve)
+    router('{"tools": ["git_commit"], "reason": "Committing."}')
+
+    turn, _ = await prepare(
+        request_with(settings), settings, mcp_server_ids=["gh-id"]
+    )
+
+    payload = GroqClient("placeholder-key", "openai/gpt-oss-120b").tool_schemas(
+        turn.tools
+    )
+    rendered = json.dumps(payload)
+
+    hatch = next(
+        entry
+        for entry in payload
+        if entry["function"]["name"] == REQUEST_TOOLS_TOOL_NAME
+    )
+    assert "enum" not in json.dumps(hatch["function"]["parameters"])
+    assert len(rendered) < 400_000

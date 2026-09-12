@@ -507,12 +507,15 @@ async def test_ordering_survives_candidates(settings):
     assert picked == sorted(picked, key=[t.name for t in POOL].index)
 
 
-def test_the_hatch_is_built_with_this_turn_s_reserve_in_its_schema():
-    """The router is what makes the enum useful: it knows what was held back.
+def test_the_hatch_is_built_with_this_turn_s_reserve_in_its_description():
+    """The router is what makes the listing useful: it knows what was held back.
 
     Without this the hatch ships an open-ended string and the model has to
     guess a name it has never been shown -- which is how a real turn ended up
     asking for `mcp__github__list_user_repos`, a tool that does not exist.
+
+    Named in the description rather than a schema enum: an enum is fatal on a
+    provider that validates arguments after generating them.
     """
     pool = [
         tool("read_file"),
@@ -523,14 +526,13 @@ def test_the_hatch_is_built_with_this_turn_s_reserve_in_its_schema():
     selection = _assemble(pool, {"read_file"}, reason="", model=None)
 
     hatch = next(t for t in selection.tools if t.name == REQUEST_TOOLS_TOOL_NAME)
-    assert hatch.input_schema["properties"]["names"]["items"]["enum"] == [
-        "mcp__github__list_commits",
-        "mcp__github__search_repositories",
-    ]
+    assert "mcp__github__list_commits" in hatch.description
+    assert "mcp__github__search_repositories" in hatch.description
+    assert "enum" not in hatch.input_schema["properties"]["names"]["items"]
 
 
 def test_a_resumed_turn_advertises_the_same_names():
-    """A resume must offer exactly what the first pass did, enum included."""
+    """A resume must offer exactly what the first pass did."""
     pool = [
         tool("read_file"),
         tool("mcp__github__search_repositories"),
@@ -541,9 +543,7 @@ def test_a_resumed_turn_advertises_the_same_names():
     )
 
     hatch = next(t for t in restored.tools if t.name == REQUEST_TOOLS_TOOL_NAME)
-    assert hatch.input_schema["properties"]["names"]["items"]["enum"] == [
-        "mcp__github__search_repositories"
-    ]
+    assert "mcp__github__search_repositories" in hatch.description
 
 
 async def test_a_mixed_pick_runs_rather_than_parking(settings):

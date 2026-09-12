@@ -20,7 +20,11 @@ from typing import Any
 import pytest
 
 from app.agent.llm.base import LLMTurn, ToolCallRequest, ToolResult
-from app.agent.loop import _unadvertised_tool_name, run_agent_loop
+from app.agent.loop import (
+    _tool_rejection,
+    _unadvertised_tool_name,
+    run_agent_loop,
+)
 from app.agent.session import Session
 from app.agent.tools.meta.request_tools import REQUEST_TOOLS_TOOL
 from app.agent.tools.registry import TOOLS_BY_NAME
@@ -48,6 +52,36 @@ GROQ_400 = (
     "'mcp__github__get_me' which was not in request.tools\", "
     "'type': 'invalid_request_error', 'code': 'tool_use_failed'}}"
 )
+
+
+#: The OTHER Groq rejection, also copied from a failing turn: the arguments to
+#: an ADVERTISED tool failed schema validation. This one used to be fatal --
+#: `_UNADVERTISED_TOOL_RE` is anchored on "not in request.tools", which this
+#: never says, so it fell through to _classify_llm_error and ended the turn.
+#:
+#: It happened because request_tools carried an `enum` of the held-back names
+#: and the model asked for one that was not in it. The enum is gone, so this
+#: exact payload can no longer be produced by the harness -- but a provider that
+#: validates arguments after generating them can still reject a call this way,
+#: and the recovery is what keeps that from killing a conversation.
+GROQ_SCHEMA_400 = (
+    "Error code: 400 - {'error': {'message': 'Tool call validation failed: "
+    "tool call validation failed: parameters for tool request_tools did not "
+    "match schema: errors: [`/names/0`: value must be one of \"apply_patch\", "
+    "\"read_file\", \"write_file\"]', 'type': 'invalid_request_error', "
+    "'code': 'tool_use_failed', 'failed_generation': "
+    "'{\"name\": \"request_tools\", \"arguments\": "
+    "{\"names\": [\"mcp__github__list_repositories\"]}}'}}"
+)
+
+
+def schema_refusal(*names: str) -> BadRequestError:
+    """The same 400, asking for `names` instead."""
+    quote = chr(34)
+    asked = ", ".join(quote + name + quote for name in names)
+    target = quote + "mcp__github__list_repositories" + quote
+    assert target in GROQ_SCHEMA_400, "the template stopped naming the tool"
+    return BadRequestError(GROQ_SCHEMA_400.replace(target, asked))
 
 
 def refusal(name: str) -> BadRequestError:
@@ -335,3 +369,147 @@ async def test_an_ordinary_provider_failure_still_fails_the_turn(settings, sessi
 
     assert len(client.sent_tools) == 1
     assert events[-1].reason == "error"
+
+
+# --- the schema-mismatch family -------------------------------------------
+#
+# A model asking for a tool by a name the schema would not accept. Groq rejects
+# the whole request rather than returning a call the harness could answer, so
+# without these the turn dies before `request_tools` ever runs -- which is
+# exactly what happened to a real GitHub conversation.
+
+
+def test_a_schema_mismatch_is_recognised_and_the_intent_recovered():
+    """The provider echoes what the model wrote; that is the repair material."""
+    rejection = _tool_rejection(BadRequestError(GROQ_SCHEMA_400))
+
+    assert rejection is not None
+    assert rejection.kind == "schema_mismatch"
+    assert rejection.tool == "request_tools"
+    assert rejection.wanted_names == ["mcp__github__list_repositories"]
+
+
+def test_a_schema_mismatch_is_not_read_as_an_unadvertised_tool():
+    """Two different failures. Conflating them would grant the wrong thing."""
+    assert _unadvertised_tool_name(BadRequestError(GROQ_SCHEMA_400)) is None
+
+
+def test_an_unparseable_failed_generation_recovers_no_names():
+    """Best effort: a malformed echo must not raise on top of the 400."""
+    broken = BadRequestError(
+        "parameters for tool request_tools did not match schema: errors "
+        "'failed_generation': '{not json'}"
+    )
+
+    rejection = _tool_rejection(broken)
+
+    assert rejection is not None
+    assert rejection.wanted_names == []
+
+
+async def test_a_schema_mismatch_naming_a_reserve_tool_is_granted(settings, session):
+    """It asked for something real; the schema was the only thing in the way."""
+    client = FlakyClient([schema_refusal("read_file"), answer("Here you go.")])
+
+    events = await collect(
+        run_agent_loop(
+            session=session,
+            llm_client=client,
+            settings=settings,
+            user_message="read something",
+            tools=ACTIVE,
+            tool_reserve=RESERVE,
+        )
+    )
+
+    assert "ErrorEvent" not in kinds(events)
+    assert events[-1].reason == "end_turn"
+    assert "read_file" not in names_sent(client, 0)
+    assert "read_file" in names_sent(client, 1)
+
+
+async def test_a_schema_mismatch_naming_nothing_real_does_not_kill_the_turn(
+    settings, session
+):
+    """The reported bug, end to end.
+
+    The model asked for `mcp__github__list_repositories`, which does not exist,
+    while the reserve held `read_file`. Nothing can be granted -- but a near
+    miss is a correction, not a dead end, and the turn has to survive long
+    enough for the model to read it.
+    """
+    client = FlakyClient(
+        [schema_refusal("mcp__github__list_repositories"), answer("Ah, I see.")]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            session=session,
+            llm_client=client,
+            settings=settings,
+            user_message="which repo do I have the most commits in",
+            tools=ACTIVE,
+            tool_reserve=RESERVE,
+        )
+    )
+
+    assert "ErrorEvent" not in kinds(events)
+    assert events[-1].reason == "end_turn"
+    # The correction reached the model as a message, since the rejected request
+    # left no tool_use block for a tool result to answer.
+    correction = [
+        entry
+        for entry in session.history
+        if entry.get("role") == "user" and "[harness]" in str(entry.get("content", ""))
+    ]
+    assert correction, "the model was told nothing"
+    assert "mcp__github__list_repositories" in str(correction[-1])
+    # Nothing was granted on the strength of a name that does not exist.
+    assert names_sent(client, 1) == names_sent(client, 0)
+
+
+async def test_a_schema_mismatch_with_an_empty_reserve_still_fails(settings, session):
+    """The recovery is for a narrowed turn. With nothing held back there is no
+    correction to offer, and the 400 is just a 400."""
+    client = FlakyClient([schema_refusal("read_file")])
+
+    events = await collect(
+        run_agent_loop(
+            session=session,
+            llm_client=client,
+            settings=settings,
+            user_message="read something",
+            tools=ACTIVE,
+            tool_reserve=[],
+        )
+    )
+
+    assert "ErrorEvent" in kinds(events)
+    assert len(client.sent_tools) == 1
+
+
+async def test_a_schema_mismatch_is_repaired_at_most_once(settings, session):
+    """Bounded like every other recovery here: one repair, then stop buying
+    calls."""
+    client = FlakyClient(
+        [
+            schema_refusal("mcp__github__list_repositories"),
+            schema_refusal("mcp__github__list_repositories"),
+            answer("never reached"),
+        ]
+    )
+
+    events = await collect(
+        run_agent_loop(
+            session=session,
+            llm_client=client,
+            settings=settings,
+            user_message="go",
+            tools=ACTIVE,
+            tool_reserve=RESERVE,
+        )
+    )
+
+    assert len(client.sent_tools) == 2
+    errors = [e for e in events if type(e).__name__ == "ErrorEvent"]
+    assert errors and errors[0].code == "bad_request"
