@@ -8,12 +8,13 @@
 Every branch in [`Rajnish-J/Harness`](https://github.com/Rajnish-J/Harness) — what it was for, when it
 started, and when it landed. The base branch is `main`.
 
-_Last updated 2026-09-11 (UTC) · 15 merged · 0 open · 0 closed unmerged · 0 without a PR_
+_Last updated 2026-09-13 (UTC) · 16 merged · 0 open · 0 closed unmerged · 0 without a PR_
 
 ## Merged branches
 
 | Branch | PR | Purpose | Created | Merged | Into | Changes |
 | --- | --- | --- | --- | --- | --- | --- |
+| `fix/mcp-request-tools-enum-400` | [#16](https://github.com/Rajnish-J/Harness/pull/16) | A turn with an MCP server attached died with a bad_request whenever the model asked for a held-back tool under a name that did not exist. This branch makes tha… | 2026-09-12 | 2026-09-13 | `main` | 11 files, +873 / −81 |
 | `feat/ai-tool-router` | [#15](https://github.com/Rajnish-J/Harness/pull/15) | Every turn used to serialize the whole tool list into every request — 43 built-ins plus whatever the attached MCP servers contribute — which on a small-context… | 2026-09-08 | 2026-09-11 | `main` | 97 files, +15226 / −337 |
 | `feat/pointer-cursors` | [#14](https://github.com/Rajnish-J/Harness/pull/14) | Buttons and other clickable controls showed the default arrow cursor instead of the hand pointer, so nothing in the app felt clickable. Tailwind v4's Preflight… | 2026-09-09 | 2026-09-09 | `main` | 38 files, +166 / −70 |
 | `fix/chat-delete` | [#13](https://github.com/Rajnish-J/Harness/pull/13) | Deleting a chat from the sidebar silently did nothing. The delete feature was fully implemented on main — UI, API client, route, and repository all correct — b… | 2026-09-09 | 2026-09-09 | `main` | 3 files, +81 / −2 |
@@ -41,6 +42,14 @@ _None — every branch on the remote has a pull request._
 ---
 
 ## Details
+
+### `fix/mcp-request-tools-enum-400` → `main` ([#16](https://github.com/Rajnish-J/Harness/pull/16))
+
+**Merged** 2026-09-13 · created 2026-09-12 · by @Rajnish-J · 1 commit · 11 files, +873 / −81 · branch still on the remote
+
+**fix(tools): stop a strict provider's 400 from killing an MCP turn**
+
+A turn with an MCP server attached died with a bad_request whenever the model asked for a held-back tool under a name that did not exist. This branch makes that recoverable on every provider, and reduces how often it can happen at all. It builds on main at 2e437f9 (the AI tool router merge, #15), which is what introduced the narrowed toolset this bug lives in.
 
 ### `feat/ai-tool-router` → `main` ([#15](https://github.com/Rajnish-J/Harness/pull/15))
 
