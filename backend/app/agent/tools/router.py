@@ -256,6 +256,7 @@ def _from_index(
             reachable_names={tool.name for tool in pool},
             candidate_names={tool.name for tool in offered},
             max_tools=settings.tool_router_max_tools,
+            max_server_tools=settings.tool_router_max_server_tools,
         )
     except Exception:  # noqa: BLE001 - never fatal; the model still routes
         logger.exception("tool index selection failed; falling back to the router")
@@ -424,6 +425,10 @@ async def select_tools(
 
     # The cap applies to the model's picks only. Trimming the core floor away to
     # honour a limit would defeat the floor.
+    # Deliberately the general cap, with no per-server exemption: this path
+    # runs only when the index could not answer, and a model that has read the
+    # catalogue rarely names twelve tools in the first place. The index path in
+    # _from_index is where a named server earns a larger budget.
     picked = picked[: settings.tool_router_max_tools]
 
     keep = {name for name in CORE_TOOL_NAMES if name in by_name}

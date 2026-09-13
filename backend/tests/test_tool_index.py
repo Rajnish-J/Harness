@@ -253,3 +253,89 @@ def test_ordinary_requests_find_their_tool(message, expected):
     picked = real(message)
     assert picked is not None, message
     assert expected in picked.names
+
+
+# ------------------------------------------------ naming a server outright
+#
+# A user who attaches `github` and asks about their commits has settled whether
+# to use the server; all that is left is which of its tools. The general cap
+# answers the first question, not the second -- at twelve, a ninety-tool server
+# has most of itself held back and the model has to name a held-back tool
+# exactly right on the first try. That is the failure this cap exists to avoid.
+
+GITHUB_LEAVES = [
+    "search_repositories", "list_commits", "get_me", "list_branches",
+    "list_issues", "search_code", "get_file_contents", "list_pull_requests",
+    "list_tags", "list_releases", "get_label", "get_tag", "search_users",
+    "list_issue_types", "merge_pull_request", "get_teams", "issue_read",
+    "issue_write", "search_issues", "list_repository_collaborators",
+    "get_latest_release", "get_team_members", "pull_request_read",
+    "update_pull_request", "list_issue_fields", "search_pull_requests",
+    "get_release_by_tag", "run_secret_scanning", "sub_issue_write",
+    "request_copilot_review", "pull_request_review_write", "fork_repository",
+    "create_branch", "delete_branch", "star_repository", "list_workflows",
+]
+
+
+def github_rows():
+    return [
+        mcp_row("github", leaf, f"GitHub {leaf.replace('_', ' ')}")
+        for leaf in GITHUB_LEAVES
+    ]
+
+
+def select_github(message, max_server_tools):
+    rows = github_rows() + [
+        builtin("read_file", "Read a file"),
+        builtin("write_file", "Write a file"),
+        builtin("run_tests", "Run the test suite", group="Execution"),
+    ]
+    return select_from_index(
+        message,
+        rows,
+        reachable_names={row.tool_name for row in rows},
+        candidate_names=set(),
+        max_tools=12,
+        max_server_tools=max_server_tools,
+    )
+
+
+def test_a_named_server_keeps_more_than_the_general_cap():
+    """The reported turn: the tools it needed were held back at twelve."""
+    picked = select_github(
+        "can you tell in which repo I have most commit in my github account", 30
+    )
+
+    github = {name for name in picked.names if name.startswith("mcp__github__")}
+    assert len(github) > 12
+    assert len(github) <= 30
+    # The two the real turn needed and did not get.
+    assert "mcp__github__search_repositories" in github
+    assert "mcp__github__list_commits" in github
+
+
+def test_the_named_server_cap_is_still_a_cap():
+    """Advertising a whole large server is the cost the router exists to avoid."""
+    picked = select_github("github github github commits repo", 30)
+
+    github = {name for name in picked.names if name.startswith("mcp__github__")}
+    assert len(github) <= 30
+
+
+def test_the_ordinary_cap_still_applies_to_everything_else():
+    """The exemption is for the named server, not a blanket raise."""
+    picked = select_github(
+        "can you tell in which repo I have most commit in my github account", 30
+    )
+
+    others = {name for name in picked.names if not name.startswith("mcp__github__")}
+    assert len(others) <= 12
+
+
+def test_a_server_the_message_does_not_name_gets_the_ordinary_cap():
+    """Being an MCP tool is not what earns the larger budget -- being asked for
+    by name is."""
+    picked = select_github("list the commits in this repository", 30)
+
+    if picked is not None and picked.names:
+        assert len(picked.names) <= 12

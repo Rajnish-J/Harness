@@ -1,6 +1,8 @@
 import inspect
+import json
 import logging
 import re
+from dataclasses import dataclass, field
 from uuid import uuid4
 from collections.abc import AsyncIterator, Awaitable, Callable
 
@@ -12,6 +14,8 @@ from app.agent.exec_context import ExecutionContext
 from app.agent.tools.base import Tool, ToolExecutionError
 from app.agent.tools.meta.request_tools import (
     REQUEST_TOOLS_TOOL_NAME,
+    request_tools,
+    request_tools_tool,
     normalize_names,
     resolve_requested,
 )
@@ -233,7 +237,7 @@ async def resume_agent_loop(
                 call, result, active_tools, reserve
             )
             if widened is not active_tools:
-                active_tools = widened
+                active_tools = _rebuild_hatch(widened, reserve)
                 tools_by_name = {tool.name: tool for tool in active_tools}
                 _remember_widening(session, active_tools, reserve)
         else:
@@ -284,6 +288,33 @@ def _remember_widening(
         return
     session.selected_tool_names = [tool.name for tool in active_tools]
     session.reserve_tool_names = [tool.name for tool in reserve]
+
+
+def _rebuild_hatch(active_tools: list[Tool], reserve: list[Tool]) -> list[Tool]:
+    """Re-advertise `request_tools` against the reserve that is left.
+
+    The hatch names the held-back tools in its description, so a grant makes the
+    copy already sitting in `active_tools` stale: it would go on offering names
+    the turn has since handed over. That is the same class of disagreement
+    `adopt` exists to prevent, one level down -- the schemas and the dispatch
+    table agree, but the schema text and the reserve do not.
+
+    Replaced IN PLACE, at the index it already occupies. Filtering it out and
+    appending the fresh one would be simpler and is wrong: tool order is the
+    cacheable prompt prefix, so moving the hatch to the end invalidates the
+    cache from its old position onward, and a grant already appends the granted
+    tool after everything else.
+
+    An emptied reserve keeps the hatch rather than dropping it, for the same
+    reason -- a removal shifts every tool after it. The zero-reserve form simply
+    stops listing names, and its `run` body reports honestly that nothing is
+    held back.
+    """
+    names = [tool.name for tool in reserve]
+    return [
+        request_tools_tool(names) if tool.name == REQUEST_TOOLS_TOOL_NAME else tool
+        for tool in active_tools
+    ]
 
 
 def _apply_tool_request(
@@ -362,8 +393,8 @@ async def _drive(
         one place, is what makes that impossible.
         """
         nonlocal active_tools, tools_by_name, tool_schemas, reserve
-        active_tools = widened
         reserve = new_reserve
+        active_tools = _rebuild_hatch(widened, reserve)
         tools_by_name = {tool.name: tool for tool in active_tools}
         tool_schemas = llm_client.tool_schemas(active_tools)
         _remember_widening(session, active_tools, reserve)
@@ -410,7 +441,69 @@ async def _drive(
                     )
                     break
                 except Exception as exc:  # noqa: BLE001 - classified below
-                    refused = _unadvertised_tool_name(exc)
+                    rejection = _tool_rejection(exc)
+                    if (
+                        rejection is not None
+                        and rejection.kind == "schema_mismatch"
+                        and reserve
+                    ):
+                        # The model called an advertised tool with arguments the
+                        # schema forbade. When that tool is the escape hatch, the
+                        # provider echoes what it was asking for, so the names can
+                        # be resolved against the reserve exactly as a successful
+                        # request_tools call would have been.
+                        granted_names, _unknown = resolve_requested(
+                            rejection.wanted_names,
+                            {tool.name for tool in reserve},
+                        )
+                        if granted_names:
+                            granted = set(granted_names)
+                            logger.info(
+                                "Provider rejected a %s call; granting %s and "
+                                "retrying iteration %d",
+                                rejection.tool,
+                                ", ".join(granted_names),
+                                iteration,
+                            )
+                            adopt(
+                                [
+                                    *active_tools,
+                                    *(t for t in reserve if t.name in granted),
+                                ],
+                                [t for t in reserve if t.name not in granted],
+                            )
+                            continue
+                        # Nothing it asked for is real. That is a near miss, not
+                        # a dead end -- the same correction the tool's own body
+                        # would have returned, delivered as a message because the
+                        # rejected request left no tool_use block for a tool
+                        # result to answer.
+                        logger.info(
+                            "Provider rejected a %s call naming nothing held "
+                            "back; correcting in place on iteration %d",
+                            rejection.tool,
+                            iteration,
+                        )
+                        session.history.append(
+                            llm_client.user_message(
+                                "[harness] Your last "
+                                f"{rejection.tool} call was rejected by the "
+                                "provider before it ran. "
+                                + request_tools(
+                                    names=rejection.wanted_names,
+                                    tool_reserve_names={
+                                        tool.name for tool in reserve
+                                    },
+                                )
+                            )
+                        )
+                        continue
+
+                    refused = (
+                        rejection.tool
+                        if rejection is not None and rejection.kind == "unadvertised"
+                        else None
+                    )
                     wanted = next(
                         (tool for tool in reserve if tool.name == refused), None
                     )
@@ -449,16 +542,16 @@ async def _drive(
                     return
 
             if turn is None:
-                # Both attempts were refused over a held-back tool. The first
-                # grant did not satisfy the model and a second would be an
-                # unbounded widen, so stop rather than keep buying calls.
+                # Both attempts were rejected. The first repair did not satisfy
+                # the model and a second would be an unbounded widen, so stop
+                # rather than keep buying calls.
                 logger.warning(
-                    "Provider refused a tool call twice on iteration %d", iteration
+                    "Provider rejected a tool call twice on iteration %d", iteration
                 )
                 yield ErrorEvent(
                     message=(
                         "The provider rejected the request: the model kept "
-                        "calling tools that were not offered to it."
+                        "making tool calls it would not accept."
                     ),
                     code="bad_request",
                 )
@@ -728,20 +821,129 @@ _UNADVERTISED_TOOL_RE = re.compile(
 )
 
 
-def _unadvertised_tool_name(exc: Exception) -> str | None:
-    """The tool a provider refused to call, or None if that is not this error.
+#: A provider rejecting the whole request because a tool's ARGUMENTS failed
+#: schema validation -- the sibling of the refusal above, and the one that used
+#: to be unrecoverable.
+#:
+#: Groq reports both as `tool_use_failed`, but only the other one mentions
+#: `request.tools`. This wording appears when the model called an advertised
+#: tool with something the schema forbade: a value outside an enum, a key under
+#: `additionalProperties: false`. Left unhandled it reaches _classify_llm_error
+#: and ends the turn, which is exactly how a single wrong tool name in a
+#: request_tools call killed an entire MCP conversation.
+_SCHEMA_MISMATCH_RE = re.compile(
+    r"parameters\s+for\s+tool\s+['\"`]?([A-Za-z0-9_\-]+)['\"`]?[^.]*?"
+    r"did\s+not\s+match\s+schema",
+    re.IGNORECASE,
+)
 
-    Providers disagree about what calling an unadvertised tool means. Anthropic
-    treats it as one bad call: the turn survives, the model reads the error and
-    asks for the tool through request_tools. Groq rejects the entire request
-    with a 400, so that recovery never gets to happen and a narrowed turn dies
-    on its first wrong guess. Naming the tool here is what lets the caller grant
-    it and try again, making the two providers behave the same way.
+#: Groq hands back the arguments the model actually produced. Recovering them
+#: turns "the request was rejected" into "the model wanted these names", which
+#: is the difference between guessing and answering.
+_FAILED_GENERATION_RE = re.compile(
+    r"['\"]failed_generation['\"]\s*:\s*['\"](.*?)['\"]\s*\}", re.DOTALL
+)
+
+
+@dataclass
+class _ToolRejection:
+    """A 400 the loop can do something about, and what it can do."""
+
+    #: "unadvertised" -- the model called a tool that was not in the request.
+    #: "schema_mismatch" -- it called an advertised tool with bad arguments.
+    kind: str
+    #: The tool the provider named, when it named one.
+    tool: str | None = None
+    #: For a rejected request_tools call: the names the model was asking for,
+    #: recovered from the provider's echo of the generation. Empty when the
+    #: provider did not echo it -- every caller must still work in that case.
+    wanted_names: list[str] = field(default_factory=list)
+
+
+def _failed_generation_names(exc: Exception) -> list[str]:
+    """The `names` a rejected request_tools call was asking for.
+
+    Groq-specific and best effort: the field is absent on other providers, and
+    a malformed payload must read as "nothing recovered" rather than raise a
+    second error on top of the first.
+    """
+    payload = None
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict):
+            payload = error.get("failed_generation")
+    if not isinstance(payload, str):
+        match = _FAILED_GENERATION_RE.search(str(exc))
+        payload = match.group(1) if match else None
+    if not isinstance(payload, str):
+        return []
+
+    try:
+        # The regex capture can carry escaped newlines from the repr.
+        call = json.loads(payload.encode().decode("unicode_escape"))
+    except (ValueError, UnicodeDecodeError):
+        return []
+    if not isinstance(call, dict):
+        return []
+    arguments = call.get("arguments")
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except ValueError:
+            return []
+    if not isinstance(arguments, dict):
+        return []
+    return normalize_names(arguments.get("names"))
+
+
+def _tool_rejection(exc: Exception) -> _ToolRejection | None:
+    """Classify a provider 400 the turn can recover from, or None.
+
+    Providers disagree about what a bad tool call means. Anthropic treats it as
+    ONE bad call: the turn survives, the model reads the error and corrects
+    itself. Groq rejects the entire request, so that recovery never gets to
+    happen and a narrowed turn dies on its first wrong guess. Naming the failure
+    here is what lets the caller repair it and try again, making the two
+    providers behave the same way.
+
+    Returning None for anything unrecognised is the safety property: an ordinary
+    400 must still fail the turn exactly as it did before.
     """
     if type(exc).__name__ != "BadRequestError":
         return None
-    match = _UNADVERTISED_TOOL_RE.search(str(exc))
-    return match.group(1) if match else None
+
+    text = str(exc)
+
+    match = _UNADVERTISED_TOOL_RE.search(text)
+    if match:
+        return _ToolRejection(kind="unadvertised", tool=match.group(1))
+
+    match = _SCHEMA_MISMATCH_RE.search(text)
+    if match:
+        tool = match.group(1)
+        return _ToolRejection(
+            kind="schema_mismatch",
+            tool=tool,
+            wanted_names=(
+                _failed_generation_names(exc)
+                if tool == REQUEST_TOOLS_TOOL_NAME
+                else []
+            ),
+        )
+    return None
+
+
+def _unadvertised_tool_name(exc: Exception) -> str | None:
+    """The tool a provider refused to call, or None if that is not this error.
+
+    A thin reading of `_tool_rejection`, kept because the refused-name case is
+    the one most callers mean.
+    """
+    rejection = _tool_rejection(exc)
+    if rejection is not None and rejection.kind == "unadvertised":
+        return rejection.tool
+    return None
 
 
 def _classify_llm_error(exc: Exception) -> tuple[str, str]:

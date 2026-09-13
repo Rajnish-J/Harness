@@ -62,7 +62,13 @@ def resolve_requested(
 
 #: How many alternatives to offer for a name that missed. Enough to cover a
 #: server's obvious neighbours, short enough that the reply stays readable.
-_MAX_SUGGESTIONS = 8
+#:
+#: Sized for the namespaced case, which is the one that actually happens: a
+#: model that knows it wants GitHub and guesses the leaf wrong is one correction
+#: away, and a server can easily contribute forty names sharing the prefix. This
+#: is the whole recovery now that the schema no longer constrains the name (see
+#: `request_tools_tool`), so it is worth a few extra lines of reply.
+_MAX_SUGGESTIONS = 15
 
 
 def suggest_for(name: str, reserve_names: set[str]) -> list[str]:
@@ -163,53 +169,92 @@ def request_tools(
     return " ".join(parts)
 
 
+#: How many held-back names to spell out in the description before summarising
+#: the rest. A long reserve is common with a big MCP server attached, and the
+#: description is prompt text on every turn that holds anything back.
+#:
+#: Truncating here is safe in a way truncating an enum never was: a name outside
+#: the listed subset is still ASKABLE, and `suggest_for` answers it with the
+#: real one. A truncated enum would have been strictly worse than none -- still
+#: fatal on a miss, and a shorter list makes misses likelier.
+_MAX_LISTED_NAMES = 60
+
+
 def request_tools_tool(reserve_names: list[str] | None = None) -> Tool:
     """Build the escape hatch for one turn, naming what it can actually reach.
 
-    Built per turn rather than shared, because the useful part is the `enum`:
-    the held-back names go into the schema, so the model picks from a list
-    instead of guessing. That matters more than it sounds. This tool used to
-    advise "if you do not know the exact name, ask for the closest one you can
-    guess" while sending no names at all -- and a model looking for GitHub
-    repositories duly invented `mcp__github__list_user_repos`, missed, and told
-    the user the capability did not exist. The tool it wanted was in the
-    reserve the whole time under another name.
+    Built per turn rather than shared, because the useful part is the list of
+    held-back names: the model picks from what this turn actually reserved
+    instead of inventing something. That matters more than it sounds. This tool
+    used to advise "if you do not know the exact name, ask for the closest one
+    you can guess" while sending no names at all -- and a model looking for
+    GitHub repositories duly invented `mcp__github__list_user_repos`, missed,
+    and told the user the capability did not exist. The tool it wanted was in
+    the reserve the whole time under another name.
 
-    An enum also does the strongest thing available: a constrained decoder
-    cannot emit a name that is not in it, so the failure becomes impossible
-    rather than merely discouraged.
+    The names go in the DESCRIPTION, not in an `enum` on the schema, and that
+    distinction is the whole point of this docstring. The enum was the obvious
+    move -- a constrained decoder cannot emit a name that is not in it, so the
+    miss becomes impossible rather than merely discouraged. But that reasoning
+    only holds for a provider that constrains generation. Groq does not: it
+    validates the arguments AFTER the model has written them and rejects the
+    entire request with a 400. So the enum never prevented the bad name, it
+    only escalated the consequence, turning a miss that `suggest_for` would
+    have answered in-band into a turn that dies before any tool call exists to
+    answer. Advertising the names in prose keeps the guidance and lets a wrong
+    name land where it can be corrected.
 
-    `reserve_names` empty (or omitted) yields the plain schema. Callers that
-    only need the NAME should use REQUEST_TOOLS_TOOL_NAME rather than building
-    a throwaway tool.
+    `reserve_names` empty (or omitted) yields the bare description. Callers
+    that only need the NAME should use REQUEST_TOOLS_TOOL_NAME rather than
+    building a throwaway tool.
     """
-    names_schema: dict[str, object] = {
-        "type": "array",
-        "items": {"type": "string"},
-        "description": "Exact tool names, e.g. ['git_commit', 'run_tests'].",
-    }
+    description = (
+        "Ask for a tool that was not advertised for this turn. The tool "
+        "list you were given was narrowed to what this task looked like it "
+        "needed, and the rest are held back rather than gone. Call this "
+        "with the names you want and they become available immediately, in "
+        "the same turn. Use it as soon as you notice a gap -- it is cheaper "
+        "than working around a missing tool."
+    )
     if reserve_names:
-        # Sorted so the schema -- and therefore the prompt prefix -- is stable
-        # across turns that hold back the same set.
-        names_schema["items"] = {"type": "string", "enum": sorted(reserve_names)}
+        # Sorted so the description -- and therefore the prompt prefix -- is
+        # stable across turns that hold back the same set.
+        listed = sorted(reserve_names)
+        overflow = len(listed) - _MAX_LISTED_NAMES
+        shown = ", ".join(listed[:_MAX_LISTED_NAMES])
+        more = (
+            f", and {overflow} more not listed here"
+            if overflow > 0
+            else ""
+        )
+        description += (
+            f"\n\nThe names you can ask for, exactly as written: "
+            f"{shown}{more}. "
+            "Use one of these verbatim. If you are unsure which one you want, "
+            "ask for the closest name you can see -- you will be told the real "
+            "name rather than refused."
+        )
 
     return Tool(
         name=REQUEST_TOOLS_TOOL_NAME,
-        description=(
-            "Ask for a tool that was not advertised for this turn. The tool "
-            "list you were given was narrowed to what this task looked like it "
-            "needed, and the rest are held back rather than gone. Call this "
-            "with the names you want and they become available immediately, in "
-            "the same turn. Use it as soon as you notice a gap -- it is cheaper "
-            "than working around a missing tool. Every name you can ask for is "
-            "listed in this tool's `names` schema; use one of those exactly, "
-            "and do not invent a name that is not there."
-        ),
+        description=description,
         input_schema={
             "type": "object",
-            "properties": {"names": names_schema},
+            "properties": {
+                "names": {
+                    "type": "array",
+                    # Deliberately unconstrained -- no `enum` here, and no
+                    # `additionalProperties: False` below. Both are ways for a
+                    # provider that validates arguments after generation to
+                    # reject the whole request instead of letting the model
+                    # read a correction. See this function's docstring.
+                    "items": {"type": "string"},
+                    "description": (
+                        "Exact tool names, e.g. ['git_commit', 'run_tests']."
+                    ),
+                }
+            },
             "required": ["names"],
-            "additionalProperties": False,
         },
         run=request_tools,
         group="Harness",

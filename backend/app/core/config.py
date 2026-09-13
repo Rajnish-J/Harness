@@ -117,6 +117,14 @@ class Settings(BaseSettings):
     # A ceiling on the router's own picks. The core floor is added on top and is
     # never trimmed to honour this.
     tool_router_max_tools: int = 12
+    # The ceiling that applies instead when the request NAMES an MCP server the
+    # user attached. At that point routing is not guessing whether to use the
+    # server, only which of its tools, and the ordinary cap is too tight: a
+    # server with ninety tools would have eighty of them held back, so the model
+    # reaches for the escape hatch and has to get a name exactly right on the
+    # first try. Higher than the general cap, still a cap -- advertising every
+    # tool of a large server is the cost the router exists to avoid.
+    tool_router_max_server_tools: int = 30
     tool_router_timeout: float = 20.0
 
     # Try the persisted tool index before spending a routing call. The

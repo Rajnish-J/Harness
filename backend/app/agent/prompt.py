@@ -130,8 +130,8 @@ def _mcp_block(server_names: Sequence[str], partial: bool = False) -> str:
     these = "these servers" if many else "this server"
     s = "" if many else "s"
     # Only when the router actually held something back. The names themselves
-    # are already an enum in the request_tools schema, so listing them here
-    # would cost tokens to repeat what the model can already see.
+    # are already listed in the request_tools description, so repeating them
+    # here would cost tokens to say what the model can already see.
     held_back = (
         "\n\nOnly some of each server's tools are loaded for this turn. If the"
         " one you need is not in your tool list, call `request_tools` with its"
